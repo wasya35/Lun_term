@@ -51,6 +51,23 @@
     return bars;
   }
 
+  // Ближний контракт: спрашиваем сервер (/api/front), иначе — тикер из конфига.
+  const frontCache = new Map();
+  async function resolveTicker(instrument) {
+    if (!instrument.assetCode) return instrument.ticker;
+    if (frontCache.has(instrument.assetCode)) return frontCache.get(instrument.assetCode);
+    let ticker = instrument.ticker;
+    try {
+      const res = await fetch('/api/front?asset=' + encodeURIComponent(instrument.assetCode));
+      if (res.ok) {
+        const j = await res.json();
+        if (j && j.ticker) ticker = j.ticker;
+      }
+    } catch (e) { /* нет сети — остаёмся на запасном тикере */ }
+    frontCache.set(instrument.assetCode, ticker);
+    return ticker;
+  }
+
   function makeDataLoader() {
     return {
       getBars: async ({ type, symbol, period, callback }) => {
@@ -71,5 +88,5 @@
     };
   }
 
-  window.LunData = { makeDataLoader };
+  window.LunData = { makeDataLoader, resolveTicker };
 })();

@@ -8,11 +8,12 @@
     chart: null,
     instrument: window.LUN.INSTRUMENTS[0],
     tf: window.LUN.TIMEFRAMES.find((t) => t.id === window.LUN.DEFAULT_TIMEFRAME),
-    panes: {},          // paneId лунных панелей / объёма
-    overlayIds: {},     // включённые ценовые индикаторы (EMA/SMA/VWAP)
+    signPane: null,
+    volumePane: null,
+    cyclePanes: {},         // cycleId -> paneId
+    overlayIds: {},         // EMA/SMA/VWAP на ценовой панели
   };
 
-  /* ---------- тёмная тема KLineChart ---------- */
   const THEME = {
     grid: { horizontal: { color: '#1c2230' }, vertical: { color: '#1c2230' } },
     candle: {
@@ -21,7 +22,6 @@
         upBorderColor: '#26a69a', downBorderColor: '#ef5350',
         upWuckColor: '#26a69a', downWuckColor: '#ef5350',
       },
-      tooltip: { rect: { color: 'rgba(20,26,38,0.9)' } },
       priceMark: { last: { text: { color: '#0b0e14' } } },
     },
     xAxis: { axisLine: { color: '#2a3242' }, tickText: { color: '#8b93a7' } },
@@ -32,18 +32,45 @@
     },
   };
 
-  /* ---------- индикаторы: лунные панели + объём ---------- */
-  function buildPanes() {
-    const c = state.chart, H = window.LUN.PANE_HEIGHTS;
-    state.panes.moonSign = c.createIndicator({ name: 'MoonSign' }, false);
-    state.panes.moonCycle = c.createIndicator({ name: 'MoonCycle' }, false);
-    state.panes.volume = c.createIndicator({ name: 'VOL' }, false);
-    if (state.panes.moonSign) c.setPaneOptions({ id: state.panes.moonSign, height: H.moonSign, minHeight: 24 });
-    if (state.panes.moonCycle) c.setPaneOptions({ id: state.panes.moonCycle, height: H.moonCycle, minHeight: 20 });
-    if (state.panes.volume) c.setPaneOptions({ id: state.panes.volume, height: H.volume });
+  /* ---------- панели ----------
+   * KLineChart раскладывает новую панель асинхронно, поэтому setPaneOptions
+   * сразу после createIndicator не срабатывает — копим параметры и применяем
+   * их отложенно (и повторно после загрузки данных). */
+  const paneWish = {};                 // paneId -> { height, minHeight, order }
+  function applyPaneWishes() {
+    Object.entries(paneWish).forEach(([pid, o]) => {
+      try { state.chart.setPaneOptions({ id: pid, ...o }); }
+      catch (e) { console.warn('[pane] setPaneOptions failed', pid, e.message); }
+    });
+  }
+  // Загрузка данных пересобирает раскладку, поэтому применяем желаемые размеры
+  // на нескольких тиках — последний (после укладки данных) закрепляет результат.
+  function scheduleApply() { [0, 150, 400].forEach((ms) => setTimeout(applyPaneWishes, ms)); }
+  function wishPane(id, opts) { if (id) { paneWish[id] = opts; scheduleApply(); } }
+
+  // ВАЖНО: createIndicator возвращает id индикатора, а НЕ id панели. Поэтому
+  // задаём paneId явно — тогда мы знаем панель и можем управлять её высотой.
+  function createCyclePane(cycle, order) {
+    const paneId = 'pane_' + cycle.id;
+    state.chart.createIndicator(
+      { name: 'CycleStrip', shortName: cycle.title, extendData: { cycle }, paneId }, false);
+    state.cyclePanes[cycle.id] = paneId;
+    wishPane(paneId, { height: window.LUN.PANE_HEIGHTS.cycle, minHeight: 18, order });
+    return paneId;
   }
 
-  /* ---------- ценовые индикаторы на основной панели (тумблеры) ---------- */
+  function buildPanes() {
+    const c = state.chart, H = window.LUN.PANE_HEIGHTS;
+    state.signPane = 'pane_moon_sign';
+    c.createIndicator({ name: 'MoonSign', paneId: state.signPane }, false);
+    wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
+    window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
+    state.volumePane = 'pane_volume';
+    c.createIndicator({ name: 'VOL', paneId: state.volumePane }, false);
+    wishPane(state.volumePane, { height: H.volume, order: 90 });
+  }
+
+  /* ---------- ценовые индикаторы (тумблеры) ---------- */
   function toggleOverlay(kind, on) {
     const c = state.chart, IND = window.LUN.INDICATORS;
     if (on) {
@@ -51,22 +78,22 @@
       if (kind === 'SMA') { name = 'MA';  calcParams = IND.sma.periods; }
       if (kind === 'EMA') { name = 'EMA'; calcParams = IND.ema.periods; }
       if (kind === 'VWAP') { name = 'VWAP_BANDS'; }
-      const id = c.createIndicator(
-        { name, calcParams, paneId: 'candle_pane' }, true);
-      state.overlayIds[kind] = id || name;
+      c.createIndicator({ name, calcParams, paneId: 'candle_pane' }, true);
+      state.overlayIds[kind] = name;      // удаляем по имени индикатора
     } else {
-      c.removeIndicator({ paneId: 'candle_pane', name: state.overlayIds[kind] || kind });
+      c.removeIndicator({ paneId: 'candle_pane', name: state.overlayIds[kind] });
       delete state.overlayIds[kind];
     }
   }
 
-  /* ---------- загрузка инструмента/таймфрейма ---------- */
-  function load() {
+  /* ---------- загрузка инструмента/ТФ ---------- */
+  async function load() {
     const c = state.chart, ins = state.instrument, tf = state.tf;
-    c.setSymbol({ ticker: ins.ticker, pricePrecision: ins.pricePrecision, volumePrecision: ins.volumePrecision });
+    const ticker = await window.LunData.resolveTicker(ins);
+    c.setSymbol({ ticker, pricePrecision: ins.pricePrecision, volumePrecision: ins.volumePrecision });
     c.setPeriod({ span: tf.span, type: tf.type });
     c.setDataLoader(window.LunData.makeDataLoader());
-    document.getElementById('sym-title').textContent = ins.title + '  ·  ' + tf.title;
+    document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
   }
 
   /* ---------- инструменты рисования ---------- */
@@ -78,69 +105,61 @@
     { id: 'simpleAnnotation',       label: 'Стрелка/текст' },
   ];
 
-  /* ---------- статус-строка: текущая Луна ---------- */
+  /* ---------- статус-строка ---------- */
   function updateMoonStatus() {
     const info = window.LunAstro.moonInfo(Date.now());
     const s = window.LUN.SIGNS[info.signIndex];
-    const z = info.zone;
+    const c1 = window.LUN.CYCLES[0];
+    const z = window.LunAstro.zoneOf(info.lon, c1.zones);
     document.getElementById('moon-now').innerHTML =
       `☾ <b style="color:${s.color}">${s.glyph} ${s.name}</b> ${info.degInSign.toFixed(1)}°` +
       (z ? ` · <span style="color:${window.LUN.BIAS_COLORS[z.bias]}">${z.label}</span>` : '');
   }
 
   /* ---------- UI ---------- */
+  function mkBtn(wrap, text, onClick, active, title) {
+    const b = document.createElement('button');
+    b.textContent = text; if (title) b.title = title;
+    if (active) b.classList.add('active');
+    b.onclick = () => onClick(b);
+    wrap.appendChild(b); return b;
+  }
+
   function buildUI() {
-    // инструменты
     const insWrap = document.getElementById('instruments');
-    window.LUN.INSTRUMENTS.forEach((ins) => {
-      const b = document.createElement('button');
-      b.textContent = ins.id; b.title = ins.title;
-      b.onclick = () => {
-        state.instrument = ins; load();
-        [...insWrap.children].forEach((x) => x.classList.remove('active'));
-        b.classList.add('active');
-      };
-      if (ins === state.instrument) b.classList.add('active');
-      insWrap.appendChild(b);
-    });
-    // таймфреймы
+    window.LUN.INSTRUMENTS.forEach((ins) => mkBtn(insWrap, ins.id, (b) => {
+      state.instrument = ins; load();
+      [...insWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active');
+    }, ins === state.instrument, ins.title));
+
     const tfWrap = document.getElementById('timeframes');
-    window.LUN.TIMEFRAMES.forEach((tf) => {
-      const b = document.createElement('button');
-      b.textContent = tf.title;
-      b.onclick = () => {
-        state.tf = tf; load();
-        [...tfWrap.children].forEach((x) => x.classList.remove('active'));
-        b.classList.add('active');
-      };
-      if (tf === state.tf) b.classList.add('active');
-      tfWrap.appendChild(b);
-    });
-    // индикаторы
+    window.LUN.TIMEFRAMES.forEach((tf) => mkBtn(tfWrap, tf.title, (b) => {
+      state.tf = tf; load();
+      [...tfWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active');
+    }, tf === state.tf));
+
     const indWrap = document.getElementById('indicators');
-    ['SMA', 'EMA', 'VWAP'].forEach((k) => {
-      const b = document.createElement('button');
-      b.textContent = k;
-      b.onclick = () => { const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleOverlay(k, on); };
-      indWrap.appendChild(b);
-    });
-    // рисование
+    ['SMA', 'EMA', 'VWAP'].forEach((k) => mkBtn(indWrap, k, (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleOverlay(k, on);
+    }));
+
+    // циклы 1..6 — тумблеры создания/удаления полос
+    const cycWrap = document.getElementById('cycles');
+    window.LUN.CYCLES.forEach((cy, i) => mkBtn(cycWrap, String(i + 1), (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) { if (!state.cyclePanes[cy.id]) createCyclePane(cy, 20 + i); }
+      else if (state.cyclePanes[cy.id]) { state.chart.removeIndicator({ paneId: state.cyclePanes[cy.id] }); delete state.cyclePanes[cy.id]; }
+    }, cy.enabled, cy.title));
+
     const drawWrap = document.getElementById('drawtools');
-    DRAW_TOOLS.forEach((t) => {
-      const b = document.createElement('button');
-      b.textContent = t.label;
-      b.onclick = () => state.chart.createOverlay(t.id);
-      drawWrap.appendChild(b);
-    });
-    const clr = document.createElement('button');
-    clr.textContent = '✕ очистить'; clr.className = 'danger';
-    clr.onclick = () => state.chart.removeOverlay();
-    drawWrap.appendChild(clr);
+    DRAW_TOOLS.forEach((t) => mkBtn(drawWrap, t.label, () => state.chart.createOverlay(t.id)));
+    mkBtn(drawWrap, '✕ очистить', () => state.chart.removeOverlay()).className = 'danger';
   }
 
   /* ---------- init ---------- */
   function init() {
     state.chart = kc.init('chart', { styles: THEME });
+    window.LUN_CHART = state.chart;        // доступ из консоли для отладки
     buildPanes();
     buildUI();
     load();
@@ -148,6 +167,7 @@
     setInterval(updateMoonStatus, 60000);
     window.addEventListener('lun:datasource', () => {
       document.getElementById('datasource').textContent = window.LUN_DATA_SOURCE || '';
+      scheduleApply();      // данные загружены — закрепляем высоты панелей
     });
   }
 

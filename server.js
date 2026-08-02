@@ -91,6 +91,42 @@ async function handleCandles(q, res) {
   }
 }
 
+/* ---- ближний контракт по коду актива ----
+ * ISS отдаёт все инструменты FORTS; берём фьючерсы нужного ASSETCODE
+ * (тикер вида SiU6 — 4 символа) и выбираем ближайшую неистёкшую экспирацию. */
+function issGetJSON(u) {
+  return new Promise((resolve, reject) => {
+    https.get(u, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error('ISS HTTP ' + res.statusCode)); }
+      let buf = ''; res.on('data', (d) => (buf += d));
+      res.on('end', () => { try { resolve(JSON.parse(buf)); } catch (e) { reject(e); } });
+    }).on('error', reject);
+  });
+}
+
+async function handleFront(q, res) {
+  const asset = q.asset;
+  if (!asset) { res.writeHead(400); return res.end('bad params'); }
+  try {
+    const u = 'https://iss.moex.com/iss/engines/futures/markets/forts/securities.json'
+      + '?iss.meta=off&securities.columns=SECID,ASSETCODE,LASTDELDATE';
+    const j = await issGetJSON(u);
+    const s = j.securities; const col = {}; s.columns.forEach((n, i) => (col[n] = i));
+    const today = new Date().toISOString().slice(0, 10);
+    const futRe = /^[A-Z][A-Za-z][FGHJKMNQUVXZ]\d$/;   // напр. SiU6, CRU6
+    const list = s.data
+      .filter((r) => r[col.ASSETCODE] === asset && futRe.test(r[col.SECID]) && r[col.LASTDELDATE] >= today)
+      .map((r) => ({ ticker: r[col.SECID], lastDelDate: r[col.LASTDELDATE] }))
+      .sort((a, b) => a.lastDelDate.localeCompare(b.lastDelDate));
+    if (!list.length) throw new Error('no front contract');
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ticker: list[0].ticker, lastDelDate: list[0].lastDelDate, contracts: list }));
+  } catch (e) {
+    res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ error: String(e.message || e) }));
+  }
+}
+
 /* ---- статика ---- */
 function serveStatic(pathname, res) {
   let rel = pathname === '/' ? '/index.html' : pathname;
@@ -106,6 +142,7 @@ function serveStatic(pathname, res) {
 http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
   if (parsed.pathname === '/api/candles') return handleCandles(parsed.query, res);
+  if (parsed.pathname === '/api/front') return handleFront(parsed.query, res);
   serveStatic(parsed.pathname, res);
 }).listen(PORT, () => {
   console.log(`Lun_term → http://localhost:${PORT}`);
