@@ -18,24 +18,34 @@
 
   const cache = new Map();
 
-  function longitude(body, date) {
-    const vec = A.GeoVector(A.Body[body], date, true);   // геоцентрический, «на дату»
+  // frame: 'geo' (геоцентр, как видно с Земли — знаки зодиака) |
+  //        'helio' (гелиоцентр; «Солнце» = позиция Земли, Луна — только гео)
+  function longitude(body, date, frame) {
+    let vec;
+    if (frame === 'helio' && body !== 'Moon') {
+      const b = (body === 'Sun') ? 'Earth' : body;      // гелио-«Солнце» = направление на Землю
+      vec = A.HelioVector(A.Body[b], date);
+    } else {
+      vec = A.GeoVector(A.Body[body], date, true);
+    }
     const ecl = A.Ecliptic(vec);
     return ((ecl.elon % 360) + 360) % 360;
   }
 
-  function bodyInfo(body, tsMillis) {
-    const key = body + ':' + Math.floor(tsMillis / 60000);
+  function bodyInfo(body, tsMillis, frame) {
+    frame = frame || 'geo';
+    const min = Math.floor(tsMillis / 60000);
+    const key = body + ':' + frame + ':' + min;
     let v = cache.get(key);
     if (v) return v;
-    const lon = longitude(body, new Date(Math.floor(tsMillis / 60000) * 60000));
+    const lon = longitude(body, new Date(min * 60000), frame);
     const signIndex = Math.floor(lon / 30) % 12;
     v = { lon, signIndex, degInSign: lon - signIndex * 30 };
     cache.set(key, v);
     return v;
   }
 
-  const moonInfo = (ts) => bodyInfo('Moon', ts);
+  const moonInfo = (ts) => bodyInfo('Moon', ts, 'geo');
 
   // Долгота в зоне [from,to) с учётом перехода через 360°
   function inZone(lon, z) {

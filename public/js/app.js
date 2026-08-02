@@ -9,7 +9,9 @@
     instrument: window.LUN.INSTRUMENTS[0],
     tf: window.LUN.TIMEFRAMES.find((t) => t.id === window.LUN.DEFAULT_TIMEFRAME),
     signPane: null,
+    signPanes: {},          // body -> paneId (ленты знаков Луна/Меркурий/Солнце)
     volumePane: null,
+    aspectPane: null,
     cyclePanes: {},         // cycleId -> paneId
     overlayIds: {},         // EMA/SMA/VWAP на ценовой панели
   };
@@ -59,6 +61,15 @@
     return paneId;
   }
 
+  const BODY_LABEL = { Moon: '☾ Луна', Mercury: '☿ Меркурий', Sun: '☉ Солнце', Venus: '♀ Венера', Mars: '♂ Марс', Jupiter: '♃ Юпитер', Saturn: '♄ Сатурн' };
+  function createSignPane(body, order) {
+    const id = 'pane_sign_' + body;
+    state.chart.createIndicator({ name: 'SignStrip', paneId: id, shortName: BODY_LABEL[body] || body, extendData: { body, frame: 'geo' } }, false);
+    state.signPanes[body] = id;
+    wishPane(id, { height: window.LUN.PANE_HEIGHTS.moonSign, minHeight: 24, order });
+    return id;
+  }
+
   const ASPECT_PANE = 'pane_aspect';
   function createAspectPane() {
     state.chart.createIndicator({ name: 'AspectStrip', paneId: ASPECT_PANE }, false);
@@ -73,9 +84,10 @@
   }
 
   function buildPanes() {
-    const c = state.chart, H = window.LUN.PANE_HEIGHTS;
-    state.signPane = 'pane_moon_sign';
-    c.createIndicator({ name: 'MoonSign', paneId: state.signPane }, false);
+    const H = window.LUN.PANE_HEIGHTS;
+    state.signPane = 'pane_sign_Moon';
+    state.chart.createIndicator({ name: 'SignStrip', paneId: state.signPane, shortName: BODY_LABEL.Moon, extendData: { body: 'Moon', frame: 'geo' } }, false);
+    state.signPanes.Moon = state.signPane;
     wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
     if (window.LUN.ASPECTS.enabled) createAspectPane();
@@ -178,6 +190,11 @@
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createAspectPane(); else if (state.aspectPane) { state.chart.removeIndicator({ paneId: state.aspectPane }); state.aspectPane = null; }
     }, window.LUN.ASPECTS.enabled);
+    // положения Меркурия и Солнца в знаках (словами)
+    [['Mercury', '☿ знак', 12], ['Sun', '☉ знак', 13]].forEach(([body, label, order]) => mkBtn(indWrap, label, (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createSignPane(body, order); else if (state.signPanes[body]) { state.chart.removeIndicator({ paneId: state.signPanes[body] }); delete state.signPanes[body]; }
+    }, false, `Положение ${BODY_LABEL[body]} в знаках`));
 
     buildCycleButtons();
 
@@ -204,12 +221,15 @@
   // применить настройки: пересобрать ленту знаков и полосы циклов
   function applySettings() {
     const c = state.chart;
-    if (state.signPane) c.removeIndicator({ paneId: state.signPane });
+    const openBodies = Object.keys(state.signPanes);
+    openBodies.forEach((body) => c.removeIndicator({ paneId: state.signPanes[body] }));
+    state.signPanes = {};
     Object.values(state.cyclePanes).forEach((pid) => c.removeIndicator({ paneId: pid }));
     state.cyclePanes = {};
-    // заново создаём ленту знаков и включённые циклы (над объёмом)
-    c.createIndicator({ name: 'MoonSign', paneId: state.signPane }, false);
-    wishPane(state.signPane, { height: window.LUN.PANE_HEIGHTS.moonSign, minHeight: 26, order: 10 });
+    // заново создаём открытые ленты знаков (Луна всегда) и включённые циклы
+    const orderOf = { Moon: 10, Mercury: 12, Sun: 13, Venus: 14, Mars: 15, Jupiter: 16, Saturn: 17 };
+    (openBodies.length ? openBodies : ['Moon']).forEach((body) => createSignPane(body, orderOf[body] || 15));
+    state.signPane = state.signPanes.Moon;
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
     buildCycleButtons();
     // пересоздать активные индикаторы (SMA/EMA/VWAP) с новыми параметрами

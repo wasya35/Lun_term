@@ -45,14 +45,17 @@
     flush(to);
   }
 
-  /* ======================= Лента знаков зодиака ======================= */
+  /* ======================= Лента знаков (любое тело) ======================= */
   kc.registerIndicator({
-    name: 'MoonSign',
-    shortName: 'Луна ☾',
+    name: 'SignStrip',
+    shortName: 'Знак',
     series: 'normal',
     figures: [],
-    calc: (dataList) => dataList.map((d) => window.LunAstro.moonInfo(d.timestamp)),
-    draw: ({ ctx, chart, bounding, xAxis }) => {
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {};
+      const body = ed.body || 'Moon', frame = ed.frame || 'geo';
+      const info = (ts) => window.LunAstro.bodyInfo(body, ts, frame);
       const SIGNS = window.LUN.SIGNS;
       const SUB = window.LUN.SIGN_SUBDIVISION || 10;      // размер декана, °
       const H = bounding.height;
@@ -60,53 +63,40 @@
 
       // 1) фон-полосы по знаку
       forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
-        const info = window.LunAstro.moonInfo(bar.timestamp);
-        ctx.fillStyle = SIGNS[info.signIndex].color;
+        ctx.fillStyle = SIGNS[info(bar.timestamp).signIndex].color;
         ctx.fillRect(x - half, 0, half * 2 + 0.6, H);
       });
 
       // 2) разделители деканов (каждые SUB°) — тонкие; границы знаков — ярче
       runsOverVisible(chart, xAxis,
-        (bar) => {
-          const info = window.LunAstro.moonInfo(bar.timestamp);
-          return info.signIndex * 100 + Math.floor(info.degInSign / SUB);   // ключ декана
-        },
+        (bar) => { const d = info(bar.timestamp); return d.signIndex * 100 + Math.floor(d.degInSign / SUB); },
         (startI, endI, midX, leftX, rightX) => {
-          const info = window.LunAstro.moonInfo(list[endI].timestamp);
-          const isSignEnd = info.degInSign >= 30 - SUB;   // последний декан знака
+          const d = info(list[endI].timestamp);
+          const isSignEnd = d.degInSign >= 30 - SUB;
           ctx.strokeStyle = isSignEnd ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.16)';
           ctx.lineWidth = isSignEnd ? 1.4 : 1;
           ctx.beginPath(); ctx.moveTo(rightX, 0); ctx.lineTo(rightX, H); ctx.stroke();
         });
 
-      // 3) текущий градус цифрой в каждом декане + глиф знака в его начале
+      // 3) название знака в начале + градус в конце каждого декана
       ctx.textBaseline = 'middle';
-      // название знака (или глиф, если узко) — один раз на знак
       runsOverVisible(chart, xAxis,
-        (bar) => window.LunAstro.moonInfo(bar.timestamp).signIndex,
+        (bar) => info(bar.timestamp).signIndex,
         (startI, endI, midX, leftX, rightX) => {
-          const s = SIGNS[window.LunAstro.moonInfo(list[startI].timestamp).signIndex];
+          const s = SIGNS[info(list[startI].timestamp).signIndex];
           const width = rightX - leftX;
-          ctx.fillStyle = 'rgba(255,255,255,0.95)';
-          ctx.textAlign = 'left';
-          ctx.font = '12px system-ui, sans-serif';
+          ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.textAlign = 'left'; ctx.font = '12px system-ui, sans-serif';
           if (width > ctx.measureText(s.glyph + ' ' + s.name).width + 8) ctx.fillText(s.glyph + ' ' + s.name, leftX + 5, H * 0.32);
           else if (width > ctx.measureText(s.name).width + 6) ctx.fillText(s.name, leftX + 5, H * 0.32);
           else if (width > 16) ctx.fillText(s.glyph, leftX + 4, H * 0.32);
         });
-      // градус — на конце каждого декана (видно ход 9°→19°→29°)
       runsOverVisible(chart, xAxis,
-        (bar) => {
-          const info = window.LunAstro.moonInfo(bar.timestamp);
-          return info.signIndex * 100 + Math.floor(info.degInSign / SUB);
-        },
+        (bar) => { const d = info(bar.timestamp); return d.signIndex * 100 + Math.floor(d.degInSign / SUB); },
         (startI, endI, midX, leftX, rightX) => {
-          const info = window.LunAstro.moonInfo(list[endI].timestamp);
-          const label = Math.floor(info.degInSign) + '°';
+          const label = Math.floor(info(list[endI].timestamp).degInSign) + '°';
           ctx.font = '11px system-ui, sans-serif';
           if (rightX - leftX < ctx.measureText(label).width + 6) return;
-          ctx.fillStyle = 'rgba(255,255,255,0.9)';
-          ctx.textAlign = 'right';
+          ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.textAlign = 'right';
           ctx.fillText(label, rightX - 4, H * 0.72);
         });
       return true;
@@ -210,8 +200,9 @@
   function separation(a, b) { let d = Math.abs(a - b) % 360; if (d > 180) d = 360 - d; return d; }
   function aspectAt(ts) {
     const cfg = window.LUN.ASPECTS;
-    const la = window.LunAstro.bodyInfo(cfg.bodyA, ts).lon;
-    const lb = window.LunAstro.bodyInfo(cfg.bodyB, ts).lon;
+    const frame = cfg.frame || 'helio';
+    const la = window.LunAstro.bodyInfo(cfg.bodyA, ts, frame).lon;
+    const lb = window.LunAstro.bodyInfo(cfg.bodyB, ts, frame).lon;
     const sep = separation(la, lb);
     for (const A of ASPECTS) if (Math.abs(sep - A.angle) <= cfg.orb) return { asp: A, sep };
     return { asp: null, sep };

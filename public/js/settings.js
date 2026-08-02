@@ -18,7 +18,7 @@
       signs: window.LUN.SIGNS.map((s) => ({ color: s.color })),
       cycles: window.LUN.CYCLES.map((c) => ({ id: c.id, title: c.title, body: c.body, enabled: c.enabled, zones: c.zones })),
       indicators: { smaPeriods: I.sma.periods, emaPeriods: I.ema.periods, vwapSigma: I.vwap.sigma, vwapReset: I.vwap.reset },
-      aspects: { bodyA: window.LUN.ASPECTS.bodyA, bodyB: window.LUN.ASPECTS.bodyB, orb: window.LUN.ASPECTS.orb },
+      aspects: { bodyA: window.LUN.ASPECTS.bodyA, bodyB: window.LUN.ASPECTS.bodyB, orb: window.LUN.ASPECTS.orb, frame: window.LUN.ASPECTS.frame },
       gann: { unitPerBar: window.LUN.GANN.unitPerBar, extendRight: window.LUN.GANN.extendRight },
     };
     localStorage.setItem(KEY, JSON.stringify(data));
@@ -41,6 +41,7 @@
       if (d.aspects.bodyA) window.LUN.ASPECTS.bodyA = d.aspects.bodyA;
       if (d.aspects.bodyB) window.LUN.ASPECTS.bodyB = d.aspects.bodyB;
       if (typeof d.aspects.orb === 'number') window.LUN.ASPECTS.orb = d.aspects.orb;
+      if (d.aspects.frame) window.LUN.ASPECTS.frame = d.aspects.frame;
     }
     if (d.gann) {
       window.LUN.GANN.unitPerBar = (typeof d.gann.unitPerBar === 'number') ? d.gann.unitPerBar : null;
@@ -145,10 +146,11 @@
     const inA = select(BODIES.map((b) => [b, b]), A.bodyA);
     const inB = select(BODIES.map((b) => [b, b]), A.bodyB);
     const inOrb = el('input', { type: 'number', min: 0, max: 12, step: 0.5, value: A.orb });
+    const inFrame = select([['helio', 'гелиоцентр'], ['geo', 'геоцентр']], A.frame || 'helio');
     const aspSection = el('div', { class: 'lun-sec' }, [
       el('h3', {}, ['Аспекты (полоса ☉/☿)']),
-      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['тело A: ', inA]), el('label', {}, ['тело B: ', inB]), el('label', {}, ['орб °: ', inOrb])]),
-      el('p', { class: 'lun-hint' }, ['Соединение/секстиль/квадрат/трин/оппозиция в пределах орба. Показ — кнопкой «Аспекты». Солнце–Меркурий дают только соединение (расходятся ≤28°).']),
+      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['тело A: ', inA]), el('label', {}, ['тело B: ', inB]), el('label', {}, ['орб °: ', inOrb]), el('label', {}, ['система: ', inFrame])]),
+      el('p', { class: 'lun-hint' }, ['Соединение/секстиль/квадрат/трин/оппозиция в пределах орба. Показ — кнопкой «Аспекты». Гелиоцентр: у Меркурия с Солнцем реальны все мажорные аспекты.']),
     ]);
 
     // блок линии Ганна
@@ -194,7 +196,7 @@
       if (numList(inSig.value).length) I.vwap.sigma = numList(inSig.value);
       I.vwap.reset = inReset.value;
       const A2 = window.LUN.ASPECTS;
-      A2.bodyA = inA.value; A2.bodyB = inB.value;
+      A2.bodyA = inA.value; A2.bodyB = inB.value; A2.frame = inFrame.value;
       const orb = parseFloat(inOrb.value); if (!isNaN(orb)) A2.orb = orb;
       const G2 = window.LUN.GANN;
       G2.unitPerBar = inUnit.value.trim() === '' ? null : parseFloat(inUnit.value);
