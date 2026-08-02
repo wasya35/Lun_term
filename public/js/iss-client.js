@@ -108,5 +108,13 @@
     return pickFront(await getAllPages(url, 'securities'), asset, today);
   }
 
-  window.LunISS = { fetchCandles, aggregate, fetchFront };
+  // Свечи с произвольного рынка (для бэктеста берём непрерывную дневную USD/RUB
+  // с валютного рынка: engine=currency, market=selt, secid=USD000UTSTOM — годы истории).
+  async function fetchCandlesFrom(engine, market, secid, interval, from, till) {
+    const url = `https://iss.moex.com/iss/engines/${engine}/markets/${market}/securities/`
+      + `${encodeURIComponent(secid)}/candles.json?interval=${interval}&from=${from}&till=${till}&iss.reverse=false`;
+    return parseCandles(await getAllPages(url, 'candles'));
+  }
+
+  window.LunISS = { fetchCandles, fetchCandlesFrom, aggregate, fetchFront };
 })();

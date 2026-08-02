@@ -205,6 +205,8 @@
     const setWrap = document.getElementById('settings');
     mkBtn(setWrap, '⚙ Настройки', () => window.LunSettings.open(applySettings), false,
       'Цвета знаков и торговые зоны циклов');
+    mkBtn(setWrap, '📊 Бэктест', () => window.LunBacktest.run(8), false,
+      'Сверка лунных зон с историей USD/RUB за 8 лет');
   }
 
   // тумблеры циклов (пересобираются после изменения настроек)
