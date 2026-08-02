@@ -1,0 +1,9 @@
+{
+  "name": "lun_term",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Браузерный терминал: свечи MOEX (Si, CNY), индикаторы и лунная лента знаков зодиака с торговыми зонами цикла",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

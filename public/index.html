@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lun_term — терминал с лунной лентой</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="group"><span class="glabel">Инструмент</span><div id="instruments" class="btns"></div></div>
+    <div class="group"><span class="glabel">ТФ</span><div id="timeframes" class="btns"></div></div>
+    <div class="group"><span class="glabel">Индикаторы</span><div id="indicators" class="btns"></div></div>
+    <div class="group"><span class="glabel">Рисование</span><div id="drawtools" class="btns"></div></div>
+  </header>
+
+  <div id="sym-title" class="sym-title"></div>
+  <main id="chart"></main>
+
+  <footer class="statusbar">
+    <span id="moon-now">☾ …</span>
+    <span class="spacer"></span>
+    <span>Данные: <b id="datasource">загрузка…</b></span>
+  </footer>
+
+  <!-- вендор-библиотеки (локально, без CDN) -->
+  <script src="/vendor/klinecharts.min.js"></script>
+  <script src="/vendor/astronomy.browser.min.js"></script>
+  <!-- код приложения (порядок важен) -->
+  <script src="/js/config.js"></script>
+  <script src="/js/astro.js"></script>
+  <script src="/js/indicators.js"></script>
+  <script src="/js/data.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
