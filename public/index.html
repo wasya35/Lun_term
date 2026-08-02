@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lun_term — терминал с лунной лентой</title>
-  <link rel="stylesheet" href="/css/style.css" />
+  <link rel="stylesheet" href="/css/style.css?v=6" />
 </head>
 <body>
   <header class="toolbar">
@@ -28,13 +28,14 @@
   <!-- вендор-библиотеки (локально, без CDN) -->
   <script src="/vendor/klinecharts.min.js"></script>
   <script src="/vendor/astronomy.browser.min.js"></script>
-  <!-- код приложения (порядок важен) -->
-  <script src="/js/config.js"></script>
-  <script src="/js/settings.js"></script>
-  <script src="/js/astro.js"></script>
-  <script src="/js/indicators.js"></script>
-  <script src="/js/overlays.js"></script>
-  <script src="/js/data.js"></script>
-  <script src="/js/app.js"></script>
+  <!-- код приложения (порядок важен). ?v= — сброс кэша при обновлении. -->
+  <script src="/js/config.js?v=6"></script>
+  <script src="/js/settings.js?v=6"></script>
+  <script src="/js/astro.js?v=6"></script>
+  <script src="/js/indicators.js?v=6"></script>
+  <script src="/js/overlays.js?v=6"></script>
+  <script src="/js/iss-client.js?v=6"></script>
+  <script src="/js/data.js?v=6"></script>
+  <script src="/js/app.js?v=6"></script>
 </body>
 </html>
