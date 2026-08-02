@@ -100,10 +100,20 @@
   const DRAW_TOOLS = [
     { id: 'horizontalStraightLine', label: 'Уровень' },
     { id: 'segment',                label: 'Трендовая' },
-    { id: 'rect',                   label: 'Прямоугольник' },
-    { id: 'circle',                 label: 'Овал' },
-    { id: 'simpleAnnotation',       label: 'Стрелка/текст' },
+    { id: 'lun_rect',               label: 'Прямоугольник' },
+    { id: 'lun_oval',               label: 'Овал' },
+    { id: 'lun_arrow',              label: 'Стрелка' },
+    { id: 'lun_text',               label: 'Текст' },
   ];
+  function startDraw(toolId) {
+    if (toolId === 'lun_text') {
+      const t = window.prompt('Текст метки:', '');
+      if (t === null) return;
+      state.chart.createOverlay({ name: 'lun_text', extendData: t });
+    } else {
+      state.chart.createOverlay(toolId);
+    }
+  }
 
   /* ---------- статус-строка ---------- */
   function updateMoonStatus() {
@@ -143,17 +153,40 @@
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleOverlay(k, on);
     }));
 
-    // циклы 1..6 — тумблеры создания/удаления полос
+    buildCycleButtons();
+
+    const drawWrap = document.getElementById('drawtools');
+    DRAW_TOOLS.forEach((t) => mkBtn(drawWrap, t.label, () => startDraw(t.id)));
+    mkBtn(drawWrap, '✕ очистить', () => state.chart.removeOverlay()).className = 'danger';
+
+    const setWrap = document.getElementById('settings');
+    mkBtn(setWrap, '⚙ Настройки', () => window.LunSettings.open(applySettings), false,
+      'Цвета знаков и торговые зоны циклов');
+  }
+
+  // тумблеры циклов (пересобираются после изменения настроек)
+  function buildCycleButtons() {
     const cycWrap = document.getElementById('cycles');
+    cycWrap.innerHTML = '';
     window.LUN.CYCLES.forEach((cy, i) => mkBtn(cycWrap, String(i + 1), (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) { if (!state.cyclePanes[cy.id]) createCyclePane(cy, 20 + i); }
       else if (state.cyclePanes[cy.id]) { state.chart.removeIndicator({ paneId: state.cyclePanes[cy.id] }); delete state.cyclePanes[cy.id]; }
     }, cy.enabled, cy.title));
+  }
 
-    const drawWrap = document.getElementById('drawtools');
-    DRAW_TOOLS.forEach((t) => mkBtn(drawWrap, t.label, () => state.chart.createOverlay(t.id)));
-    mkBtn(drawWrap, '✕ очистить', () => state.chart.removeOverlay()).className = 'danger';
+  // применить настройки: пересобрать ленту знаков и полосы циклов
+  function applySettings() {
+    const c = state.chart;
+    if (state.signPane) c.removeIndicator({ paneId: state.signPane });
+    Object.values(state.cyclePanes).forEach((pid) => c.removeIndicator({ paneId: pid }));
+    state.cyclePanes = {};
+    // заново создаём ленту знаков и включённые циклы (над объёмом)
+    c.createIndicator({ name: 'MoonSign', paneId: state.signPane }, false);
+    wishPane(state.signPane, { height: window.LUN.PANE_HEIGHTS.moonSign, minHeight: 26, order: 10 });
+    window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
+    buildCycleButtons();
+    updateMoonStatus();
   }
 
   /* ---------- init ---------- */
@@ -166,7 +199,10 @@
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
     window.addEventListener('lun:datasource', () => {
-      document.getElementById('datasource').textContent = window.LUN_DATA_SOURCE || '';
+      const el = document.getElementById('datasource');
+      el.textContent = window.LUN_DATA_SOURCE || '';
+      el.title = window.LUN_DATA_ERROR || '';
+      el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
       scheduleApply();      // данные загружены — закрепляем высоты панелей
     });
   }

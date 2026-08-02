@@ -20,11 +20,18 @@
     for (const url of candidates) {
       try {
         const res = await fetch(url);
-        if (!res.ok) { lastErr = new Error(endpoint + ' ' + res.status); continue; }
+        if (!res.ok) {
+          // вытащим сообщение об ошибке из тела ответа прокси (JSON {error} или текст)
+          let detail = '';
+          try { const j = await res.clone().json(); detail = j && j.error ? j.error : ''; }
+          catch (e) { try { detail = (await res.text()).slice(0, 120); } catch (_) {} }
+          lastErr = new Error(`${endpoint} HTTP ${res.status}${detail ? ': ' + detail : ''}`);
+          continue;
+        }
         return await res.json();
       } catch (e) { lastErr = e; }
     }
-    throw lastErr || new Error('no proxy');
+    throw lastErr || new Error('нет прокси (api.php недоступен)');
   }
 
   async function fetchISS(symbol, period, tf) {
@@ -89,7 +96,8 @@
           callback(bars, false);
         } catch (e) {
           console.warn('[data] ISS недоступен, демо-режим:', e.message);
-          window.LUN_DATA_SOURCE = 'ДЕМО (нет связи с MOEX)';
+          window.LUN_DATA_ERROR = e.message;
+          window.LUN_DATA_SOURCE = 'ДЕМО — ' + e.message;
           callback(demoBars(symbol, period), false);
         }
         window.dispatchEvent(new CustomEvent('lun:datasource'));
