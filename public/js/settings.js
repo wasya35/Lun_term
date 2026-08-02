@@ -19,6 +19,7 @@
       cycles: window.LUN.CYCLES.map((c) => ({ id: c.id, title: c.title, body: c.body, enabled: c.enabled, zones: c.zones })),
       indicators: { smaPeriods: I.sma.periods, emaPeriods: I.ema.periods, vwapSigma: I.vwap.sigma, vwapReset: I.vwap.reset },
       aspects: { bodyA: window.LUN.ASPECTS.bodyA, bodyB: window.LUN.ASPECTS.bodyB, orb: window.LUN.ASPECTS.orb },
+      gann: { unitPerBar: window.LUN.GANN.unitPerBar, extendRight: window.LUN.GANN.extendRight },
     };
     localStorage.setItem(KEY, JSON.stringify(data));
   }
@@ -40,6 +41,10 @@
       if (d.aspects.bodyA) window.LUN.ASPECTS.bodyA = d.aspects.bodyA;
       if (d.aspects.bodyB) window.LUN.ASPECTS.bodyB = d.aspects.bodyB;
       if (typeof d.aspects.orb === 'number') window.LUN.ASPECTS.orb = d.aspects.orb;
+    }
+    if (d.gann) {
+      window.LUN.GANN.unitPerBar = (typeof d.gann.unitPerBar === 'number') ? d.gann.unitPerBar : null;
+      window.LUN.GANN.extendRight = d.gann.extendRight !== false;
     }
   }
   applyStored();     // до сборки графика
@@ -146,6 +151,19 @@
       el('p', { class: 'lun-hint' }, ['Соединение/секстиль/квадрат/трин/оппозиция в пределах орба. Показ — кнопкой «Аспекты». Солнце–Меркурий дают только соединение (расходятся ≤28°).']),
     ]);
 
+    // блок линии Ганна
+    const G = window.LUN.GANN;
+    const inUnit = el('input', { type: 'number', min: 0, max: 100000, step: 'any', value: G.unitPerBar == null ? '' : G.unitPerBar });
+    const inExt = el('input', { type: 'checkbox', checked: G.extendRight !== false });
+    const gannSection = el('div', { class: 'lun-sec' }, [
+      el('h3', {}, ['Линия Ганна']),
+      el('div', { class: 'lun-cy-head' }, [
+        el('label', {}, ['угол (цена за бар): ', inUnit]),
+        el('label', {}, [inExt, ' продолжение вправо (иначе отрезок)']),
+      ]),
+      el('p', { class: 'lun-hint' }, ['Пусто = наклон по двум точкам. Число = ручной угол (безразмерный, можно большой — до 100000). Рисуется кнопкой «Ган 1×1».']),
+    ]);
+
     const bg = el('div', { class: 'lun-modal-bg' });
     const close = () => bg.remove();
     const modal = el('div', { class: 'lun-modal' }, [
@@ -156,6 +174,7 @@
         el('p', { class: 'lun-hint' }, ['Долгота 0°=Овен. 15° Близнецов=75°, 15° Весов=195°, 15° Козерога=285°. Зона может идти через 360° (напр. 285→75). Тело: Луна/Солнце/Меркурий/... — для второго цикла.'])]),
       indSection,
       aspSection,
+      gannSection,
     ]);
     const apply = el('button', { class: 'lun-btn primary' }, ['Применить']);
     const reset = el('button', { class: 'lun-btn' }, ['Сбросить к стандартным']);
@@ -177,6 +196,9 @@
       const A2 = window.LUN.ASPECTS;
       A2.bodyA = inA.value; A2.bodyB = inB.value;
       const orb = parseFloat(inOrb.value); if (!isNaN(orb)) A2.orb = orb;
+      const G2 = window.LUN.GANN;
+      G2.unitPerBar = inUnit.value.trim() === '' ? null : parseFloat(inUnit.value);
+      G2.extendRight = inExt.checked;
       saveStored();
       close();
       if (onApply) onApply();
