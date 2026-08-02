@@ -28,31 +28,21 @@
     },
   });
 
-  /* --- поворотный овал (3 точки): p0,p1 — ось (направление вдоль тренда),
-   *     p2 — ширина. Эллипс наклоняется вдоль оси p0→p1. --- */
+  /* --- линия Ганна 1×1 (2 точки): p0 — старт, p1 задаёт угол (цена/бар);
+   *     луч продлевается до правого края. --- */
   kc.registerOverlay({
-    name: 'lun_oval',
-    totalStep: 4,
+    name: 'lun_gann',
+    totalStep: 3,
     needDefaultPointFigure: true,
-    createPointFigures: ({ coordinates }) => {
+    createPointFigures: ({ coordinates, bounding }) => {
       if (coordinates.length < 2) return [];
-      const [p0, p1, p2] = coordinates;
-      const cx = (p0.x + p1.x) / 2, cy = (p0.y + p1.y) / 2;
+      const [p0, p1] = coordinates;
       const dx = p1.x - p0.x, dy = p1.y - p0.y;
-      const len = Math.hypot(dx, dy) || 1;
-      const ux = dx / len, uy = dy / len;         // единичный вектор оси
-      const a = len / 2;                          // полуось вдоль тренда
-      // пока 2 точки — показываем направляющую линию оси
-      if (coordinates.length < 3) return [{ type: 'line', attrs: { coordinates: [p0, p1] }, styles: { color: ACCENT, size: 1, style: 'dashed' } }];
-      // ширина = перпендикулярное расстояние от p2 до оси
-      const b = Math.abs((p2.x - cx) * (-uy) + (p2.y - cy) * ux) || 1;
-      const pts = []; const N = 72;
-      for (let i = 0; i <= N; i++) {
-        const t = (2 * Math.PI * i) / N;
-        const lx = a * Math.cos(t), ly = b * Math.sin(t);       // локальные координаты
-        pts.push({ x: cx + lx * ux - ly * uy, y: cy + lx * uy + ly * ux }); // поворот вдоль оси
-      }
-      return [{ type: 'polygon', attrs: { coordinates: pts }, styles: strokeStyle(ACCENT) }];
+      if (dx === 0) return [{ type: 'line', attrs: { coordinates: [p0, p1] }, styles: { color: '#e08a2a', size: 1.4 } }];
+      const targetX = dx > 0 ? bounding.width : 0;         // до края в сторону наклона
+      const t = (targetX - p0.x) / dx;
+      const end = { x: targetX, y: p0.y + dy * t };
+      return [{ type: 'line', attrs: { coordinates: [p0, end] }, styles: { color: '#e08a2a', size: 1.4 } }];
     },
   });
 

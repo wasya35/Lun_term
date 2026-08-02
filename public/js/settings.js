@@ -18,6 +18,7 @@
       signs: window.LUN.SIGNS.map((s) => ({ color: s.color })),
       cycles: window.LUN.CYCLES.map((c) => ({ id: c.id, title: c.title, body: c.body, enabled: c.enabled, zones: c.zones })),
       indicators: { smaPeriods: I.sma.periods, emaPeriods: I.ema.periods, vwapSigma: I.vwap.sigma, vwapReset: I.vwap.reset },
+      aspects: { bodyA: window.LUN.ASPECTS.bodyA, bodyB: window.LUN.ASPECTS.bodyB, orb: window.LUN.ASPECTS.orb },
     };
     localStorage.setItem(KEY, JSON.stringify(data));
   }
@@ -34,6 +35,11 @@
       if (Array.isArray(di.emaPeriods)) I.ema.periods = di.emaPeriods;
       if (Array.isArray(di.vwapSigma)) I.vwap.sigma = di.vwapSigma;
       if (di.vwapReset) I.vwap.reset = di.vwapReset;
+    }
+    if (d.aspects) {
+      if (d.aspects.bodyA) window.LUN.ASPECTS.bodyA = d.aspects.bodyA;
+      if (d.aspects.bodyB) window.LUN.ASPECTS.bodyB = d.aspects.bodyB;
+      if (typeof d.aspects.orb === 'number') window.LUN.ASPECTS.orb = d.aspects.orb;
     }
   }
   applyStored();     // до сборки графика
@@ -129,6 +135,17 @@
       el('p', { class: 'lun-hint' }, ['Периоды через запятую (напр. 20, 50). Изменения применятся к включённым индикаторам.']),
     ]);
 
+    // блок аспектов
+    const A = window.LUN.ASPECTS;
+    const inA = select(BODIES.map((b) => [b, b]), A.bodyA);
+    const inB = select(BODIES.map((b) => [b, b]), A.bodyB);
+    const inOrb = el('input', { type: 'number', min: 0, max: 12, step: 0.5, value: A.orb });
+    const aspSection = el('div', { class: 'lun-sec' }, [
+      el('h3', {}, ['Аспекты (полоса ☉/☿)']),
+      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['тело A: ', inA]), el('label', {}, ['тело B: ', inB]), el('label', {}, ['орб °: ', inOrb])]),
+      el('p', { class: 'lun-hint' }, ['Соединение/секстиль/квадрат/трин/оппозиция в пределах орба. Показ — кнопкой «Аспекты». Солнце–Меркурий дают только соединение (расходятся ≤28°).']),
+    ]);
+
     const bg = el('div', { class: 'lun-modal-bg' });
     const close = () => bg.remove();
     const modal = el('div', { class: 'lun-modal' }, [
@@ -138,6 +155,7 @@
       el('div', { class: 'lun-sec' }, [el('h3', {}, ['Циклы и торговые зоны']), ...cycleBlocks,
         el('p', { class: 'lun-hint' }, ['Долгота 0°=Овен. 15° Близнецов=75°, 15° Весов=195°, 15° Козерога=285°. Зона может идти через 360° (напр. 285→75). Тело: Луна/Солнце/Меркурий/... — для второго цикла.'])]),
       indSection,
+      aspSection,
     ]);
     const apply = el('button', { class: 'lun-btn primary' }, ['Применить']);
     const reset = el('button', { class: 'lun-btn' }, ['Сбросить к стандартным']);
@@ -156,6 +174,9 @@
       if (numList(inEma.value).length) I.ema.periods = numList(inEma.value);
       if (numList(inSig.value).length) I.vwap.sigma = numList(inSig.value);
       I.vwap.reset = inReset.value;
+      const A2 = window.LUN.ASPECTS;
+      A2.bodyA = inA.value; A2.bodyB = inB.value;
+      const orb = parseFloat(inOrb.value); if (!isNaN(orb)) A2.orb = orb;
       saveStored();
       close();
       if (onApply) onApply();

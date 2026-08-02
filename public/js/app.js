@@ -59,26 +59,38 @@
     return paneId;
   }
 
+  const ASPECT_PANE = 'pane_aspect';
+  function createAspectPane() {
+    state.chart.createIndicator({ name: 'AspectStrip', paneId: ASPECT_PANE }, false);
+    state.aspectPane = ASPECT_PANE;
+    wishPane(ASPECT_PANE, { height: window.LUN.PANE_HEIGHTS.cycle, minHeight: 18, order: 30 });
+  }
+  function createVolumePane() {
+    state.volumePane = 'pane_volume';
+    // calcParams: [] — объём без скользящих средних
+    state.chart.createIndicator({ name: 'VOL', calcParams: [], paneId: state.volumePane }, false);
+    wishPane(state.volumePane, { height: window.LUN.PANE_HEIGHTS.volume, order: 90 });
+  }
+
   function buildPanes() {
     const c = state.chart, H = window.LUN.PANE_HEIGHTS;
     state.signPane = 'pane_moon_sign';
     c.createIndicator({ name: 'MoonSign', paneId: state.signPane }, false);
     wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
-    state.volumePane = 'pane_volume';
-    c.createIndicator({ name: 'VOL', paneId: state.volumePane }, false);
-    wishPane(state.volumePane, { height: H.volume, order: 90 });
+    if (window.LUN.ASPECTS.enabled) createAspectPane();
+    createVolumePane();
   }
 
   /* ---------- ценовые индикаторы (тумблеры) ---------- */
   function toggleOverlay(kind, on) {
     const c = state.chart, IND = window.LUN.INDICATORS;
     if (on) {
-      let name, calcParams;
-      if (kind === 'SMA') { name = 'MA';  calcParams = IND.sma.periods; }
-      if (kind === 'EMA') { name = 'EMA'; calcParams = IND.ema.periods; }
+      let name, calcParams, styles;
+      if (kind === 'SMA') { name = 'MA';  calcParams = IND.sma.periods; styles = { lines: IND.sma.colors.map((color) => ({ color })) }; }
+      if (kind === 'EMA') { name = 'EMA'; calcParams = IND.ema.periods; styles = { lines: IND.ema.colors.map((color) => ({ color })) }; }
       if (kind === 'VWAP') { name = 'VWAP_BANDS'; }
-      c.createIndicator({ name, calcParams, paneId: 'candle_pane' }, true);
+      c.createIndicator({ name, calcParams, styles, paneId: 'candle_pane' }, true);
       state.overlayIds[kind] = name;      // удаляем по имени индикатора
     } else {
       c.removeIndicator({ paneId: 'candle_pane', name: state.overlayIds[kind] });
@@ -101,9 +113,9 @@
     { id: 'horizontalStraightLine', label: 'Уровень' },
     { id: 'segment',                label: 'Трендовая' },
     { id: 'lun_rect',               label: 'Прямоугольник' },
-    { id: 'lun_oval',               label: 'Овал' },
     { id: 'lun_arrow',              label: 'Стрелка' },
     { id: 'lun_text',               label: 'Текст' },
+    { id: 'lun_gann',               label: 'Ган 1×1' },
   ];
   function startDraw(toolId) {
     if (toolId === 'lun_text') {
@@ -152,6 +164,16 @@
     ['SMA', 'EMA', 'VWAP'].forEach((k) => mkBtn(indWrap, k, (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleOverlay(k, on);
     }));
+    // объём — включён по умолчанию, можно убрать
+    mkBtn(indWrap, 'Объём', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createVolumePane(); else if (state.volumePane) { state.chart.removeIndicator({ paneId: state.volumePane }); state.volumePane = null; }
+    }, true);
+    // аспекты Солнце–Меркурий (полоса)
+    mkBtn(indWrap, 'Аспекты', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createAspectPane(); else if (state.aspectPane) { state.chart.removeIndicator({ paneId: state.aspectPane }); state.aspectPane = null; }
+    }, window.LUN.ASPECTS.enabled);
 
     buildCycleButtons();
 
@@ -188,6 +210,8 @@
     buildCycleButtons();
     // пересоздать активные индикаторы (SMA/EMA/VWAP) с новыми параметрами
     Object.keys(state.overlayIds).forEach((kind) => { toggleOverlay(kind, false); toggleOverlay(kind, true); });
+    // обновить полосу аспектов (новый орб/тела)
+    if (state.aspectPane) { c.removeIndicator({ paneId: state.aspectPane }); createAspectPane(); }
     updateMoonStatus();
   }
 

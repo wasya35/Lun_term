@@ -81,16 +81,18 @@
 
       // 3) текущий градус цифрой в каждом декане + глиф знака в его начале
       ctx.textBaseline = 'middle';
-      // глиф — один раз на знак
+      // название знака (или глиф, если узко) — один раз на знак
       runsOverVisible(chart, xAxis,
         (bar) => window.LunAstro.moonInfo(bar.timestamp).signIndex,
         (startI, endI, midX, leftX, rightX) => {
-          const info = window.LunAstro.moonInfo(list[startI].timestamp);
-          ctx.font = '13px system-ui, sans-serif';
-          if (rightX - leftX < 16) return;
+          const s = SIGNS[window.LunAstro.moonInfo(list[startI].timestamp).signIndex];
+          const width = rightX - leftX;
           ctx.fillStyle = 'rgba(255,255,255,0.95)';
           ctx.textAlign = 'left';
-          ctx.fillText(SIGNS[info.signIndex].glyph, leftX + 4, H * 0.32);
+          ctx.font = '12px system-ui, sans-serif';
+          if (width > ctx.measureText(s.glyph + ' ' + s.name).width + 8) ctx.fillText(s.glyph + ' ' + s.name, leftX + 5, H * 0.32);
+          else if (width > ctx.measureText(s.name).width + 6) ctx.fillText(s.name, leftX + 5, H * 0.32);
+          else if (width > 16) ctx.fillText(s.glyph, leftX + 4, H * 0.32);
         });
       // градус — на конце каждого декана (видно ход 9°→19°→29°)
       runsOverVisible(chart, xAxis,
@@ -125,9 +127,9 @@
       // пустой цикл — подсказка, чтобы включённая полоса была видна
       if (!cycle || !cycle.zones || cycle.zones.length === 0) {
         ctx.fillStyle = '#242a36'; ctx.fillRect(0, 0, bounding.width, H);
-        ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.font = '11px system-ui, sans-serif';
-        ctx.fillText('нет зон — добавьте в ⚙ Настройки', 8, H / 2);
+        ctx.fillText('нет зон — добавьте в ⚙ Настройки', bounding.width / 2, H / 2);
         return true;
       }
       const zonesOf = (ts) => {
@@ -176,10 +178,16 @@
     calc: (dataList) => {
       const cfg = window.LUN.INDICATORS.vwap;
       const [k1, k2] = cfg.sigma;
-      let curDay = null, cumV = 0, cumPV = 0, cumP2V = 0;
+      let curKey = null, cumV = 0, cumPV = 0, cumP2V = 0;
+      const sessionKey = (ts) => {
+        const t = ts + MSK_OFFSET;
+        if (cfg.reset === 'month') { const dt = new Date(t); return dt.getUTCFullYear() * 12 + dt.getUTCMonth(); }
+        if (cfg.reset === 'day') return Math.floor(t / 86400000);
+        return 0;
+      };
       return dataList.map((d) => {
-        const day = cfg.reset === 'day' ? Math.floor((d.timestamp + MSK_OFFSET) / 86400000) : 0;
-        if (day !== curDay) { curDay = day; cumV = cumPV = cumP2V = 0; }
+        const day = sessionKey(d.timestamp);
+        if (day !== curKey) { curKey = day; cumV = cumPV = cumP2V = 0; }
         const tp = (d.high + d.low + d.close) / 3;
         const v = d.volume || 1;
         cumV += v; cumPV += tp * v; cumP2V += tp * tp * v;
@@ -187,6 +195,56 @@
         const sd = Math.sqrt(Math.max(0, cumP2V / cumV - vwap * vwap));
         return { vwap, up1: vwap + k1 * sd, dn1: vwap - k1 * sd, up2: vwap + k2 * sd, dn2: vwap - k2 * sd };
       });
+    },
+  });
+
+  /* ======================= Полоса аспектов ======================= */
+  const BODY_SYM = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄' };
+  const ASPECTS = [
+    { name: 'соединение', sym: '☌', angle: 0,   color: '#b7950b' },
+    { name: 'секстиль',   sym: '⚹', angle: 60,  color: '#2c6fb0' },
+    { name: 'квадрат',    sym: '□', angle: 90,  color: '#c0392b' },
+    { name: 'трин',       sym: '△', angle: 120, color: '#2e7d5b' },
+    { name: 'оппозиция',  sym: '☍', angle: 180, color: '#7d3c98' },
+  ];
+  function separation(a, b) { let d = Math.abs(a - b) % 360; if (d > 180) d = 360 - d; return d; }
+  function aspectAt(ts) {
+    const cfg = window.LUN.ASPECTS;
+    const la = window.LunAstro.bodyInfo(cfg.bodyA, ts).lon;
+    const lb = window.LunAstro.bodyInfo(cfg.bodyB, ts).lon;
+    const sep = separation(la, lb);
+    for (const A of ASPECTS) if (Math.abs(sep - A.angle) <= cfg.orb) return { asp: A, sep };
+    return { asp: null, sep };
+  }
+
+  kc.registerIndicator({
+    name: 'AspectStrip',
+    shortName: 'Аспекты',
+    series: 'normal',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const cfg = window.LUN.ASPECTS;
+      const H = bounding.height, list = chart.getDataList();
+      const symA = BODY_SYM[cfg.bodyA] || cfg.bodyA, symB = BODY_SYM[cfg.bodyB] || cfg.bodyB;
+      forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
+        const r = aspectAt(bar.timestamp);
+        ctx.fillStyle = r.asp ? r.asp.color : '#20252f';
+        ctx.fillRect(x - half, 0, half * 2 + 0.6, H);
+      });
+      ctx.textBaseline = 'middle'; ctx.font = '11px system-ui, sans-serif';
+      // подпись словами на участках активного аспекта; иначе — угол расхождения
+      runsOverVisible(chart, xAxis,
+        (bar) => { const a = aspectAt(bar.timestamp).asp; return a ? a.name : '—'; },
+        (startI, endI, midX, leftX, rightX) => {
+          const r = aspectAt(list[endI].timestamp);
+          const label = r.asp ? `${symA} ${r.asp.name} ${symB}` : `${symA}${symB} ${Math.round(r.sep)}°`;
+          if (rightX - leftX < ctx.measureText(label).width + 8) return;
+          ctx.fillStyle = r.asp ? 'rgba(255,255,255,0.96)' : 'rgba(255,255,255,0.4)';
+          ctx.textAlign = 'center';
+          ctx.fillText(label, midX, H / 2);
+        });
+      return true;
     },
   });
 })();
