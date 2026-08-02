@@ -4,6 +4,7 @@
   "private": true,
   "description": "Браузерный терминал: свечи MOEX (Si, CNY), индикаторы и лунная лента знаков зодиака с торговыми зонами цикла",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node test/iss.test.js"
   }
 }

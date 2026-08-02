@@ -14,7 +14,7 @@
 
   async function fetchISS(symbol, period, tf) {
     const till = new Date();
-    const back = tf.type === 'day' ? 500 : (tf.type === 'hour' ? 45 : 12); // дней истории
+    const back = tf.type === 'day' ? 500 : (tf.type === 'hour' ? 45 : 7); // дней истории
     const from = new Date(till.getTime() - back * 86400000);
     const fmt = (d) => d.toISOString().slice(0, 10);
     const url = `/api/candles?secid=${encodeURIComponent(symbol.ticker)}`
