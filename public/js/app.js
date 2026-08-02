@@ -186,6 +186,8 @@
     wishPane(state.signPane, { height: window.LUN.PANE_HEIGHTS.moonSign, minHeight: 26, order: 10 });
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
     buildCycleButtons();
+    // пересоздать активные индикаторы (SMA/EMA/VWAP) с новыми параметрами
+    Object.keys(state.overlayIds).forEach((kind) => { toggleOverlay(kind, false); toggleOverlay(kind, true); });
     updateMoonStatus();
   }
 

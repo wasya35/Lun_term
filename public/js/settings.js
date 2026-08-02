@@ -13,9 +13,11 @@
   /* ---------- хранение ---------- */
   function loadStored() { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) { return null; } }
   function saveStored() {
+    const I = window.LUN.INDICATORS;
     const data = {
       signs: window.LUN.SIGNS.map((s) => ({ color: s.color })),
       cycles: window.LUN.CYCLES.map((c) => ({ id: c.id, title: c.title, body: c.body, enabled: c.enabled, zones: c.zones })),
+      indicators: { smaPeriods: I.sma.periods, emaPeriods: I.ema.periods, vwapSigma: I.vwap.sigma, vwapReset: I.vwap.reset },
     };
     localStorage.setItem(KEY, JSON.stringify(data));
   }
@@ -26,6 +28,13 @@
       const sv = d.cycles.find((x) => x.id === c.id);
       if (sv) { c.title = sv.title || c.title; c.body = sv.body || c.body; c.enabled = !!sv.enabled; if (Array.isArray(sv.zones)) c.zones = sv.zones; }
     });
+    const di = d.indicators, I = window.LUN.INDICATORS;
+    if (di) {
+      if (Array.isArray(di.smaPeriods)) I.sma.periods = di.smaPeriods;
+      if (Array.isArray(di.emaPeriods)) I.ema.periods = di.emaPeriods;
+      if (Array.isArray(di.vwapSigma)) I.vwap.sigma = di.vwapSigma;
+      if (di.vwapReset) I.vwap.reset = di.vwapReset;
+    }
   }
   applyStored();     // до сборки графика
 
@@ -106,6 +115,20 @@
     });
     const cycleBlocks = window.LUN.CYCLES.map(cycleBlock);
 
+    // блок индикаторов
+    const I = window.LUN.INDICATORS;
+    const inSma = el('input', { type: 'text', value: I.sma.periods.join(', ') });
+    const inEma = el('input', { type: 'text', value: I.ema.periods.join(', ') });
+    const inSig = el('input', { type: 'text', value: I.vwap.sigma.join(', ') });
+    const inReset = select([['day', 'внутридневной (сброс в 0:00 МСК)'], ['none', 'сплошной']], I.vwap.reset);
+    const numList = (s) => String(s).split(',').map((x) => parseFloat(x.trim())).filter((n) => !isNaN(n));
+    const indSection = el('div', { class: 'lun-sec' }, [
+      el('h3', {}, ['Индикаторы']),
+      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['SMA периоды: ', inSma]), el('label', {}, ['EMA периоды: ', inEma])]),
+      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['VWAP σ: ', inSig]), el('label', {}, ['VWAP сессия: ', inReset])]),
+      el('p', { class: 'lun-hint' }, ['Периоды через запятую (напр. 20, 50). Изменения применятся к включённым индикаторам.']),
+    ]);
+
     const bg = el('div', { class: 'lun-modal-bg' });
     const close = () => bg.remove();
     const modal = el('div', { class: 'lun-modal' }, [
@@ -113,7 +136,8 @@
       el('div', { class: 'lun-sec' }, [el('h3', {}, ['Цвета знаков']), el('div', { class: 'lun-signs' }, signInputs.map((s) => s.row)),
         el('p', { class: 'lun-hint' }, ['Сейчас по стихиям. Меняй под себя — сохранится в браузере.'])]),
       el('div', { class: 'lun-sec' }, [el('h3', {}, ['Циклы и торговые зоны']), ...cycleBlocks,
-        el('p', { class: 'lun-hint' }, ['Долгота 0°=Овен. 15° Близнецов=75°, 15° Весов=195°, 15° Козерога=285°. Зона может идти через 360° (напр. 285→75).'])]),
+        el('p', { class: 'lun-hint' }, ['Долгота 0°=Овен. 15° Близнецов=75°, 15° Весов=195°, 15° Козерога=285°. Зона может идти через 360° (напр. 285→75). Тело: Луна/Солнце/Меркурий/... — для второго цикла.'])]),
+      indSection,
     ]);
     const apply = el('button', { class: 'lun-btn primary' }, ['Применить']);
     const reset = el('button', { class: 'lun-btn' }, ['Сбросить к стандартным']);
@@ -127,6 +151,11 @@
     apply.onclick = () => {
       signInputs.forEach((s, i) => { window.LUN.SIGNS[i].color = s.inp.value; });
       window.LUN.CYCLES = cycleBlocks.map((b) => b._read());
+      const I = window.LUN.INDICATORS;
+      if (numList(inSma.value).length) I.sma.periods = numList(inSma.value);
+      if (numList(inEma.value).length) I.ema.periods = numList(inEma.value);
+      if (numList(inSig.value).length) I.vwap.sigma = numList(inSig.value);
+      I.vwap.reset = inReset.value;
       saveStored();
       close();
       if (onApply) onApply();

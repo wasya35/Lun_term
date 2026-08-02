@@ -98,5 +98,18 @@ LUN.INDICATORS = {
 /* Разбивка знака на деканы по 10° в ленте (тонкие разделители) */
 LUN.SIGN_SUBDIVISION = 10;
 
+/* --- Шлюзы к MOEX ISS -------------------------------------------------------
+ * Браузер не может ходить на ISS напрямую (нет CORS), поэтому пробуем по порядку:
+ *   ''  — прямой запрос (сработает, если у сети/хостинга CORS всё же открыт);
+ *   публичные CORS-шлюзы — оборачивают запрос и добавляют CORS (без своего сервера).
+ * Первый рабочий запоминается. Порядок можно менять; можно вписать СВОЙ шлюз
+ * (напр. Cloudflare Worker) — тогда данные пойдут надёжно и без задержек шлюзов.
+ * wrap: (issUrl) => готовый URL. */
+LUN.ISS_GATEWAYS = [
+  { name: 'прямой',     wrap: (u) => u },
+  { name: 'allorigins', wrap: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+  { name: 'corsproxy',  wrap: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
+];
+
 /* Высоты панелей (px) */
 LUN.PANE_HEIGHTS = { moonSign: 42, cycle: 26, volume: 90 };

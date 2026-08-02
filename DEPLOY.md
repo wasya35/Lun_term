@@ -53,6 +53,37 @@ vendor/…
 
   Проверка вручную (если дошло до прокси): `https://lun.твойдомен.ru/api.php?fn=front&asset=Si`.
 
+## Если данные не идут (ДЕМО)
+
+MOEX ISS **не отдаёт данные напрямую в браузер** (нет CORS). Приложение само пробует
+по очереди: прямой запрос → публичные CORS-шлюзы (allorigins, corsproxy) → твой `api.php`.
+Часто уже публичный шлюз даёт живые данные — тогда в строке будет `MOEX ISS (шлюз: …)`.
+Данные бесплатные, **с задержкой ~15 минут** (реальное время у MOEX только платно).
+
+Если публичные шлюзы недоступны/медленные — сделай **свой бесплатный шлюз на Cloudflare**
+(надёжно, ~5 минут, без своего сервера):
+
+1. Заведи бесплатный аккаунт на dash.cloudflare.com → Workers & Pages → Create → Worker.
+2. Вставь код и задеплой:
+   ```js
+   export default {
+     async fetch(request) {
+       const u = new URL(request.url).searchParams.get('url');
+       if (!u || !u.startsWith('https://iss.moex.com/')) return new Response('bad url', { status: 400 });
+       const r = await fetch(u);
+       return new Response(await r.text(), {
+         headers: { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' },
+       });
+     }
+   };
+   ```
+3. Получишь адрес вида `https://имя.логин.workers.dev`. Открой на хостинге файл
+   `js/config.js` и в начало списка `LUN.ISS_GATEWAYS` добавь свой шлюз:
+   ```js
+   { name: 'worker', wrap: (u) => 'https://имя.логин.workers.dev/?url=' + encodeURIComponent(u) },
+   ```
+4. Сохрани, обнови сайт (`Ctrl+Shift+R`). В строке появится `MOEX ISS (шлюз: worker)`.
+
 ## Обновление сайта
 
 Просто перезалей изменившиеся файлы поверх старых (обычно достаточно папки `js/`).

@@ -61,14 +61,34 @@
     return list;
   }
 
+  // список шлюзов; первый рабочий запоминаем
+  const gateways = () => (window.LUN && window.LUN.ISS_GATEWAYS) || [{ name: 'прямой', wrap: (u) => u }];
+  let workingGw = null;                         // {name, wrap}
+  window.LUN_ISS_GATEWAY = '';
+
+  async function fetchJSON(issUrl) {
+    // если уже знаем рабочий шлюз — идём через него
+    const tryList = workingGw ? [workingGw] : gateways();
+    let lastErr;
+    for (const gw of tryList) {
+      try {
+        const res = await fetch(gw.wrap(issUrl));
+        if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+        const j = await res.json();
+        workingGw = gw; window.LUN_ISS_GATEWAY = gw.name;
+        return j;
+      } catch (e) { lastErr = e; }
+    }
+    workingGw = null;
+    throw lastErr || new Error('нет доступного шлюза к ISS');
+  }
+
   // постранично тянем ?start=N, пока таблица не иссякнет
   async function getAllPages(baseUrl, table, maxPages = 40) {
     const pages = []; let start = 0;
     for (let i = 0; i < maxPages; i++) {
       const sep = baseUrl.includes('?') ? '&' : '?';
-      const res = await fetch(`${baseUrl}${sep}start=${start}`);
-      if (!res.ok) throw new Error('ISS HTTP ' + res.status);
-      const j = await res.json();
+      const j = await fetchJSON(`${baseUrl}${sep}start=${start}`);
       pages.push(j);
       const rows = (j[table] && j[table].data) ? j[table].data.length : 0;
       if (rows === 0) break;

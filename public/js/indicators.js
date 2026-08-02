@@ -122,6 +122,14 @@
       const cycle = indicator.extendData && indicator.extendData.cycle;
       const H = bounding.height;
       const list = chart.getDataList();
+      // пустой цикл — подсказка, чтобы включённая полоса была видна
+      if (!cycle || !cycle.zones || cycle.zones.length === 0) {
+        ctx.fillStyle = '#242a36'; ctx.fillRect(0, 0, bounding.width, H);
+        ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.fillText('нет зон — добавьте в ⚙ Настройки', 8, H / 2);
+        return true;
+      }
       const zonesOf = (ts) => {
         const info = window.LunAstro.bodyInfo(cycle ? cycle.body : 'Moon', ts);
         return window.LunAstro.zoneOf(info.lon, cycle ? cycle.zones : []);

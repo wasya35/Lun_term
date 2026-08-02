@@ -16,7 +16,7 @@
 
   function rangeFor(tf) {
     const till = new Date();
-    const backDays = tf.type === 'day' ? 500 : (tf.type === 'hour' ? 45 : 7);
+    const backDays = tf.type === 'day' ? 500 : (tf.type === 'hour' ? 45 : 3);
     return { from: fmtDate(new Date(till.getTime() - backDays * 86400000)), till: fmtDate(till) };
   }
 
@@ -69,7 +69,11 @@
       let bars = agg
         ? window.LunISS.aggregate(await window.LunISS.fetchCandles(symbol.ticker, 1, from, till), tf.iss)
         : await window.LunISS.fetchCandles(symbol.ticker, tf.iss, from, till);
-      if (bars && bars.length) { window.LUN_DATA_SOURCE = 'MOEX ISS (прямо)'; window.LUN_DATA_ERROR = ''; return bars; }
+      if (bars && bars.length) {
+        const gw = window.LUN_ISS_GATEWAY;
+        window.LUN_DATA_SOURCE = 'MOEX ISS' + (gw && gw !== 'прямой' ? ` (шлюз: ${gw})` : ' (прямо)');
+        window.LUN_DATA_ERROR = ''; return bars;
+      }
       throw new Error('пусто');
     } catch (eDirect) {
       // 2) прокси

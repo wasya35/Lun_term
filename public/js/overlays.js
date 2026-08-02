@@ -28,21 +28,29 @@
     },
   });
 
-  /* --- овал (полигон-аппроксимация эллипса по 2 углам) --- */
+  /* --- поворотный овал (3 точки): p0,p1 — ось (направление вдоль тренда),
+   *     p2 — ширина. Эллипс наклоняется вдоль оси p0→p1. --- */
   kc.registerOverlay({
     name: 'lun_oval',
-    totalStep: 3,
+    totalStep: 4,
     needDefaultPointFigure: true,
     createPointFigures: ({ coordinates }) => {
       if (coordinates.length < 2) return [];
-      const [a, b] = coordinates;
-      const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-      const rx = Math.abs(b.x - a.x) / 2, ry = Math.abs(b.y - a.y) / 2;
-      const pts = [];
-      const N = 64;
+      const [p0, p1, p2] = coordinates;
+      const cx = (p0.x + p1.x) / 2, cy = (p0.y + p1.y) / 2;
+      const dx = p1.x - p0.x, dy = p1.y - p0.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len;         // единичный вектор оси
+      const a = len / 2;                          // полуось вдоль тренда
+      // пока 2 точки — показываем направляющую линию оси
+      if (coordinates.length < 3) return [{ type: 'line', attrs: { coordinates: [p0, p1] }, styles: { color: ACCENT, size: 1, style: 'dashed' } }];
+      // ширина = перпендикулярное расстояние от p2 до оси
+      const b = Math.abs((p2.x - cx) * (-uy) + (p2.y - cy) * ux) || 1;
+      const pts = []; const N = 72;
       for (let i = 0; i <= N; i++) {
         const t = (2 * Math.PI * i) / N;
-        pts.push({ x: cx + rx * Math.cos(t), y: cy + ry * Math.sin(t) });
+        const lx = a * Math.cos(t), ly = b * Math.sin(t);       // локальные координаты
+        pts.push({ x: cx + lx * ux - ly * uy, y: cy + lx * uy + ly * ux }); // поворот вдоль оси
       }
       return [{ type: 'polygon', attrs: { coordinates: pts }, styles: strokeStyle(ACCENT) }];
     },
