@@ -190,13 +190,15 @@
 
   /* ======================= Полоса аспектов ======================= */
   const BODY_SYM = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄' };
+  // голубые (soft) = продолжение движения; красные (hard) = разворот/коррекция
   const ASPECTS = [
-    { name: 'соединение', sym: '☌', angle: 0,   color: '#b7950b' },
-    { name: 'секстиль',   sym: '⚹', angle: 60,  color: '#2c6fb0' },
-    { name: 'квадрат',    sym: '□', angle: 90,  color: '#c0392b' },
-    { name: 'трин',       sym: '△', angle: 120, color: '#2e7d5b' },
-    { name: 'оппозиция',  sym: '☍', angle: 180, color: '#7d3c98' },
+    { name: 'соединение', sym: '☌', angle: 0,   kind: 'hard', color: '#c0392b' },
+    { name: 'секстиль',   sym: '⚹', angle: 60,  kind: 'soft', color: '#2c6fb0' },
+    { name: 'квадрат',    sym: '□', angle: 90,  kind: 'hard', color: '#c0392b' },
+    { name: 'трин',       sym: '△', angle: 120, kind: 'soft', color: '#2c6fb0' },
+    { name: 'оппозиция',  sym: '☍', angle: 180, kind: 'hard', color: '#c0392b' },
   ];
+  window.LUN_ASPECT_DEFS = ASPECTS;
   function separation(a, b) { let d = Math.abs(a - b) % 360; if (d > 180) d = 360 - d; return d; }
   function aspectAt(ts) {
     const cfg = window.LUN.ASPECTS;
