@@ -12,16 +12,28 @@
     return (PERIOD_MS[period.type] || 3600000) * period.span;
   }
 
+  // Прокси может быть развёрнут двумя способами: Node-сервер (/api/...) или
+  // PHP на шаред-хостинге (api.php?fn=...). Пробуем оба, берём первый рабочий.
+  async function apiFetch(endpoint, qs) {
+    const candidates = [`/api/${endpoint}?${qs}`, `api.php?fn=${endpoint}&${qs}`];
+    let lastErr;
+    for (const url of candidates) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) { lastErr = new Error(endpoint + ' ' + res.status); continue; }
+        return await res.json();
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('no proxy');
+  }
+
   async function fetchISS(symbol, period, tf) {
     const till = new Date();
     const back = tf.type === 'day' ? 500 : (tf.type === 'hour' ? 45 : 7); // дней истории
     const from = new Date(till.getTime() - back * 86400000);
     const fmt = (d) => d.toISOString().slice(0, 10);
-    const url = `/api/candles?secid=${encodeURIComponent(symbol.ticker)}`
-              + `&iss=${tf.iss}&from=${fmt(from)}&till=${fmt(till)}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error('ISS ' + res.status);
-    const bars = await res.json();
+    const qs = `secid=${encodeURIComponent(symbol.ticker)}&iss=${tf.iss}&from=${fmt(from)}&till=${fmt(till)}`;
+    const bars = await apiFetch('candles', qs);
     if (!Array.isArray(bars) || bars.length === 0) throw new Error('ISS empty');
     return bars;
   }
@@ -58,12 +70,9 @@
     if (frontCache.has(instrument.assetCode)) return frontCache.get(instrument.assetCode);
     let ticker = instrument.ticker;
     try {
-      const res = await fetch('/api/front?asset=' + encodeURIComponent(instrument.assetCode));
-      if (res.ok) {
-        const j = await res.json();
-        if (j && j.ticker) ticker = j.ticker;
-      }
-    } catch (e) { /* нет сети — остаёмся на запасном тикере */ }
+      const j = await apiFetch('front', 'asset=' + encodeURIComponent(instrument.assetCode));
+      if (j && j.ticker) ticker = j.ticker;
+    } catch (e) { /* нет прокси/сети — остаёмся на запасном тикере */ }
     frontCache.set(instrument.assetCode, ticker);
     return ticker;
   }

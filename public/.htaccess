@@ -1,0 +1,9 @@
+# Красивые пути /api/* → api.php (если на хостинге включён mod_rewrite).
+# Если mod_rewrite нет — ничего страшного: фронтенд сам зовёт api.php?fn=...
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^api/front$   api.php?fn=front   [QSA,L]
+  RewriteRule ^api/candles$ api.php?fn=candles [QSA,L]
+</IfModule>
+
+DirectoryIndex index.html

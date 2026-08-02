@@ -1,0 +1,175 @@
+<?php
+/* =============================================================================
+ *  api.php — прокси к MOEX ISS на PHP (для шаред-хостинга: СпринтХост/Таймвеб)
+ * =============================================================================
+ *  Тот же контракт, что у Node-сервера, но без Node — работает на любом
+ *  обычном хостинге с PHP. Кладётся в корень поддомена рядом с index.html.
+ *
+ *  Вызовы:
+ *    api.php?fn=front&asset=Si
+ *    api.php?fn=candles&secid=SiU6&iss=60&from=2026-07-01&till=2026-07-31
+ *  (фронтенд ходит на /api/front и /api/candles — их на api.php заворачивает
+ *   .htaccess; если mod_rewrite недоступен, фронтенд сам зовёт api.php?fn=...)
+ * ===========================================================================*/
+
+/* ----------------------------- чистые функции ----------------------------- */
+
+// "YYYY-MM-DD HH:MM:SS" (МСК, UTC+3) -> epoch ms
+function msk_to_ms($s) {
+  $t = strtotime(str_replace('T', ' ', $s) . ' +0300');
+  return $t === false ? null : $t * 1000;
+}
+
+// строки ISS-таблицы -> массив ассоц. массивов по именам колонок
+function rows_to_objects($table) {
+  if (!$table || empty($table['columns']) || !isset($table['data'])) return [];
+  $cols = $table['columns'];
+  $out = [];
+  foreach ($table['data'] as $row) {
+    $o = [];
+    foreach ($cols as $i => $name) $o[$name] = $row[$i] ?? null;
+    $out[] = $o;
+  }
+  return $out;
+}
+
+// страницы candles.json -> бары KLineChart
+function parse_candles($pages) {
+  $out = [];
+  foreach ($pages as $j) {
+    foreach (rows_to_objects($j['candles'] ?? null) as $o) {
+      $ts = msk_to_ms($o['begin']);
+      if ($ts !== null) $out[] = [
+        'timestamp' => $ts,
+        'open' => $o['open'], 'high' => $o['high'], 'low' => $o['low'],
+        'close' => $o['close'], 'volume' => $o['volume'],
+      ];
+    }
+  }
+  return $out;
+}
+
+// агрегация минуток в N-минутные свечи
+function aggregate_bars($bars, $n) {
+  $step = $n * 60000;
+  $out = []; $cur = null;
+  foreach ($bars as $b) {
+    $bucket = intdiv((int)$b['timestamp'], $step) * $step;
+    if ($cur === null || $cur['timestamp'] !== $bucket) {
+      if ($cur !== null) $out[] = $cur;
+      $cur = ['timestamp' => $bucket, 'open' => $b['open'], 'high' => $b['high'],
+              'low' => $b['low'], 'close' => $b['close'], 'volume' => $b['volume'] ?: 0];
+    } else {
+      $cur['high'] = max($cur['high'], $b['high']);
+      $cur['low']  = min($cur['low'], $b['low']);
+      $cur['close'] = $b['close'];
+      $cur['volume'] += $b['volume'] ?: 0;
+    }
+  }
+  if ($cur !== null) $out[] = $cur;
+  return $out;
+}
+
+// выбрать ближний фьючерс актива из страниц securities.json
+function pick_front($pages, $asset, $today) {
+  $seen = []; $list = [];
+  foreach ($pages as $j) {
+    foreach (rows_to_objects($j['securities'] ?? null) as $o) {
+      if (($o['ASSETCODE'] ?? null) !== $asset) continue;
+      $secid = $o['SECID'] ?? '';
+      if (!preg_match('/^[A-Za-z]{1,3}[FGHJKMNQUVXZ]\d$/', $secid)) continue; // фьючерсы, без опционов
+      $ldd = $o['LASTDELDATE'] ?? '';
+      if ($ldd === '' || $ldd < $today) continue;
+      if (isset($seen[$secid])) continue; $seen[$secid] = true;
+      $list[] = ['ticker' => $secid, 'lastDelDate' => $ldd];
+    }
+  }
+  usort($list, fn($a, $b) => strcmp($a['lastDelDate'], $b['lastDelDate']));
+  return $list;
+}
+
+/* ------------------------------- сеть (ISS) ------------------------------- */
+
+function http_get($url) {
+  if (function_exists('curl_init')) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+      CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
+      CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 10,
+      CURLOPT_USERAGENT => 'Lun_term/1.0',
+    ]);
+    $body = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($body === false) throw new Exception('curl: ' . $err);
+    if ($code !== 200) throw new Exception('ISS HTTP ' . $code);
+    return $body;
+  }
+  $ctx = stream_context_create(['http' => ['timeout' => 20, 'user_agent' => 'Lun_term/1.0']]);
+  $body = @file_get_contents($url, false, $ctx);
+  if ($body === false) throw new Exception('file_get_contents failed (проверьте allow_url_fopen/curl на хостинге)');
+  return $body;
+}
+
+function iss_get_json($url) {
+  $data = json_decode(http_get($url), true);
+  if (!is_array($data)) throw new Exception('bad JSON from ISS');
+  return $data;
+}
+
+// постранично тянем ?start=N, пока таблица $table не иссякнет
+function iss_get_all_pages($baseUrl, $table, $maxPages = 40) {
+  $pages = []; $start = 0;
+  for ($i = 0; $i < $maxPages; $i++) {
+    $sep = (strpos($baseUrl, '?') !== false) ? '&' : '?';
+    $j = iss_get_json($baseUrl . $sep . 'start=' . $start);
+    $pages[] = $j;
+    $rows = isset($j[$table]['data']) ? count($j[$table]['data']) : 0;
+    if ($rows === 0) break;
+    $start += $rows;
+  }
+  return $pages;
+}
+
+function fetch_candles($secid, $interval, $from, $till) {
+  $base = 'https://iss.moex.com/iss/engines/futures/markets/forts/securities/'
+    . rawurlencode($secid) . '/candles.json?interval=' . rawurlencode($interval)
+    . '&from=' . rawurlencode($from) . '&till=' . rawurlencode($till) . '&iss.reverse=false';
+  return parse_candles(iss_get_all_pages($base, 'candles'));
+}
+
+function fetch_front($asset, $today) {
+  $base = 'https://iss.moex.com/iss/engines/futures/markets/forts/securities.json'
+    . '?iss.meta=off&securities.columns=SECID,ASSETCODE,LASTDELDATE';
+  return pick_front(iss_get_all_pages($base, 'securities'), $asset, $today);
+}
+
+/* ------------------------------- диспетчер ------------------------------- */
+
+if (!defined('LUN_NO_DISPATCH')) {
+  header('Content-Type: application/json; charset=utf-8');
+  header('Access-Control-Allow-Origin: *');
+  $fn = $_GET['fn'] ?? '';
+  try {
+    if ($fn === 'front') {
+      $asset = $_GET['asset'] ?? '';
+      if ($asset === '') { http_response_code(400); echo json_encode(['error' => 'bad params']); exit; }
+      $today = gmdate('Y-m-d');
+      $list = fetch_front($asset, $today);
+      if (!$list) { http_response_code(404); echo json_encode(['error' => 'no front contract for ' . $asset]); exit; }
+      echo json_encode(['ticker' => $list[0]['ticker'], 'lastDelDate' => $list[0]['lastDelDate'], 'contracts' => $list]);
+    } elseif ($fn === 'candles') {
+      $secid = $_GET['secid'] ?? ''; $iss = $_GET['iss'] ?? '';
+      $from = $_GET['from'] ?? ''; $till = $_GET['till'] ?? '';
+      if ($secid === '' || $iss === '' || $from === '' || $till === '') { http_response_code(400); echo json_encode(['error' => 'bad params']); exit; }
+      if ($iss === '5' || $iss === '15') $bars = aggregate_bars(fetch_candles($secid, '1', $from, $till), (int)$iss);
+      else $bars = fetch_candles($secid, $iss, $from, $till);
+      echo json_encode($bars);
+    } else {
+      http_response_code(400); echo json_encode(['error' => 'unknown fn']);
+    }
+  } catch (Exception $e) {
+    http_response_code(502); echo json_encode(['error' => $e->getMessage()]);
+  }
+}
