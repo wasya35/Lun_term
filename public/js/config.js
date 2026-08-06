@@ -80,8 +80,7 @@ LUN.CYCLES = [
       { from: 285, to: 75,  bias: 'short', color: '#7a2b2b', label: 'ШОРТ' },
     ],
   },
-  { id: 'cycle2', title: 'Цикл 2 · Меркурий', body: 'Mercury', enabled: false, zones: [] },
-  { id: 'cycle3', title: 'Цикл 3 · Солнце',   body: 'Sun',     enabled: false, zones: [] },
+  { id: 'cycle2', title: 'Цикл 2', body: 'Moon', enabled: false, zones: [] },
 ];
 
 /* --- Аспекты между планетами -----------------------------------------------
@@ -90,6 +89,21 @@ LUN.CYCLES = [
  * frame: 'helio' — гелиоцентр (Солнце = позиция Земли; у Меркурия с Солнцем
  *   при этом реальны ВСЕ мажорные аспекты), 'geo' — геоцентр. */
 LUN.ASPECTS = { enabled: false, bodyA: 'Sun', bodyB: 'Mercury', orb: 3, frame: 'helio' };
+
+/* Линейки аспектов планет к Солнцу (отдельная шкала на планету, вкл/выкл кнопкой).
+ * Для Луны — геоцентр (это фазы Луны: соед.=новолуние, оппоз.=полнолуние);
+ * для планет — гелиоцентр (Солнце = позиция Земли, реальны все мажорные аспекты). */
+LUN.ASPECT_PLANETS = [
+  { body: 'Moon',    glyph: '☾', frame: 'geo' },
+  { body: 'Mercury', glyph: '☿', frame: 'helio' },
+  { body: 'Venus',   glyph: '♀', frame: 'helio' },
+  { body: 'Mars',    glyph: '♂', frame: 'helio' },
+  { body: 'Jupiter', glyph: '♃', frame: 'helio' },
+  { body: 'Saturn',  glyph: '♄', frame: 'helio' },
+  { body: 'Uranus',  glyph: '♅', frame: 'helio' },
+  { body: 'Neptune', glyph: '♆', frame: 'helio' },
+  { body: 'Pluto',   glyph: '♇', frame: 'helio' },
+];
 
 /* --- Линия Ганна -----------------------------------------------------------
  * unitPerBar — «угол»: изменение ЦЕНЫ за 1 бар (безразмерное, можно большое —
@@ -110,8 +124,9 @@ LUN.INDICATORS = {
   },
 };
 
-/* Разбивка знака на деканы по 10° в ленте (тонкие разделители) */
-LUN.SIGN_SUBDIVISION = 10;
+/* Разделитель половины знака: 15° (середина). Ставится одна тонкая линия на 15°,
+ * граница знака (30°/0°) — ярче. */
+LUN.SIGN_SUBDIVISION = 15;
 
 /* --- Шлюзы к MOEX ISS -------------------------------------------------------
  * Браузер не может ходить на ISS напрямую (нет CORS), поэтому пробуем по порядку:

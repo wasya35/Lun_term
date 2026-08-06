@@ -200,15 +200,24 @@
   ];
   window.LUN_ASPECT_DEFS = ASPECTS;
   function separation(a, b) { let d = Math.abs(a - b) % 360; if (d > 180) d = 360 - d; return d; }
-  function aspectAt(ts) {
-    const cfg = window.LUN.ASPECTS;
-    const frame = cfg.frame || 'helio';
-    const la = window.LunAstro.bodyInfo(cfg.bodyA, ts, frame).lon;
-    const lb = window.LunAstro.bodyInfo(cfg.bodyB, ts, frame).lon;
+  function aspectCfg(indicator) {
+    const ed = indicator && indicator.extendData;
+    const base = window.LUN.ASPECTS;
+    return {
+      bodyA: (ed && ed.bodyA) || base.bodyA || 'Sun',
+      bodyB: (ed && ed.bodyB) || base.bodyB || 'Mercury',
+      frame: (ed && ed.frame) || base.frame || 'helio',
+      orb: (ed && ed.orb) || base.orb || 3,
+    };
+  }
+  function aspectAt(ts, cfg) {
+    const la = window.LunAstro.bodyInfo(cfg.bodyA, ts, cfg.frame).lon;
+    const lb = window.LunAstro.bodyInfo(cfg.bodyB, ts, cfg.frame).lon;
     const sep = separation(la, lb);
     for (const A of ASPECTS) if (Math.abs(sep - A.angle) <= cfg.orb) return { asp: A, sep };
     return { asp: null, sep };
   }
+  window.LUN_ASPECT_AT = aspectAt;   // для бэктеста
 
   kc.registerIndicator({
     name: 'AspectStrip',
@@ -216,22 +225,21 @@
     series: 'normal',
     figures: [],
     calc: (dataList) => dataList.map((d) => d.timestamp),
-    draw: ({ ctx, chart, bounding, xAxis }) => {
-      const cfg = window.LUN.ASPECTS;
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const cfg = aspectCfg(indicator);
       const H = bounding.height, list = chart.getDataList();
       const symA = BODY_SYM[cfg.bodyA] || cfg.bodyA, symB = BODY_SYM[cfg.bodyB] || cfg.bodyB;
       forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
-        const r = aspectAt(bar.timestamp);
+        const r = aspectAt(bar.timestamp, cfg);
         ctx.fillStyle = r.asp ? r.asp.color : '#20252f';
         ctx.fillRect(x - half, 0, half * 2 + 0.6, H);
       });
       ctx.textBaseline = 'middle'; ctx.font = '11px system-ui, sans-serif';
-      // подпись словами на участках активного аспекта; иначе — угол расхождения
       runsOverVisible(chart, xAxis,
-        (bar) => { const a = aspectAt(bar.timestamp).asp; return a ? a.name : '—'; },
+        (bar) => { const a = aspectAt(bar.timestamp, cfg).asp; return a ? a.name : '—'; },
         (startI, endI, midX, leftX, rightX) => {
-          const r = aspectAt(list[endI].timestamp);
-          const label = r.asp ? `${symA} ${r.asp.name} ${symB}` : `${symA}${symB} ${Math.round(r.sep)}°`;
+          const r = aspectAt(list[endI].timestamp, cfg);
+          const label = r.asp ? `${symA}${symB} ${r.asp.name}` : `${symA}${symB} ${Math.round(r.sep)}°`;
           if (rightX - leftX < ctx.measureText(label).width + 8) return;
           ctx.fillStyle = r.asp ? 'rgba(255,255,255,0.96)' : 'rgba(255,255,255,0.4)';
           ctx.textAlign = 'center';

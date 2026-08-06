@@ -11,7 +11,7 @@
     signPane: null,
     signPanes: {},          // body -> paneId (ленты знаков Луна/Меркурий/Солнце)
     volumePane: null,
-    aspectPane: null,
+    aspectPanes: {},        // body -> paneId (линейки аспектов планет к Солнцу)
     cyclePanes: {},         // cycleId -> paneId
     overlayIds: {},         // EMA/SMA/VWAP на ценовой панели
   };
@@ -70,11 +70,17 @@
     return id;
   }
 
-  const ASPECT_PANE = 'pane_aspect';
-  function createAspectPane() {
-    state.chart.createIndicator({ name: 'AspectStrip', paneId: ASPECT_PANE }, false);
-    state.aspectPane = ASPECT_PANE;
-    wishPane(ASPECT_PANE, { height: window.LUN.PANE_HEIGHTS.cycle, minHeight: 18, order: 30 });
+  // линейка аспектов планеты к Солнцу (отдельная панель на планету)
+  function createAspectPane(pl, order) {
+    const id = 'pane_asp_' + pl.body;
+    const shortName = '☉/' + (pl.glyph || pl.body) + ' асп';
+    state.chart.createIndicator({
+      name: 'AspectStrip', paneId: id, shortName,
+      extendData: { bodyA: 'Sun', bodyB: pl.body, frame: pl.frame, orb: (window.LUN.ASPECTS.orb || 3) },
+    }, false);
+    state.aspectPanes[pl.body] = id;
+    wishPane(id, { height: window.LUN.PANE_HEIGHTS.cycle, minHeight: 18, order });
+    return id;
   }
   function createVolumePane() {
     state.volumePane = 'pane_volume';
@@ -90,7 +96,6 @@
     state.signPanes.Moon = state.signPane;
     wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
-    if (window.LUN.ASPECTS.enabled) createAspectPane();
     createVolumePane();
   }
 
@@ -185,16 +190,18 @@
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createVolumePane(); else if (state.volumePane) { state.chart.removeIndicator({ paneId: state.volumePane }); state.volumePane = null; }
     }, true);
-    // аспекты Солнце–Меркурий (полоса)
-    mkBtn(indWrap, 'Аспекты', (b) => {
-      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
-      if (on) createAspectPane(); else if (state.aspectPane) { state.chart.removeIndicator({ paneId: state.aspectPane }); state.aspectPane = null; }
-    }, window.LUN.ASPECTS.enabled);
     // положения Меркурия и Солнца в знаках (словами)
     [['Mercury', '☿ знак', 12], ['Sun', '☉ знак', 13]].forEach(([body, label, order]) => mkBtn(indWrap, label, (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createSignPane(body, order); else if (state.signPanes[body]) { state.chart.removeIndicator({ paneId: state.signPanes[body] }); delete state.signPanes[body]; }
     }, false, `Положение ${BODY_LABEL[body]} в знаках`));
+
+    // линейки аспектов планет к Солнцу (☉/планета) — по кнопке на планету
+    const aspWrap = document.getElementById('aspects');
+    window.LUN.ASPECT_PLANETS.forEach((pl, i) => mkBtn(aspWrap, pl.glyph, (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createAspectPane(pl, 30 + i); else if (state.aspectPanes[pl.body]) { state.chart.removeIndicator({ paneId: state.aspectPanes[pl.body] }); delete state.aspectPanes[pl.body]; }
+    }, false, `Аспекты ☉/${pl.glyph} (${pl.body})`));
 
     buildCycleButtons();
 
@@ -236,8 +243,11 @@
     buildCycleButtons();
     // пересоздать активные индикаторы (SMA/EMA/VWAP) с новыми параметрами
     Object.keys(state.overlayIds).forEach((kind) => { toggleOverlay(kind, false); toggleOverlay(kind, true); });
-    // обновить полосу аспектов (новый орб/тела)
-    if (state.aspectPane) { c.removeIndicator({ paneId: state.aspectPane }); createAspectPane(); }
+    // пересоздать открытые линейки аспектов (новый орб)
+    const openAsp = Object.keys(state.aspectPanes);
+    openAsp.forEach((body) => c.removeIndicator({ paneId: state.aspectPanes[body] }));
+    state.aspectPanes = {};
+    openAsp.forEach((body) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === body); if (pl) createAspectPane(pl, 30 + window.LUN.ASPECT_PLANETS.indexOf(pl)); });
     updateMoonStatus();
   }
 
