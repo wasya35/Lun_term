@@ -108,6 +108,17 @@
     return pickFront(await getAllPages(url, 'securities'), asset, today);
   }
 
+  // Список бумаг рынка (для поиска инструмента): engine/market — напр.
+  // stock/shares (акции), futures/forts (фьючерсы).
+  async function fetchSecuritiesList(engine, market, columns) {
+    const cols = columns ? '&securities.columns=' + columns : '';
+    const url = `https://iss.moex.com/iss/engines/${engine}/markets/${market}/securities.json?iss.meta=off${cols}`;
+    const pages = await getAllPages(url, 'securities');
+    const out = [];
+    for (const j of pages) for (const o of rowsToObjects(j.securities)) out.push(o);
+    return out;
+  }
+
   // Свечи с произвольного рынка (для бэктеста берём непрерывную дневную USD/RUB
   // с валютного рынка: engine=currency, market=selt, secid=USD000UTSTOM — годы истории).
   async function fetchCandlesFrom(engine, market, secid, interval, from, till) {
@@ -116,5 +127,5 @@
     return parseCandles(await getAllPages(url, 'candles'));
   }
 
-  window.LunISS = { fetchCandles, fetchCandlesFrom, aggregate, fetchFront };
+  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, aggregate, fetchFront };
 })();

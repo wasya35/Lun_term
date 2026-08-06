@@ -63,12 +63,14 @@
   async function loadCandles(symbol, tf) {
     const { from, till } = rangeFor(tf);
     const agg = (tf.iss === 5 || tf.iss === 15);
+    const eng = symbol.engine || 'futures', mkt = symbol.market || 'forts';
+    const fetchC = (secid, iv) => window.LunISS.fetchCandlesFrom(eng, mkt, secid, iv, from, till);
 
     // 1) прямой ISS из браузера
     try {
       let bars = agg
-        ? window.LunISS.aggregate(await window.LunISS.fetchCandles(symbol.ticker, 1, from, till), tf.iss)
-        : await window.LunISS.fetchCandles(symbol.ticker, tf.iss, from, till);
+        ? window.LunISS.aggregate(await fetchC(symbol.ticker, 1), tf.iss)
+        : await fetchC(symbol.ticker, tf.iss);
       if (bars && bars.length) {
         const gw = window.LUN_ISS_GATEWAY;
         window.LUN_DATA_SOURCE = 'MOEX ISS' + (gw && gw !== 'прямой' ? ` (шлюз: ${gw})` : ' (прямо)');

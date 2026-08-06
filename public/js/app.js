@@ -119,7 +119,10 @@
   async function load() {
     const c = state.chart, ins = state.instrument, tf = state.tf;
     const ticker = await window.LunData.resolveTicker(ins);
-    c.setSymbol({ ticker, pricePrecision: ins.pricePrecision, volumePrecision: ins.volumePrecision });
+    c.setSymbol({
+      ticker, pricePrecision: ins.pricePrecision, volumePrecision: ins.volumePrecision,
+      engine: ins.engine || 'futures', market: ins.market || 'forts', type: ins.type || 'futures',
+    });
     c.setPeriod({ span: tf.span, type: tf.type });
     c.setDataLoader(window.LunData.makeDataLoader());
     document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
@@ -174,6 +177,11 @@
       state.instrument = ins; load();
       [...insWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active');
     }, ins === state.instrument, ins.title));
+    // поиск любого инструмента MOEX (акции/фьючерсы)
+    mkBtn(insWrap, '🔍', () => window.LunInstruments.open((instr) => {
+      state.instrument = instr; load();
+      [...insWrap.children].forEach((x) => x.classList.remove('active'));
+    }), false, 'Поиск инструмента MOEX (акции, фьючерсы)');
 
     const tfWrap = document.getElementById('timeframes');
     window.LUN.TIMEFRAMES.forEach((tf) => mkBtn(tfWrap, tf.title, (b) => {
