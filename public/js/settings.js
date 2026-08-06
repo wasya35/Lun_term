@@ -18,7 +18,7 @@
       signs: window.LUN.SIGNS.map((s) => ({ color: s.color })),
       cycles: window.LUN.CYCLES.map((c) => ({ id: c.id, title: c.title, body: c.body, enabled: c.enabled, zones: c.zones })),
       indicators: { smaPeriods: I.sma.periods, emaPeriods: I.ema.periods, vwapSigma: I.vwap.sigma, vwapReset: I.vwap.reset },
-      aspects: { bodyA: window.LUN.ASPECTS.bodyA, bodyB: window.LUN.ASPECTS.bodyB, orb: window.LUN.ASPECTS.orb, frame: window.LUN.ASPECTS.frame },
+      aspects: { bodies: window.LUN.ASPECT_BODIES, orb: window.LUN.ASPECTS.orb },
       gann: { unitPerBar: window.LUN.GANN.unitPerBar, extendRight: window.LUN.GANN.extendRight },
     };
     localStorage.setItem(KEY, JSON.stringify(data));
@@ -38,10 +38,8 @@
       if (di.vwapReset) I.vwap.reset = di.vwapReset;
     }
     if (d.aspects) {
-      if (d.aspects.bodyA) window.LUN.ASPECTS.bodyA = d.aspects.bodyA;
-      if (d.aspects.bodyB) window.LUN.ASPECTS.bodyB = d.aspects.bodyB;
+      if (Array.isArray(d.aspects.bodies)) window.LUN.ASPECT_BODIES = d.aspects.bodies;
       if (typeof d.aspects.orb === 'number') window.LUN.ASPECTS.orb = d.aspects.orb;
-      if (d.aspects.frame) window.LUN.ASPECTS.frame = d.aspects.frame;
     }
     if (d.gann) {
       window.LUN.GANN.unitPerBar = (typeof d.gann.unitPerBar === 'number') ? d.gann.unitPerBar : null;
@@ -141,16 +139,18 @@
       el('p', { class: 'lun-hint' }, ['Периоды через запятую (напр. 20, 50). Изменения применятся к включённым индикаторам.']),
     ]);
 
-    // блок аспектов
-    const A = window.LUN.ASPECTS;
-    const inA = select(BODIES.map((b) => [b, b]), A.bodyA);
-    const inB = select(BODIES.map((b) => [b, b]), A.bodyB);
-    const inOrb = el('input', { type: 'number', min: 0, max: 12, step: 0.5, value: A.orb });
-    const inFrame = select([['helio', 'гелиоцентр'], ['geo', 'геоцентр']], A.frame || 'helio');
+    // блок аспектов: галочки тел (полосы для всех пар) + общий орб 2–6°
+    const aspActive = new Set(window.LUN.ASPECT_BODIES);
+    const aspChecks = window.LUN.ASPECT_MENU.map((m) => {
+      const cb = el('input', { type: 'checkbox', checked: aspActive.has(m.body) });
+      return { body: m.body, cb, row: el('label', { class: 'lun-sign' }, [cb, el('span', {}, [m.glyph + ' ' + m.body])]) };
+    });
+    const inOrb = el('input', { type: 'number', min: 2, max: 6, step: 0.5, value: Math.min(6, Math.max(2, +window.LUN.ASPECTS.orb || 3)) });
     const aspSection = el('div', { class: 'lun-sec' }, [
-      el('h3', {}, ['Аспекты (полоса ☉/☿)']),
-      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['тело A: ', inA]), el('label', {}, ['тело B: ', inB]), el('label', {}, ['орб °: ', inOrb]), el('label', {}, ['система: ', inFrame])]),
-      el('p', { class: 'lun-hint' }, ['Соединение/секстиль/квадрат/трин/оппозиция в пределах орба. Показ — кнопкой «Аспекты». Гелиоцентр: у Меркурия с Солнцем реальны все мажорные аспекты.']),
+      el('h3', {}, ['Аспекты между телами']),
+      el('div', { class: 'lun-signs' }, aspChecks.map((x) => x.row)),
+      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['общий орб °: ', inOrb])]),
+      el('p', { class: 'lun-hint' }, ['Отмеченные тела → полосы аспектов для ВСЕХ пар между ними (Солнце+Меркурий = основа). Пара с Луной — гео (фазы), пары планет — гелио. Орб 2–6°.']),
     ]);
 
     // блок линии Ганна
@@ -195,9 +195,8 @@
       if (numList(inEma.value).length) I.ema.periods = numList(inEma.value);
       if (numList(inSig.value).length) I.vwap.sigma = numList(inSig.value);
       I.vwap.reset = inReset.value;
-      const A2 = window.LUN.ASPECTS;
-      A2.bodyA = inA.value; A2.bodyB = inB.value; A2.frame = inFrame.value;
-      const orb = parseFloat(inOrb.value); if (!isNaN(orb)) A2.orb = orb;
+      window.LUN.ASPECT_BODIES = aspChecks.filter((x) => x.cb.checked).map((x) => x.body);
+      const orb = parseFloat(inOrb.value); if (!isNaN(orb)) window.LUN.ASPECTS.orb = Math.min(6, Math.max(2, orb));
       const G2 = window.LUN.GANN;
       G2.unitPerBar = inUnit.value.trim() === '' ? null : parseFloat(inUnit.value);
       G2.extendRight = inExt.checked;

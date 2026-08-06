@@ -90,20 +90,24 @@ LUN.CYCLES = [
  *   при этом реальны ВСЕ мажорные аспекты), 'geo' — геоцентр. */
 LUN.ASPECTS = { enabled: false, bodyA: 'Sun', bodyB: 'Mercury', orb: 3, frame: 'helio' };
 
-/* Линейки аспектов планет к Солнцу (отдельная шкала на планету, вкл/выкл кнопкой).
- * Для Луны — геоцентр (это фазы Луны: соед.=новолуние, оппоз.=полнолуние);
- * для планет — гелиоцентр (Солнце = позиция Земли, реальны все мажорные аспекты). */
-LUN.ASPECT_PLANETS = [
-  { body: 'Moon',    glyph: '☾', frame: 'geo' },
-  { body: 'Mercury', glyph: '☿', frame: 'helio' },
-  { body: 'Venus',   glyph: '♀', frame: 'helio' },
-  { body: 'Mars',    glyph: '♂', frame: 'helio' },
-  { body: 'Jupiter', glyph: '♃', frame: 'helio' },
-  { body: 'Saturn',  glyph: '♄', frame: 'helio' },
-  { body: 'Uranus',  glyph: '♅', frame: 'helio' },
-  { body: 'Neptune', glyph: '♆', frame: 'helio' },
-  { body: 'Pluto',   glyph: '♇', frame: 'helio' },
+/* Система аспектов — ПАРНАЯ: активен НАБОР тел (галочки в меню/настройках),
+ * а полосы строятся для ВСЕХ ПАР между активными телами.
+ * Пара с Луной считается в геоцентре (фазы), пары планет — в гелиоцентре
+ * (Солнце = позиция Земли, у Меркурия с Солнцем реальны все мажорные аспекты).
+ * Основа системы по умолчанию: Солнце + Меркурий → полоса ☉/☿. */
+LUN.ASPECT_MENU = [
+  { body: 'Sun',     glyph: '☉' },
+  { body: 'Moon',    glyph: '☾' },
+  { body: 'Mercury', glyph: '☿' },
+  { body: 'Venus',   glyph: '♀' },
+  { body: 'Mars',    glyph: '♂' },
+  { body: 'Jupiter', glyph: '♃' },
+  { body: 'Saturn',  glyph: '♄' },
+  { body: 'Uranus',  glyph: '♅' },
+  { body: 'Neptune', glyph: '♆' },
+  { body: 'Pluto',   glyph: '♇' },
 ];
+LUN.ASPECT_BODIES = ['Sun', 'Mercury'];        // активные тела по умолчанию
 
 /* --- Линия Ганна -----------------------------------------------------------
  * unitPerBar — «угол»: изменение ЦЕНЫ за 1 бар (безразмерное, можно большое —
