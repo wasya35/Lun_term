@@ -11,8 +11,8 @@
     signPane: null,
     signPanes: {},          // body -> paneId (ленты знаков Луна/Меркурий/Солнце)
     volumePane: null,
-    aspectPanes: {},        // pairKey -> paneId (полосы парных аспектов)
-    activeAspectBodies: new Set(window.LUN.ASPECT_BODIES),
+    aspectPanes: {},        // body -> paneId (полосы ☉/планета)
+    allAspectPane: null,    // сводная полоса всех аспектов
     cyclePanes: {},         // cycleId -> paneId
     overlayIds: {},         // EMA/SMA/VWAP на ценовой панели
   };
@@ -71,36 +71,26 @@
     return id;
   }
 
-  // --- парные аспекты: полосы для всех пар активных тел ---
-  const BODY_GLYPH = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Pluto: '♇' };
-  const pairKey = (a, b) => [a, b].sort().join('_');
-  function clampOrb() { const o = +window.LUN.ASPECTS.orb || 3; return Math.min(6, Math.max(2, o)); }
-
-  function createAspectPair(a, b, order) {
-    const key = pairKey(a, b), id = 'pane_asp_' + key;
-    const frame = (a === 'Moon' || b === 'Moon') ? 'geo' : 'helio';
+  // --- аспекты планета→Солнце (по полосе на планету) + сводная «все» ---
+  const clampOrb = () => Math.min(6, Math.max(2, +window.LUN.ASPECTS.orb || 3));
+  function createSunAspect(pl, order) {
+    const id = 'pane_asp_' + pl.body;
     state.chart.createIndicator({
-      name: 'AspectStrip', paneId: id, shortName: (BODY_GLYPH[a] || a) + '/' + (BODY_GLYPH[b] || b),
-      extendData: { bodyA: a, bodyB: b, frame, orb: clampOrb() },
+      name: 'AspectStrip', paneId: id, shortName: '☉/' + pl.glyph,
+      extendData: { bodyA: 'Sun', bodyB: pl.body, frame: pl.frame, orb: clampOrb() },
     }, false);
-    state.aspectPanes[key] = id;
+    state.aspectPanes[pl.body] = id;
     wishPane(id, { height: window.LUN.PANE_HEIGHTS.cycle, minHeight: 18, order });
   }
-
-  function desiredAspectPairs() {
-    const bodies = [...state.activeAspectBodies];
-    const pairs = [];
-    for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) pairs.push([bodies[i], bodies[j]]);
-    return pairs;
-  }
-
-  // привести показанные полосы аспектов к набору пар активных тел
-  function regenAspectStrips() {
-    const want = new Map();
-    desiredAspectPairs().forEach(([a, b]) => want.set(pairKey(a, b), [a, b]));
-    Object.keys(state.aspectPanes).forEach((k) => { if (!want.has(k)) { state.chart.removeIndicator({ paneId: state.aspectPanes[k] }); delete state.aspectPanes[k]; } });
-    let i = 0;
-    for (const [k, [a, b]] of want) { if (!state.aspectPanes[k]) createAspectPair(a, b, 15 + i); i++; }
+  const ALL_ASPECT_PANE = 'pane_asp_all';
+  function createAllAspect() {
+    const bodies = ['Sun'].concat(window.LUN.ASPECT_PLANETS.map((p) => p.body));
+    state.chart.createIndicator({
+      name: 'AllAspectStrip', paneId: ALL_ASPECT_PANE, shortName: '∀ все аспекты',
+      extendData: { bodies, orb: clampOrb() },
+    }, false);
+    state.allAspectPane = ALL_ASPECT_PANE;
+    wishPane(ALL_ASPECT_PANE, { height: window.LUN.PANE_HEIGHTS.cycle + 4, minHeight: 20, order: 29 });
   }
   function createVolumePane() {
     state.volumePane = 'pane_volume';
@@ -116,7 +106,8 @@
     state.signPanes.Moon = state.signPane;
     wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
-    regenAspectStrips();       // ☉/☿ и прочие пары активных тел (основа системы)
+    window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });  // ☉/☿ по умолчанию
+    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();
     createVolumePane();
   }
 
@@ -241,16 +232,19 @@
       'Сверка лунных зон с историей USD/RUB за 8 лет');
   }
 
-  // тумблеры тел для аспектов: клик добавляет/убирает тело; полосы = все пары
+  // тумблеры аспектов: по планете (☉/планета) + сводная «∀ все»
   function buildAspectButtons() {
     const aspWrap = document.getElementById('aspects');
     aspWrap.innerHTML = '';
-    window.LUN.ASPECT_MENU.forEach((m) => mkBtn(aspWrap, m.glyph, (b) => {
-      if (state.activeAspectBodies.has(m.body)) state.activeAspectBodies.delete(m.body);
-      else state.activeAspectBodies.add(m.body);
-      b.classList.toggle('active', state.activeAspectBodies.has(m.body));
-      regenAspectStrips();
-    }, state.activeAspectBodies.has(m.body), `Аспекты с ${m.body} (полосы для всех пар выбранных тел)`));
+    window.LUN.ASPECT_PLANETS.forEach((pl, i) => mkBtn(aspWrap, pl.glyph, (b) => {
+      pl.enabled = !b.classList.contains('active'); b.classList.toggle('active', pl.enabled);
+      if (pl.enabled) createSunAspect(pl, 15 + i);
+      else if (state.aspectPanes[pl.body]) { state.chart.removeIndicator({ paneId: state.aspectPanes[pl.body] }); delete state.aspectPanes[pl.body]; }
+    }, pl.enabled, `Аспекты ☉/${pl.glyph} (${pl.body})`));
+    mkBtn(aspWrap, '∀ все', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on); window.LUN.ALL_ASPECTS.enabled = on;
+      if (on) createAllAspect(); else if (state.allAspectPane) { state.chart.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
+    }, window.LUN.ALL_ASPECTS.enabled, 'Сводная полоса всех аспектов всех пар (детально на M5/M15)');
   }
 
   // тумблеры циклов (пересобираются после изменения настроек)
@@ -280,11 +274,12 @@
     buildCycleButtons();
     // пересоздать активные индикаторы (SMA/EMA/VWAP) с новыми параметрами
     Object.keys(state.overlayIds).forEach((kind) => { toggleOverlay(kind, false); toggleOverlay(kind, true); });
-    // аспекты: активные тела и орб могли смениться в настройках — пересобрать
+    // аспекты: орб/включённость могли смениться — пересобрать
     Object.keys(state.aspectPanes).forEach((k) => c.removeIndicator({ paneId: state.aspectPanes[k] }));
     state.aspectPanes = {};
-    state.activeAspectBodies = new Set(window.LUN.ASPECT_BODIES);
-    regenAspectStrips();
+    if (state.allAspectPane) { c.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
+    window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });
+    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();
     buildAspectButtons();
     updateMoonStatus();
   }

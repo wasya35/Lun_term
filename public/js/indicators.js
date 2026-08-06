@@ -147,6 +147,49 @@
     },
   });
 
+  /* ============ Сводная полоса «все аспекты всех пар» (11-я) ============ */
+  kc.registerIndicator({
+    name: 'AllAspectStrip',
+    shortName: '∀ аспекты',
+    series: 'normal',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {};
+      const bodies = ed.bodies || ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto'];
+      const orb = ed.orb || (window.LUN.ASPECTS.orb || 3);
+      const G = window.LUN.BODY_GLYPH, H = bounding.height, list = chart.getDataList();
+      const period = chart.getPeriod ? chart.getPeriod() : null;
+      const detailed = period && period.type === 'minute';       // подробно на M5/M15
+      const memo = new Map();
+      const actsAt = (ts) => { const k = Math.floor(ts / 60000); let v = memo.get(k); if (!v) { v = allActiveAspects(ts, bodies, orb); memo.set(k, v); } return v; };
+
+      // фон + цветные метки аспектов сверху
+      forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
+        const acts = actsAt(bar.timestamp);
+        ctx.fillStyle = acts.some((z) => z.asp.kind === 'hard') ? '#33202b' : (acts.length ? '#1e2a3a' : '#191d26');
+        ctx.fillRect(x - half, 0, half * 2 + 0.6, H);
+        if (acts.length) { const seg = (half * 2) / acts.length; acts.forEach((z, k) => { ctx.fillStyle = z.asp.color; ctx.fillRect(x - half + k * seg, 0, seg + 0.5, 4); }); }
+      });
+
+      if (detailed) {                                            // подписи только на минутках
+        ctx.textBaseline = 'middle'; ctx.font = '10px system-ui, sans-serif';
+        const sig = (ts) => actsAt(ts).map((z) => G[z.a] + z.asp.sym + G[z.b]).sort().join(' ');
+        runsOverVisible(chart, xAxis, (bar) => sig(bar.timestamp),
+          (startI, endI, midX, leftX, rightX) => {
+            const acts = actsAt(list[endI].timestamp); if (!acts.length) return;
+            const parts = acts.map((z) => `${G[z.a]}${z.asp.sym}${G[z.b]}`);
+            let label = parts.join(' ');
+            if (rightX - leftX < ctx.measureText(label).width + 6) label = parts[0];   // не влезло — первый
+            if (rightX - leftX < ctx.measureText(label).width + 4) return;
+            ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.textAlign = 'center';
+            ctx.fillText(label, midX, H / 2);
+          });
+      }
+      return true;
+    },
+  });
+
   /* ===================== Сессионный VWAP ± σ ===================== */
   kc.registerIndicator({
     name: 'VWAP_BANDS',
@@ -218,6 +261,19 @@
     return { asp: null, sep };
   }
   window.LUN_ASPECT_AT = aspectAt;   // для бэктеста
+
+  // все активные аспекты всех пар набора тел на момент ts
+  function allActiveAspects(ts, bodies, orb) {
+    const out = [];
+    for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
+      const a = bodies[i], b = bodies[j];
+      const frame = (a === 'Moon' || b === 'Moon') ? 'geo' : 'helio';
+      const la = window.LunAstro.bodyInfo(a, ts, frame).lon, lb = window.LunAstro.bodyInfo(b, ts, frame).lon;
+      const sep = separation(la, lb);
+      for (const A of ASPECTS) if (Math.abs(sep - A.angle) <= orb) { out.push({ a, b, asp: A }); break; }
+    }
+    return out;
+  }
 
   kc.registerIndicator({
     name: 'AspectStrip',

@@ -18,7 +18,7 @@
       signs: window.LUN.SIGNS.map((s) => ({ color: s.color })),
       cycles: window.LUN.CYCLES.map((c) => ({ id: c.id, title: c.title, body: c.body, enabled: c.enabled, zones: c.zones })),
       indicators: { smaPeriods: I.sma.periods, emaPeriods: I.ema.periods, vwapSigma: I.vwap.sigma, vwapReset: I.vwap.reset },
-      aspects: { bodies: window.LUN.ASPECT_BODIES, orb: window.LUN.ASPECTS.orb },
+      aspects: { planets: window.LUN.ASPECT_PLANETS.map((p) => ({ body: p.body, enabled: p.enabled })), all: window.LUN.ALL_ASPECTS.enabled, orb: window.LUN.ASPECTS.orb },
       gann: { unitPerBar: window.LUN.GANN.unitPerBar, extendRight: window.LUN.GANN.extendRight },
     };
     localStorage.setItem(KEY, JSON.stringify(data));
@@ -38,7 +38,8 @@
       if (di.vwapReset) I.vwap.reset = di.vwapReset;
     }
     if (d.aspects) {
-      if (Array.isArray(d.aspects.bodies)) window.LUN.ASPECT_BODIES = d.aspects.bodies;
+      if (Array.isArray(d.aspects.planets)) d.aspects.planets.forEach((sp) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === sp.body); if (pl) pl.enabled = !!sp.enabled; });
+      if (typeof d.aspects.all === 'boolean') window.LUN.ALL_ASPECTS.enabled = d.aspects.all;
       if (typeof d.aspects.orb === 'number') window.LUN.ASPECTS.orb = d.aspects.orb;
     }
     if (d.gann) {
@@ -139,18 +140,18 @@
       el('p', { class: 'lun-hint' }, ['Периоды через запятую (напр. 20, 50). Изменения применятся к включённым индикаторам.']),
     ]);
 
-    // блок аспектов: галочки тел (полосы для всех пар) + общий орб 2–6°
-    const aspActive = new Set(window.LUN.ASPECT_BODIES);
-    const aspChecks = window.LUN.ASPECT_MENU.map((m) => {
-      const cb = el('input', { type: 'checkbox', checked: aspActive.has(m.body) });
-      return { body: m.body, cb, row: el('label', { class: 'lun-sign' }, [cb, el('span', {}, [m.glyph + ' ' + m.body])]) };
+    // блок аспектов: полосы ☉/планета (галочки) + сводная «все» + общий орб 2–6°
+    const aspChecks = window.LUN.ASPECT_PLANETS.map((pl) => {
+      const cb = el('input', { type: 'checkbox', checked: pl.enabled });
+      return { pl, cb, row: el('label', { class: 'lun-sign' }, [cb, el('span', {}, [pl.glyph + ' ' + pl.body])]) };
     });
+    const cbAll = el('input', { type: 'checkbox', checked: window.LUN.ALL_ASPECTS.enabled });
     const inOrb = el('input', { type: 'number', min: 2, max: 6, step: 0.5, value: Math.min(6, Math.max(2, +window.LUN.ASPECTS.orb || 3)) });
     const aspSection = el('div', { class: 'lun-sec' }, [
-      el('h3', {}, ['Аспекты между телами']),
+      el('h3', {}, ['Аспекты к Солнцу (☉/планета)']),
       el('div', { class: 'lun-signs' }, aspChecks.map((x) => x.row)),
-      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['общий орб °: ', inOrb])]),
-      el('p', { class: 'lun-hint' }, ['Отмеченные тела → полосы аспектов для ВСЕХ пар между ними (Солнце+Меркурий = основа). Пара с Луной — гео (фазы), пары планет — гелио. Орб 2–6°.']),
+      el('div', { class: 'lun-cy-head' }, [el('label', {}, ['общий орб °: ', inOrb]), el('label', {}, [cbAll, ' сводная полоса всех аспектов ∀'])]),
+      el('p', { class: 'lun-hint' }, ['☉/планета — своя полоса на планету (Луна = фазы). ∀ — все пары одной строкой (подробно на M5/M15, на H1/D — отметки). Орб 2–6°.']),
     ]);
 
     // блок линии Ганна
@@ -195,7 +196,8 @@
       if (numList(inEma.value).length) I.ema.periods = numList(inEma.value);
       if (numList(inSig.value).length) I.vwap.sigma = numList(inSig.value);
       I.vwap.reset = inReset.value;
-      window.LUN.ASPECT_BODIES = aspChecks.filter((x) => x.cb.checked).map((x) => x.body);
+      aspChecks.forEach((x) => { x.pl.enabled = x.cb.checked; });
+      window.LUN.ALL_ASPECTS.enabled = cbAll.checked;
       const orb = parseFloat(inOrb.value); if (!isNaN(orb)) window.LUN.ASPECTS.orb = Math.min(6, Math.max(2, orb));
       const G2 = window.LUN.GANN;
       G2.unitPerBar = inUnit.value.trim() === '' ? null : parseFloat(inUnit.value);

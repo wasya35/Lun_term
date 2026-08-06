@@ -90,24 +90,25 @@ LUN.CYCLES = [
  *   при этом реальны ВСЕ мажорные аспекты), 'geo' — геоцентр. */
 LUN.ASPECTS = { enabled: false, bodyA: 'Sun', bodyB: 'Mercury', orb: 3, frame: 'helio' };
 
-/* Система аспектов — ПАРНАЯ: активен НАБОР тел (галочки в меню/настройках),
- * а полосы строятся для ВСЕХ ПАР между активными телами.
- * Пара с Луной считается в геоцентре (фазы), пары планет — в гелиоцентре
- * (Солнце = позиция Земли, у Меркурия с Солнцем реальны все мажорные аспекты).
- * Основа системы по умолчанию: Солнце + Меркурий → полоса ☉/☿. */
-LUN.ASPECT_MENU = [
-  { body: 'Sun',     glyph: '☉' },
-  { body: 'Moon',    glyph: '☾' },
-  { body: 'Mercury', glyph: '☿' },
-  { body: 'Venus',   glyph: '♀' },
-  { body: 'Mars',    glyph: '♂' },
-  { body: 'Jupiter', glyph: '♃' },
-  { body: 'Saturn',  glyph: '♄' },
-  { body: 'Uranus',  glyph: '♅' },
-  { body: 'Neptune', glyph: '♆' },
-  { body: 'Pluto',   glyph: '♇' },
+/* Линейки аспектов планеты к СОЛНЦУ — по одной полосе на планету (тумблер).
+ * Луна — геоцентр (фазы: соед.=новолуние, оппоз.=полнолуние), планеты — гелио
+ * (Солнце = позиция Земли; у Меркурия с Солнцем реальны все мажорные аспекты).
+ * По умолчанию включён ☉/☿ (основа системы). */
+LUN.ASPECT_PLANETS = [
+  { body: 'Moon',    glyph: '☾', frame: 'geo',   enabled: false },
+  { body: 'Mercury', glyph: '☿', frame: 'helio', enabled: true },
+  { body: 'Venus',   glyph: '♀', frame: 'helio', enabled: false },
+  { body: 'Mars',    glyph: '♂', frame: 'helio', enabled: false },
+  { body: 'Jupiter', glyph: '♃', frame: 'helio', enabled: false },
+  { body: 'Saturn',  glyph: '♄', frame: 'helio', enabled: false },
+  { body: 'Uranus',  glyph: '♅', frame: 'helio', enabled: false },
+  { body: 'Neptune', glyph: '♆', frame: 'helio', enabled: false },
+  { body: 'Pluto',   glyph: '♇', frame: 'helio', enabled: false },
 ];
-LUN.ASPECT_BODIES = ['Sun', 'Mercury'];        // активные тела по умолчанию
+/* 11-я сводная полоса: все аспекты всех пар (планеты + Солнце). Подробные подписи
+ * на M5/M15, на H1/D — только цветные отметки. */
+LUN.ALL_ASPECTS = { enabled: false };
+LUN.BODY_GLYPH = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Pluto: '♇' };
 
 /* --- Линия Ганна -----------------------------------------------------------
  * unitPerBar — «угол»: изменение ЦЕНЫ за 1 бар (безразмерное, можно большое —
