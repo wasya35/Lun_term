@@ -127,5 +127,49 @@
     return parseCandles(await getAllPages(url, 'candles'));
   }
 
-  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, aggregate, fetchFront };
+  /* --- склейка непрерывного фьючерса из квартальных контрактов ---
+   * contracts: [{secid, bars(asc)}]. Роллинг по экспирации (последняя свеча
+   * контракта), фронт-окно = (пред.экспирация, своя экспирация]. Стыки
+   * back-adjust (разностный «панамский»): по перекрытию в день ролла. */
+  function stitchContracts(contracts) {
+    const cs = contracts.filter((c) => c.bars && c.bars.length)
+      .map((c) => ({ secid: c.secid, bars: c.bars.slice().sort((a, b) => a.timestamp - b.timestamp) }));
+    cs.forEach((c) => { c.expiry = c.bars[c.bars.length - 1].timestamp; c.byTs = new Map(c.bars.map((b) => [b.timestamp, b])); });
+    cs.sort((a, b) => a.expiry - b.expiry);
+    let prevExp = -Infinity; const segs = [];
+    for (const c of cs) {
+      const front = c.bars.filter((b) => b.timestamp > prevExp && b.timestamp <= c.expiry);
+      if (front.length) segs.push({ c, front });
+      prevExp = c.expiry;
+    }
+    let offset = 0;                       // накапливаем от новых к старым
+    for (let i = segs.length - 2; i >= 0; i--) {
+      const older = segs[i], newer = segs[i + 1], rollTs = older.c.expiry;
+      const ob = older.c.byTs.get(rollTs), nb = newer.c.byTs.get(rollTs);
+      if (ob && nb) offset += (nb.close - ob.close);
+      const off = offset;
+      older.front = older.front.map((b) => ({ timestamp: b.timestamp, open: b.open + off, high: b.high + off, low: b.low + off, close: b.close + off, volume: b.volume }));
+    }
+    const out = [];
+    for (const s of segs) for (const b of s.front) out.push(b);
+    out.sort((a, b) => a.timestamp - b.timestamp);
+    return out;
+  }
+
+  // непрерывный фьючерс: prefix — префикс тикера (SiU6 -> 'Si'), years — глубина
+  async function fetchContinuousFutures(prefix, years) {
+    const MONTHS = ['H', 'M', 'U', 'Z'];             // квартальные: март/июнь/сент/дек
+    const nowY = new Date().getUTCFullYear();
+    const from = (nowY - years - 1) + '-01-01', till = new Date().toISOString().slice(0, 10);
+    const secids = [];
+    for (let y = nowY - years; y <= nowY; y++) for (const m of MONTHS) secids.push(prefix + m + (y % 10));
+    const contracts = [];
+    for (const secid of secids) {
+      try { const bars = await fetchCandlesFrom('futures', 'forts', secid, 24, from, till); if (bars && bars.length) contracts.push({ secid, bars }); }
+      catch (e) { /* контракта нет — пропускаем */ }
+    }
+    return stitchContracts(contracts);
+  }
+
+  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront };
 })();

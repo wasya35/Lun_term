@@ -238,16 +238,24 @@
     const src = sym && sym.ticker
       ? { engine: sym.engine || 'futures', market: sym.market || 'forts', ticker: sym.ticker, title: sym.title || sym.ticker }
       : { engine: 'currency', market: 'selt', ticker: 'USD000UTSTOM', title: 'USD/RUB спот' };
-    if (status) status.textContent = 'бэктест: загрузка истории ' + src.title + '…';
+    const futures = src.engine === 'futures';
+    const prefix = futures ? src.ticker.replace(/[FGHJKMNQUVXZ]\d$/, '') : null;   // SiU6 -> Si
+    if (status) status.textContent = 'бэктест: загрузка ' + (futures ? 'непрерывного ' + prefix + ' (склейка 5 лет)' : src.title) + '…';
     try {
-      const key = src.engine + '/' + src.market + '/' + src.ticker;
+      const key = futures ? 'cont/' + prefix : src.engine + '/' + src.market + '/' + src.ticker;
       if (state.barsKey !== key) {
-        const till = new Date(), from = new Date(till.getTime() - 9 * 366 * 86400000);
-        const fmt = (d) => d.toISOString().slice(0, 10);
-        const bars = await window.LunISS.fetchCandlesFrom(src.engine, src.market, src.ticker, 24, fmt(from), fmt(till));
-        if (!bars || bars.length < 60) throw new Error('мало данных (' + (bars ? bars.length : 0) + '). Для фьючерса это ближний контракт — истории мало; нужна склейка Si.');
+        let bars;
+        if (futures) {
+          bars = await window.LunISS.fetchContinuousFutures(prefix, 5);
+        } else {
+          const till = new Date(), from = new Date(till.getTime() - 9 * 366 * 86400000);
+          const fmt = (d) => d.toISOString().slice(0, 10);
+          bars = await window.LunISS.fetchCandlesFrom(src.engine, src.market, src.ticker, 24, fmt(from), fmt(till));
+        }
+        if (!bars || bars.length < 60) throw new Error('мало данных (' + (bars ? bars.length : 0) + ')');
         bars.sort((a, b) => a.timestamp - b.timestamp);
-        state.bars = bars; state.barsKey = key; state.title = src.title;
+        state.bars = bars; state.barsKey = key;
+        state.title = futures ? prefix + ' (непрерывный, склейка)' : src.title;
       }
       openReport();
     } catch (e) {
