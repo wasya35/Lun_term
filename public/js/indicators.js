@@ -158,33 +158,41 @@
       const ed = indicator.extendData || {};
       const bodies = ed.bodies || ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto'];
       const orb = ed.orb || (window.LUN.ASPECTS.orb || 3);
-      const G = window.LUN.BODY_GLYPH, H = bounding.height, list = chart.getDataList();
-      const period = chart.getPeriod ? chart.getPeriod() : null;
-      const detailed = period && period.type === 'minute';       // подробно на M5/M15
+      const H = bounding.height, list = chart.getDataList();
+      ctx.fillStyle = '#191d26'; ctx.fillRect(0, 0, bounding.width, H);   // нейтральный фон
+
+      // пары тел
+      const pairs = [];
+      for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
+        const a = bodies[i], b = bodies[j];
+        pairs.push([a, b, (a === 'Moon' || b === 'Moon') ? 'geo' : 'helio']);
+      }
+      // орб-дистанция до ближайшего аспекта пары на момент ts (мемоизация по минуте)
       const memo = new Map();
-      const actsAt = (ts) => { const k = Math.floor(ts / 60000); let v = memo.get(k); if (!v) { v = allActiveAspects(ts, bodies, orb); memo.set(k, v); } return v; };
+      const nearest = (a, b, frame, ts) => {
+        const key = a + b + Math.floor(ts / 60000);
+        let v = memo.get(key); if (v) return v;
+        const la = window.LunAstro.bodyInfo(a, ts, frame).lon, lb = window.LunAstro.bodyInfo(b, ts, frame).lon;
+        const sep = separation(la, lb);
+        let best = null, bd = 1e9; for (const A of ASPECTS) { const dd = Math.abs(sep - A.angle); if (dd < bd) { bd = dd; best = A; } }
+        v = { d: bd, asp: best }; memo.set(key, v); return v;
+      };
 
-      // фон + цветные метки аспектов сверху
-      forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
-        const acts = actsAt(bar.timestamp);
-        ctx.fillStyle = acts.some((z) => z.asp.kind === 'hard') ? '#33202b' : (acts.length ? '#1e2a3a' : '#191d26');
-        ctx.fillRect(x - half, 0, half * 2 + 0.6, H);
-        if (acts.length) { const seg = (half * 2) / acts.length; acts.forEach((z, k) => { ctx.fillStyle = z.asp.color; ctx.fillRect(x - half + k * seg, 0, seg + 0.5, 4); }); }
-      });
-
-      if (detailed) {                                            // подписи только на минутках
-        ctx.textBaseline = 'middle'; ctx.font = '10px system-ui, sans-serif';
-        const sig = (ts) => actsAt(ts).map((z) => G[z.a] + z.asp.sym + G[z.b]).sort().join(' ');
-        runsOverVisible(chart, xAxis, (bar) => sig(bar.timestamp),
-          (startI, endI, midX, leftX, rightX) => {
-            const acts = actsAt(list[endI].timestamp); if (!acts.length) return;
-            const parts = acts.map((z) => `${G[z.a]}${z.asp.sym}${G[z.b]}`);
-            let label = parts.join(' ');
-            if (rightX - leftX < ctx.measureText(label).width + 6) label = parts[0];   // не влезло — первый
-            if (rightX - leftX < ctx.measureText(label).width + 4) return;
-            ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.textAlign = 'center';
-            ctx.fillText(label, midX, H / 2);
-          });
+      const range = chart.getVisibleRange();
+      const from = Math.max(1, range.from), to = Math.min(list.length - 2, range.to);
+      // риска на всю высоту в ТОЧНОМ центре аспекта (локальный минимум орб-дистанции)
+      for (const [a, b, frame] of pairs) {
+        for (let i = from; i <= to; i++) {
+          const cur = nearest(a, b, frame, list[i].timestamp);
+          if (cur.d > orb) continue;
+          const prev = nearest(a, b, frame, list[i - 1].timestamp);
+          const next = nearest(a, b, frame, list[i + 1].timestamp);
+          if (cur.d <= prev.d && cur.d < next.d) {
+            const x = xAxis.convertToPixel(i);
+            ctx.strokeStyle = cur.asp.color; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+          }
+        }
       }
       return true;
     },
@@ -227,6 +235,29 @@
         const vwap = cumPV / cumV;
         const sd = Math.sqrt(Math.max(0, cumP2V / cumV - vwap * vwap));
         return { vwap, up1: vwap + k1 * sd, dn1: vwap - k1 * sd, up2: vwap + k2 * sd, dn2: vwap - k2 * sd };
+      });
+    },
+  });
+
+  /* =============== Дневная кумулятивная дельта (по OHLC) =============== */
+  // Точных данных покупок/продаж у ISS нет — дельта аппроксимируется из свечи:
+  // доля дня = (close-open)/(high-low), знак = направление; накопление за сутки (МСК).
+  kc.registerIndicator({
+    name: 'CumDelta',
+    shortName: 'Δ кум · день',
+    series: 'normal',
+    figures: [{ key: 'cd', title: 'Δ: ', type: 'line' }],
+    styles: () => ({ lines: [{ color: '#4aa3df', size: 1.4 }] }),
+    calc: (dataList) => {
+      let day = null, cum = 0;
+      return dataList.map((d) => {
+        const dk = Math.floor((d.timestamp + MSK_OFFSET) / 86400000);
+        if (dk !== day) { day = dk; cum = 0; }
+        const rng = (d.high - d.low) || 0;
+        let f = rng > 0 ? (d.close - d.open) / rng : Math.sign(d.close - d.open);
+        f = Math.max(-1, Math.min(1, f));
+        cum += (d.volume || 0) * f;
+        return { cd: cum };
       });
     },
   });

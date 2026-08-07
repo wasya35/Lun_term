@@ -13,6 +13,7 @@
     volumePane: null,
     aspectPanes: {},        // body -> paneId (полосы ☉/планета)
     allAspectPane: null,    // сводная полоса всех аспектов
+    deltaPane: null,        // дневная кумулятивная дельта
     cyclePanes: {},         // cycleId -> paneId
     overlayIds: {},         // EMA/SMA/VWAP на ценовой панели
   };
@@ -98,6 +99,11 @@
     state.chart.createIndicator({ name: 'VOL', calcParams: [], paneId: state.volumePane }, false);
     wishPane(state.volumePane, { height: window.LUN.PANE_HEIGHTS.volume, order: 90 });
   }
+  function createDeltaPane() {
+    state.deltaPane = 'pane_delta';
+    state.chart.createIndicator({ name: 'CumDelta', paneId: state.deltaPane }, false);
+    wishPane(state.deltaPane, { height: 72, order: 91 });
+  }
 
   function buildPanes() {
     const H = window.LUN.PANE_HEIGHTS;
@@ -105,7 +111,7 @@
     state.chart.createIndicator({ name: 'SignStrip', paneId: state.signPane, shortName: BODY_LABEL.Moon, extendData: { body: 'Moon', frame: 'geo' } }, false);
     state.signPanes.Moon = state.signPane;
     wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
-    window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
+    window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 11 + i); });
     window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });  // ☉/☿ по умолчанию
     if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();
     createVolumePane();
@@ -211,8 +217,13 @@
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createVolumePane(); else if (state.volumePane) { state.chart.removeIndicator({ paneId: state.volumePane }); state.volumePane = null; }
     }, true);
+    // дневная кумулятивная дельта — по умолчанию выключена (полное отключение)
+    mkBtn(indWrap, 'Δ дельта', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createDeltaPane(); else if (state.deltaPane) { state.chart.removeIndicator({ paneId: state.deltaPane }); state.deltaPane = null; }
+    }, false, 'Дневная кумулятивная дельта (аппрокс. по OHLC)');
     // положения Меркурия и Солнца в знаках (словами)
-    [['Mercury', '☿ знак', 12], ['Sun', '☉ знак', 13]].forEach(([body, label, order]) => mkBtn(indWrap, label, (b) => {
+    [['Mercury', '☿ знак', 25], ['Sun', '☉ знак', 26]].forEach(([body, label, order]) => mkBtn(indWrap, label, (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createSignPane(body, order); else if (state.signPanes[body]) { state.chart.removeIndicator({ paneId: state.signPanes[body] }); delete state.signPanes[body]; }
     }, false, `Положение ${BODY_LABEL[body]} в знаках`));
@@ -253,7 +264,7 @@
     cycWrap.innerHTML = '';
     window.LUN.CYCLES.forEach((cy, i) => mkBtn(cycWrap, String(i + 1), (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
-      if (on) { if (!state.cyclePanes[cy.id]) createCyclePane(cy, 20 + i); }
+      if (on) { if (!state.cyclePanes[cy.id]) createCyclePane(cy, 11 + i); }
       else if (state.cyclePanes[cy.id]) { state.chart.removeIndicator({ paneId: state.cyclePanes[cy.id] }); delete state.cyclePanes[cy.id]; }
     }, cy.enabled, cy.title));
   }
@@ -270,7 +281,7 @@
     const orderOf = { Moon: 10, Mercury: 12, Sun: 13, Venus: 14, Mars: 15, Jupiter: 16, Saturn: 17 };
     (openBodies.length ? openBodies : ['Moon']).forEach((body) => createSignPane(body, orderOf[body] || 15));
     state.signPane = state.signPanes.Moon;
-    window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 20 + i); });
+    window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 11 + i); });
     buildCycleButtons();
     // пересоздать активные индикаторы (SMA/EMA/VWAP) с новыми параметрами
     Object.keys(state.overlayIds).forEach((kind) => { toggleOverlay(kind, false); toggleOverlay(kind, true); });
