@@ -221,7 +221,7 @@
   }
 
   function plainReport(res, asp) {
-    let t = `Бэктест USD/RUB · ${dstr(res.from)}…${dstr(res.to)} · дней ${res.days} · базовый винрейт ${wpct(res.baseUp, 1)} · стратегия зон(интрадей) ${pct(res.strategyIntraday, 0)}\n\nЗОНЫ (винрейт направления):\n`;
+    let t = `Бэктест ${state.title || 'USD/RUB'} · ${dstr(res.from)}…${dstr(res.to)} · дней ${res.days} · базовый винрейт ${wpct(res.baseUp, 1)} · стратегия зон(интрадей) ${pct(res.strategyIntraday, 0)}\n\nЗОНЫ (винрейт направления):\n`;
     res.zoneStats.forEach((z) => { t += `  ${z.label} [${z.from}-${z.to}° ${z.bias}] n=${z.nDir} винрейт=${wpct(z.winRate, 1)} z=${z.z.toFixed(1)} ср=${pct(z.tradeMean, 3)}\n`; });
     t += '\nЗНАКИ (дни↑ | 0-15↑ | 15-30↑):\n';
     res.signStats.forEach((s) => { t += `  ${s.name} n=${s.n} ${wpct(s.up, 0)} | ${wpct(s.h1up, 0)} | ${wpct(s.h2up, 0)}\n`; });
