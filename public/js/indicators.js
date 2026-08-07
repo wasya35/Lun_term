@@ -262,6 +262,62 @@
     },
   });
 
+  /* ============ Узлы Луны на цене: 0° (ингрессия) и 15° (середина) ============ */
+  kc.registerIndicator({
+    name: 'MoonNodes',
+    shortName: 'Узлы ☾',
+    series: 'price',                 // накладывается на ценовую панель
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const H = bounding.height, list = chart.getDataList();
+      const range = chart.getVisibleRange();
+      const from = Math.max(1, range.from), to = Math.min(list.length, range.to);
+      for (let i = from; i < to; i++) {
+        const a = window.LunAstro.moonInfo(list[i - 1].timestamp), b = window.LunAstro.moonInfo(list[i].timestamp);
+        const ka = a.signIndex * 2 + (a.degInSign >= 15 ? 1 : 0);
+        const kb = b.signIndex * 2 + (b.degInSign >= 15 ? 1 : 0);
+        if (ka === kb) continue;
+        const x = xAxis.convertToPixel(i);
+        const ingress = a.signIndex !== b.signIndex;      // смена знака = 0°
+        ctx.strokeStyle = ingress ? 'rgba(230,160,60,0.45)' : 'rgba(110,160,220,0.30)';
+        ctx.lineWidth = 1; ctx.setLineDash(ingress ? [] : [3, 3]);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = ingress ? 'rgba(230,160,60,0.9)' : 'rgba(120,160,220,0.75)';
+        ctx.font = '9px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillText(ingress ? window.LUN.SIGNS[b.signIndex].glyph + ' 0°' : '15°', x + 2, 2);
+      }
+      return true;
+    },
+  });
+
+  /* ============ Сильные бары (импульс: диапазон и объём выше средних) ============ */
+  kc.registerIndicator({
+    name: 'StrongBars',
+    shortName: 'Сильбары',
+    series: 'price',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, xAxis, yAxis }) => {
+      const cfg = window.LUN.STRONGBAR || { lookback: 20, rangeK: 1.6, volK: 1.6 };
+      const list = chart.getDataList();
+      const range = chart.getVisibleRange();
+      const from = Math.max(cfg.lookback, range.from), to = Math.min(list.length, range.to);
+      for (let i = from; i < to; i++) {
+        let sr = 0, sv = 0, n = 0;
+        for (let j = i - cfg.lookback; j < i; j++) { if (j < 0) continue; sr += (list[j].high - list[j].low); sv += (list[j].volume || 0); n++; }
+        if (!n) continue;
+        const bar = list[i], rng = bar.high - bar.low, vol = bar.volume || 0;
+        if (!(rng > cfg.rangeK * (sr / n) && vol > cfg.volK * (sv / n))) continue;
+        const up = bar.close >= bar.open, x = xAxis.convertToPixel(i);
+        ctx.fillStyle = up ? '#26e0b0' : '#ff5c7a';
+        if (up) { const y = yAxis.convertToPixel(bar.low) + 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4, y + 7); ctx.lineTo(x + 4, y + 7); ctx.closePath(); ctx.fill(); }
+        else { const y = yAxis.convertToPixel(bar.high) - 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4, y - 7); ctx.lineTo(x + 4, y - 7); ctx.closePath(); ctx.fill(); }
+      }
+      return true;
+    },
+  });
+
   /* ======================= Полоса аспектов ======================= */
   const BODY_SYM = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄' };
   // голубые (soft) = продолжение движения; красные (hard) = разворот/коррекция

@@ -108,6 +108,8 @@ LUN.ASPECT_PLANETS = [
 /* 11-я сводная полоса: все аспекты всех пар (планеты + Солнце). Подробные подписи
  * на M5/M15, на H1/D — только цветные отметки. */
 LUN.ALL_ASPECTS = { enabled: false };
+/* Сильный бар: диапазон и объём выше средних за lookback баров (импульс). */
+LUN.STRONGBAR = { lookback: 20, rangeK: 1.6, volK: 1.6 };
 LUN.BODY_GLYPH = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Pluto: '♇' };
 
 /* --- Линия Ганна -----------------------------------------------------------

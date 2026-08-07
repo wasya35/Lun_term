@@ -222,6 +222,14 @@
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createDeltaPane(); else if (state.deltaPane) { state.chart.removeIndicator({ paneId: state.deltaPane }); state.deltaPane = null; }
     }, false, 'Дневная кумулятивная дельта (аппрокс. по OHLC)');
+    // узлы Луны (0°/15°) и сильные бары на цене — для поиска «сильный бар в узле»
+    [['MoonNodes', 'Узлы ☾', 'Ингрессии (0°) и середины (15°) знаков Луны на цене'],
+     ['StrongBars', 'Сильбары', 'Сильные бары: диапазон и объём выше средних (импульс)']].forEach(([name, label, tip]) =>
+      mkBtn(indWrap, label, (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (on) state.chart.createIndicator({ name, paneId: 'candle_pane' }, true);
+        else state.chart.removeIndicator({ paneId: 'candle_pane', name });
+      }, false, tip));
     // положения Меркурия и Солнца в знаках (словами)
     [['Mercury', '☿ знак', 25], ['Sun', '☉ знак', 26]].forEach(([body, label, order]) => mkBtn(indWrap, label, (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
