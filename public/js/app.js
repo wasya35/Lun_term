@@ -239,8 +239,11 @@
     const setWrap = document.getElementById('settings');
     mkBtn(setWrap, '⚙ Настройки', () => window.LunSettings.open(applySettings), false,
       'Цвета знаков и торговые зоны циклов');
-    mkBtn(setWrap, '📊 Бэктест', () => window.LunBacktest.run(8), false,
-      'Сверка лунных зон с историей USD/RUB за 8 лет');
+    mkBtn(setWrap, '📊 Бэктест', async () => {
+      const ins = state.instrument;
+      const ticker = await window.LunData.resolveTicker(ins);
+      window.LunBacktest.run({ engine: ins.engine || 'futures', market: ins.market || 'forts', ticker, title: (ins.title || ins.id) + ' · ' + ticker });
+    }, false, 'Сверка лунных зон и аспектов с историей текущего инструмента');
   }
 
   // тумблеры аспектов: по планете (☉/планета) + сводная «∀ все»

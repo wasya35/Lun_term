@@ -191,7 +191,7 @@
     addCss();
     const bg = document.createElement('div'); bg.className = 'lun-modal-bg';
     const modal = document.createElement('div'); modal.className = 'lun-modal';
-    modal.innerHTML = `<h2>Бэктест: зоны Луны и аспекты ☉/☿ · USD/RUB<span class="x" title="закрыть">×</span></h2>
+    modal.innerHTML = `<h2>Бэктест: зоны Луны и аспекты · ${state.title || 'USD/RUB'}<span class="x" title="закрыть">×</span></h2>
       <div class="bt-ctrl">Период:
         <button class="lun-btn mini" data-p="all">всё</button>
         <button class="lun-btn mini" data-p="5">5 лет</button>
@@ -231,18 +231,23 @@
     return t;
   }
 
-  async function run() {
+  // sym: { engine, market, ticker, title } — инструмент с графика; иначе USD/RUB спот.
+  async function run(sym) {
     const status = document.getElementById('datasource');
     const prev = status ? status.textContent : '';
-    if (status) status.textContent = 'бэктест: загрузка истории USD/RUB…';
+    const src = sym && sym.ticker
+      ? { engine: sym.engine || 'futures', market: sym.market || 'forts', ticker: sym.ticker, title: sym.title || sym.ticker }
+      : { engine: 'currency', market: 'selt', ticker: 'USD000UTSTOM', title: 'USD/RUB спот' };
+    if (status) status.textContent = 'бэктест: загрузка истории ' + src.title + '…';
     try {
-      if (!state.bars) {
+      const key = src.engine + '/' + src.market + '/' + src.ticker;
+      if (state.barsKey !== key) {
         const till = new Date(), from = new Date(till.getTime() - 9 * 366 * 86400000);
         const fmt = (d) => d.toISOString().slice(0, 10);
-        const bars = await window.LunISS.fetchCandlesFrom('currency', 'selt', 'USD000UTSTOM', 24, fmt(from), fmt(till));
-        if (!bars || bars.length < 100) throw new Error('мало данных (' + (bars ? bars.length : 0) + ')');
+        const bars = await window.LunISS.fetchCandlesFrom(src.engine, src.market, src.ticker, 24, fmt(from), fmt(till));
+        if (!bars || bars.length < 60) throw new Error('мало данных (' + (bars ? bars.length : 0) + '). Для фьючерса это ближний контракт — истории мало; нужна склейка Si.');
         bars.sort((a, b) => a.timestamp - b.timestamp);
-        state.bars = bars;
+        state.bars = bars; state.barsKey = key; state.title = src.title;
       }
       openReport();
     } catch (e) {
