@@ -121,10 +121,10 @@
 
   // Свечи с произвольного рынка (для бэктеста берём непрерывную дневную USD/RUB
   // с валютного рынка: engine=currency, market=selt, secid=USD000UTSTOM — годы истории).
-  async function fetchCandlesFrom(engine, market, secid, interval, from, till) {
+  async function fetchCandlesFrom(engine, market, secid, interval, from, till, maxPages) {
     const url = `https://iss.moex.com/iss/engines/${engine}/markets/${market}/securities/`
       + `${encodeURIComponent(secid)}/candles.json?interval=${interval}&from=${from}&till=${till}&iss.reverse=false`;
-    return parseCandles(await getAllPages(url, 'candles'));
+    return parseCandles(await getAllPages(url, 'candles', maxPages || 40));
   }
 
   /* --- склейка непрерывного фьючерса из квартальных контрактов ---
@@ -156,17 +156,28 @@
     return out;
   }
 
-  // непрерывный фьючерс: prefix — префикс тикера (SiU6 -> 'Si'), years — глубина
-  async function fetchContinuousFutures(prefix, years) {
+  // непрерывный фьючерс: prefix — префикс тикера (SiU6 -> 'Si'), years — глубина.
+  // tf — таймфрейм: { iss, agg, maxPages }. iss — нативный интервал ISS
+  //   (24=день, 60=час, 10=10м, 1=минутка); agg — доп. агрегация из iss в N
+  //   минут (для M5/M15 берём iss:1 + agg:5/15); maxPages — лимит страниц (для
+  //   минуток нужно больше). Внутридневная история у старых контрактов часто
+  //   недоступна — они просто пропускаются (склейка по имеющимся). onProgress —
+  //   колбэк (done,total,secid) для статуса.
+  async function fetchContinuousFutures(prefix, years, tf, onProgress) {
+    tf = tf || {}; const iss = tf.iss || 24, agg = tf.agg || 0, maxPages = tf.maxPages || 40;
     const MONTHS = ['H', 'M', 'U', 'Z'];             // квартальные: март/июнь/сент/дек
     const nowY = new Date().getUTCFullYear();
     const from = (nowY - years - 1) + '-01-01', till = new Date().toISOString().slice(0, 10);
     const secids = [];
     for (let y = nowY - years; y <= nowY; y++) for (const m of MONTHS) secids.push(prefix + m + (y % 10));
-    const contracts = [];
+    const contracts = []; let done = 0;
     for (const secid of secids) {
-      try { const bars = await fetchCandlesFrom('futures', 'forts', secid, 24, from, till); if (bars && bars.length) contracts.push({ secid, bars }); }
-      catch (e) { /* контракта нет — пропускаем */ }
+      try {
+        let bars = await fetchCandlesFrom('futures', 'forts', secid, iss, from, till, maxPages);
+        if (agg && bars && bars.length) bars = aggregate(bars, agg);
+        if (bars && bars.length) contracts.push({ secid, bars });
+      } catch (e) { /* контракта/истории нет — пропускаем */ }
+      done++; if (onProgress) onProgress(done, secids.length, secid);
     }
     return stitchContracts(contracts);
   }

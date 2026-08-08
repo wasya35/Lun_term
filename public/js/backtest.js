@@ -331,21 +331,23 @@
       <td class="${cls(s.h1)}">${wpct(s.h1up, 0)}</td><td class="${cls(s.h2)}">${wpct(s.h2up, 0)}</td>
       <td>${Math.sign(s.h1) !== Math.sign(s.h2) && s.n > 40 ? 'слом на 15° ↔' : ''}</td></tr>`).join('');
     const ah = asp.hard, as = asp.soft;
+    const U = state.unit || 'дней', Uup = state.unit ? 'баров↑' : 'дни↑';
     return `
       <div class="bt-sum">
+        <span>ТФ: <b>${state.tfLabel || 'D1'}</b></span>
         <span>Период: <b>${dstr(res.from)} … ${dstr(res.to)}</b></span>
-        <span>Дней: <b>${res.days}</b></span>
-        <span>Базовый винрейт (дни↑): <b>${wpct(res.baseUp, 1)}</b></span>
+        <span>${U[0].toUpperCase() + U.slice(1)}: <b>${res.days}</b></span>
+        <span>Базовый винрейт (${Uup}): <b>${wpct(res.baseUp, 1)}</b></span>
         <span>Стратегия зон (интрадей): <b class="${cls(res.strategyIntraday)}">${pct(res.strategyIntraday, 0)}</b></span>
       </div>
-      <div class="lun-sec"><h3 style="margin:4px 0">Зоны — отрабатываемость направления (интрадей open→close)</h3>
-        <table class="bt-tbl"><thead><tr><th>зона</th><th>°</th><th>bias</th><th>дней</th><th>винрейт</th><th>z</th><th>ср. в сторону</th><th>вывод</th></tr></thead><tbody>${zoneRows}</tbody></table>
-        <p class="bt-recs" style="color:#8b93a7">Винрейт = доля дней, где внутридневное движение совпало с направлением зоны. Значимо при |z|≥1.6–2.</p>
+      <div class="lun-sec"><h3 style="margin:4px 0">Зоны — отрабатываемость направления (${U === 'дней' ? 'интрадей open→close' : 'бар open→close'})</h3>
+        <table class="bt-tbl"><thead><tr><th>зона</th><th>°</th><th>bias</th><th>${U}</th><th>винрейт</th><th>z</th><th>ср. в сторону</th><th>вывод</th></tr></thead><tbody>${zoneRows}</tbody></table>
+        <p class="bt-recs" style="color:#8b93a7">Винрейт = доля ${U === 'дней' ? 'дней' : 'баров'}, где движение бара совпало с направлением зоны. Значимо при |z|≥1.6–2.</p>
       </div>
-      <div class="lun-sec"><h3 style="margin:4px 0">Знаки Луны: дни↑ и «слом на 15°» (1-я половина 0–15° vs 2-я 15–30°)</h3>
-        <table class="bt-tbl"><thead><tr><th>знак</th><th>дней</th><th>дни↑</th><th>ср/день</th><th>0–15°↑</th><th>15–30°↑</th><th></th></tr></thead><tbody>${signRows}</tbody></table>
+      <div class="lun-sec"><h3 style="margin:4px 0">Знаки Луны: ${Uup} и «слом на 15°» (1-я половина 0–15° vs 2-я 15–30°)</h3>
+        <table class="bt-tbl"><thead><tr><th>знак</th><th>${U}</th><th>${Uup}</th><th>ср/бар</th><th>0–15°↑</th><th>15–30°↑</th><th></th></tr></thead><tbody>${signRows}</tbody></table>
       </div>
-      <div class="lun-sec"><h3 style="margin:4px 0">Аспекты ☉/☿ (${asp.frame}, орб ${asp.orb}°, горизонт ${asp.H} дн.)</h3>
+      <div class="lun-sec"><h3 style="margin:4px 0">Аспекты ☉/☿ (${asp.frame}, орб ${asp.orb}°, горизонт ${asp.H} ${U === 'дней' ? 'дн.' : 'баров'})</h3>
         <table class="bt-tbl"><thead><tr><th>тип</th><th>событий</th><th>разворот</th><th>продолжение</th><th>вбок</th><th>доля</th></tr></thead>
         <tbody>
           <tr><td>🔴 красные (соед./квадрат/оппоз.)</td><td>${ah.n}</td><td>${ah.rev}</td><td>${ah.cont}</td><td>${ah.flat}</td><td class="${cls(ah.revRate - 0.5)}">разворот ${wpct(ah.revRate, 0)}</td></tr>
@@ -393,6 +395,13 @@
     const bg = document.createElement('div'); bg.className = 'lun-modal-bg';
     const modal = document.createElement('div'); modal.className = 'lun-modal';
     modal.innerHTML = `<h2>Бэктест: зоны Луны и аспекты · ${state.title || 'USD/RUB'}<span class="x" title="закрыть">×</span></h2>
+      <div class="bt-ctrl bt-tf">ТФ:
+        <button class="lun-btn mini" data-tf="M5">M5</button>
+        <button class="lun-btn mini" data-tf="M15">M15</button>
+        <button class="lun-btn mini" data-tf="H1">H1</button>
+        <button class="lun-btn mini active" data-tf="D1">D1</button>
+        <span class="bt-mut" style="font-size:11px">внутридневная — только фьючерсы, глубина ограничена историей ISS</span>
+      </div>
       <div class="bt-ctrl">Период:
         <button class="lun-btn mini" data-p="all">всё</button>
         <button class="lun-btn mini" data-p="5">5 лет</button>
@@ -406,9 +415,10 @@
     const close = () => bg.remove();
     modal.querySelector('.x').onclick = close; modal.querySelector('#bt-close').onclick = close;
     bg.onclick = (e) => { if (e.target === bg) close(); };
-    let lastText = '';
+    let lastText = '', curOpts = {}, curBtn = null;
     const refresh = (opts, btn) => {
-      modal.querySelectorAll('.bt-ctrl .lun-btn').forEach((x) => x.classList.remove('active')); if (btn) btn.classList.add('active');
+      curOpts = opts; if (btn) curBtn = btn;
+      modal.querySelectorAll('.bt-ctrl:not(.bt-tf) .lun-btn').forEach((x) => x.classList.remove('active')); if (curBtn) curBtn.classList.add('active');
       const res = analyze(state.bars, window.LUN.CYCLES[0].zones, opts);
       const asp = analyzeAspects(state.bars, opts);
       const frc = analyzeForce(state.bars, window.LUN.CYCLES[0].zones, opts);
@@ -418,13 +428,23 @@
     };
     const now = Date.now(), yr = 365 * 86400000;
     const optsFor = (p) => p === 'no2022' ? { exclude2022: true } : (p === 'all' ? {} : { fromTs: now - (+p) * yr });
-    modal.querySelectorAll('.bt-ctrl .lun-btn').forEach((btn) => { btn.onclick = () => refresh(optsFor(btn.dataset.p), btn); });
+    modal.querySelectorAll('.bt-ctrl:not(.bt-tf) .lun-btn').forEach((btn) => { btn.onclick = () => refresh(optsFor(btn.dataset.p), btn); });
+    // переключение ТФ: догружаем бары нужного интервала и пересчитываем тот же период
+    const switchTf = async (tfDef, btn) => {
+      const status = document.getElementById('datasource'), prev = status ? status.textContent : '';
+      modal.querySelectorAll('.bt-tf .lun-btn').forEach((x) => x.classList.remove('active')); btn.classList.add('active');
+      modal.querySelector('#bt-content').innerHTML = `<div class="lun-sec" style="padding:14px;color:#8b93a7">Загрузка ${tfDef.label}…</div>`;
+      try { await loadBars(tfDef); refresh(curOpts, curBtn); }
+      catch (e) { modal.querySelector('#bt-content').innerHTML = `<div class="lun-sec" style="padding:14px;color:#ef5350">ТФ ${tfDef.label}: ${e.message}</div>`; }
+      finally { if (status) status.textContent = prev; }
+    };
+    modal.querySelectorAll('.bt-tf .lun-btn').forEach((btn) => { btn.onclick = () => switchTf(TFS.find((t) => t.id === btn.dataset.tf), btn); });
     modal.querySelector('#bt-copy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(lastText); modal.querySelector('#bt-copy').textContent = 'скопировано ✓'; };
     refresh({ fromTs: now - 3 * yr }, modal.querySelector('[data-p="3"]'));   // по умолчанию 3 года
   }
 
   function plainReport(res, asp, frc, trd) {
-    let t = `Бэктест ${state.title || 'USD/RUB'} · ${dstr(res.from)}…${dstr(res.to)} · дней ${res.days} · базовый винрейт ${wpct(res.baseUp, 1)} · стратегия зон(интрадей) ${pct(res.strategyIntraday, 0)}\n\nЗОНЫ (винрейт направления):\n`;
+    let t = `Бэктест ${state.title || 'USD/RUB'} · ТФ ${state.tfLabel || 'D1'} · ${dstr(res.from)}…${dstr(res.to)} · ${state.unit || 'дней'} ${res.days} · базовый винрейт ${wpct(res.baseUp, 1)} · стратегия зон(интрадей) ${pct(res.strategyIntraday, 0)}\n\nЗОНЫ (винрейт направления):\n`;
     res.zoneStats.forEach((z) => { t += `  ${z.label} [${z.from}-${z.to}° ${z.bias}] n=${z.nDir} винрейт=${wpct(z.winRate, 1)} z=${z.z.toFixed(1)} ср=${pct(z.tradeMean, 3)}\n`; });
     t += '\nЗНАКИ (дни↑ | 0-15↑ | 15-30↑):\n';
     res.signStats.forEach((s) => { t += `  ${s.name} n=${s.n} ${wpct(s.up, 0)} | ${wpct(s.h1up, 0)} | ${wpct(s.h2up, 0)}\n`; });
@@ -448,6 +468,42 @@
     return t;
   }
 
+  /* Таймфреймы бэктеста. iss — нативный интервал ISS; agg — доп. агрегация из
+   * минуток (M5/M15 нативно ISS не отдаёт). years — глубина склейки (внутри дня
+   * держим меньше: истории 1-мин у старых контрактов нет). unit — подпись. */
+  const TFS = [
+    { id: 'M5',  label: 'M5',  tf: { iss: 1,  agg: 5,  maxPages: 160 }, years: 1, unit: 'баров' },
+    { id: 'M15', label: 'M15', tf: { iss: 1,  agg: 15, maxPages: 160 }, years: 1, unit: 'баров' },
+    { id: 'H1',  label: 'H1',  tf: { iss: 60 },                          years: 2, unit: 'баров' },
+    { id: 'D1',  label: 'D1',  tf: { iss: 24 },                          years: 5, unit: 'дней' },
+  ];
+
+  // Загрузка баров текущего инструмента на выбранном ТФ (с кэшем по инстр+ТФ).
+  async function loadBars(tfDef) {
+    const status = document.getElementById('datasource');
+    const base = state.futures ? 'cont/' + state.prefix : state.src.engine + '/' + state.src.market + '/' + state.src.ticker;
+    const cacheKey = base + '@' + tfDef.id;
+    state.cache = state.cache || {};
+    if (!state.cache[cacheKey]) {
+      let bars;
+      if (state.futures) {
+        const onP = (d, t, s) => { if (status) status.textContent = `бэктест ${tfDef.label}: склейка ${state.prefix} ${d}/${t} (${s})…`; };
+        bars = await window.LunISS.fetchContinuousFutures(state.prefix, tfDef.years, tfDef.tf, onP);
+      } else {
+        if (tfDef.id !== 'D1') throw new Error('внутридневная склейка — только для фьючерсов');
+        const till = new Date(), from = new Date(till.getTime() - 9 * 366 * 86400000);
+        const fmt = (d) => d.toISOString().slice(0, 10);
+        bars = await window.LunISS.fetchCandlesFrom(state.src.engine, state.src.market, state.src.ticker, 24, fmt(from), fmt(till));
+      }
+      if (!bars || bars.length < 60) throw new Error(`мало данных на ${tfDef.label} (${bars ? bars.length : 0}) — у старых контрактов внутридневной истории нет`);
+      bars.sort((a, b) => a.timestamp - b.timestamp);
+      state.cache[cacheKey] = bars;
+    }
+    state.bars = state.cache[cacheKey];
+    state.tfLabel = tfDef.label; state.unit = tfDef.unit;
+    state.title = state.futures ? state.prefix + ' (непрерывный)' : state.src.title;
+  }
+
   // sym: { engine, market, ticker, title } — инструмент с графика; иначе USD/RUB спот.
   async function run(sym) {
     const status = document.getElementById('datasource');
@@ -455,25 +511,11 @@
     const src = sym && sym.ticker
       ? { engine: sym.engine || 'futures', market: sym.market || 'forts', ticker: sym.ticker, title: sym.title || sym.ticker }
       : { engine: 'currency', market: 'selt', ticker: 'USD000UTSTOM', title: 'USD/RUB спот' };
-    const futures = src.engine === 'futures';
-    const prefix = futures ? src.ticker.replace(/[FGHJKMNQUVXZ]\d$/, '') : null;   // SiU6 -> Si
-    if (status) status.textContent = 'бэктест: загрузка ' + (futures ? 'непрерывного ' + prefix + ' (склейка 5 лет)' : src.title) + '…';
+    state.src = src;
+    state.futures = src.engine === 'futures';
+    state.prefix = state.futures ? src.ticker.replace(/[FGHJKMNQUVXZ]\d$/, '') : null;   // SiU6 -> Si
     try {
-      const key = futures ? 'cont/' + prefix : src.engine + '/' + src.market + '/' + src.ticker;
-      if (state.barsKey !== key) {
-        let bars;
-        if (futures) {
-          bars = await window.LunISS.fetchContinuousFutures(prefix, 5);
-        } else {
-          const till = new Date(), from = new Date(till.getTime() - 9 * 366 * 86400000);
-          const fmt = (d) => d.toISOString().slice(0, 10);
-          bars = await window.LunISS.fetchCandlesFrom(src.engine, src.market, src.ticker, 24, fmt(from), fmt(till));
-        }
-        if (!bars || bars.length < 60) throw new Error('мало данных (' + (bars ? bars.length : 0) + ')');
-        bars.sort((a, b) => a.timestamp - b.timestamp);
-        state.bars = bars; state.barsKey = key;
-        state.title = futures ? prefix + ' (непрерывный, склейка)' : src.title;
-      }
+      await loadBars(TFS.find((t) => t.id === 'D1'));   // старт на D1, дальше переключаем в отчёте
       openReport();
     } catch (e) {
       alert('Бэктест не удался: ' + e.message + '\nНужны живые данные MOEX (проверь строку данных).');
