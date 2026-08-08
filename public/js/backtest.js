@@ -354,7 +354,9 @@
       <td>${r.key}${r.note ? ' <span class="bt-mut">*</span>' : ''}</td><td class="bt-mut">${Math.round(r.rr2.avgRisk)}</td>${trdCell(r.rr2)}${trdCell(r.rr3)}</tr>`).join('');
     const o = trd.oos, tr = o.train, te = o.test;
     const oosCell = (t) => t && t.n ? `${sgnR(t.expRnet)} <span class="bt-mut">(${t.n} сд., винр ${wpct(t.winRate, 0)})</span>` : '—';
-    const holds = tr && te && tr.rr2.expRnet > 0 && te.rr2.expRnet > 0;
+    const enoughOos = tr && te && tr.rr2.n >= 20 && te.rr2.n >= 20;
+    const holds = enoughOos && tr.rr2.expRnet > 0 && te.rr2.expRnet > 0;
+    const oosVerdict = !enoughOos ? '⚠ мало сделок для OOS-вывода — переключи ТФ на H1/M15' : (holds ? '✓ держится на невиданных данных' : '✗ на тесте перевес не держится — вероятна подгонка');
     return `
       <div class="lun-sec"><h3 style="margin:4px 0">Автоторговля: сила/силища + поглощение → вход/стоп/тейк (R:R), ЧИСТО за вычетом издержек</h3>
         <table class="bt-tbl"><thead>
@@ -366,7 +368,7 @@
           <span><b>Out-of-sample</b> «Сила+поглощение» 1:2 (граница ${dstr(o.splitTs)}):</span>
           <span>обучение (2/3): <b class="${cls(tr ? tr.rr2.expRnet : 0)}">${oosCell(tr && tr.rr2)}</b></span>
           <span>тест (1/3): <b class="${cls(te ? te.rr2.expRnet : 0)}">${oosCell(te && te.rr2)}</b></span>
-          <span>${holds ? '✓ держится на невиданных данных' : '✗ на тесте перевес не держится — вероятна подгонка'}</span>
+          <span>${oosVerdict}</span>
         </div>
       </div>`;
   }
@@ -438,7 +440,8 @@
         const extras = ['+ у узла 0/15', '+ сила ≥3×', '+ сильное закрытие'].map((k) => { const r = row(k); return r && r.rr2.n >= 20 ? `${k.replace('+ ', '')} ${R(r.rr2.expRnet)} (${r.rr2.n})` : null; }).filter(Boolean);
         if (extras.length) out.push(`Доп. фильтры (нетто 1:2): ${extras.join(' · ')} — бери тот, что поднимает ожидание при живой выборке.`);
         const tr = trd.oos.train, te = trd.oos.test;
-        if (tr && te && te.rr2.n >= 15) out.push(`Out-of-sample: обучение ${R(tr.rr2.expRnet)} → тест ${R(te.rr2.expRnet)} — ${tr.rr2.expRnet > 0 && te.rr2.expRnet > 0 ? 'перевес держится на невиданных данных ✓ (кандидат в робот)' : 'на тесте разваливается — не торговать вслепую'}.`);
+        if (tr && te && tr.rr2.n >= 20 && te.rr2.n >= 20) out.push(`Out-of-sample: обучение ${R(tr.rr2.expRnet)} → тест ${R(te.rr2.expRnet)} — ${tr.rr2.expRnet > 0 && te.rr2.expRnet > 0 ? 'перевес держится на невиданных данных ✓ (кандидат в робот)' : 'на тесте разваливается — не торговать вслепую'}.`);
+        else out.push('Out-of-sample: сделок на тесте мало — вывод только на H1/M15 (где выборка сотни сделок).');
       } else out.push(`Сила + поглощение — сделок мало (${b2.n}) для вывода, переключи ТФ на H1/M15 или расширь период.`);
     }
     out.push('Меняй период кнопками сверху (последние 2–3 года / без 2022) — сравни, где склонность чётче.');
