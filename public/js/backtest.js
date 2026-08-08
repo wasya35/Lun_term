@@ -201,8 +201,11 @@
     return ch >= ph && cl <= pl && (ch - cl) > (ph - pl);   // тело перекрывает и крупнее
   }
 
-  function simulateTrades(bars, signals, rr) {
-    let wins = 0, losses = 0, open = 0, sumR = 0;
+  // costPts — издержки на круг в пунктах цены; переводятся в доли риска (costR =
+  // costPts/риск) и вычитаются из КАЖДОЙ сделки (плата берётся и в плюс, и в минус).
+  function simulateTrades(bars, signals, rr, costPts) {
+    costPts = costPts || 0;
+    let wins = 0, losses = 0, open = 0, sumR = 0, sumRnet = 0, sumRisk = 0, nRisk = 0;
     for (const s of signals) {
       const entryBar = bars[s.i + 1]; if (!entryBar) continue;
       const entry = entryBar.open, dir = s.dir;
@@ -215,36 +218,72 @@
         if (dir > 0) { if (b.low <= stop) { res = -1; break; } if (b.high >= tp) { res = 1; break; } }
         else { if (b.high >= stop) { res = -1; break; } if (b.low <= tp) { res = 1; break; } }
       }
-      if (res === 1) { wins++; sumR += rr; } else if (res === -1) { losses++; sumR -= 1; } else open++;
+      if (res === 0) { open++; continue; }
+      const costR = costPts / risk; sumRisk += risk; nRisk++;
+      if (res === 1) { wins++; sumR += rr; sumRnet += rr - costR; }
+      else { losses++; sumR -= 1; sumRnet += -1 - costR; }
     }
     const n = wins + losses;
-    return { n, wins, losses, open, winRate: n ? wins / n : 0, breakeven: 1 / (1 + rr), expR: n ? sumR / n : 0 };
+    return {
+      n, wins, losses, open, winRate: n ? wins / n : 0, breakeven: 1 / (1 + rr),
+      expR: n ? sumR / n : 0, expRnet: n ? sumRnet / n : 0, avgRisk: nRisk ? sumRisk / nRisk : 0,
+    };
+  }
+
+  // Собирает сигналы на конкретном наборе баров и считает все сетапы (для OOS
+  // train/test вызываем на срезах). Сильное закрытие — бар закрылся в 25% у
+  // своего экстремума по направлению (близко к максимуму для лонга).
+  function tradesOn(bars, cfg, costPts) {
+    const forceAt = window.LUN_FORCE_AT, nodeOrb = window.LUN.NODE_ORB || 4, moonFn = window.LunAstro.moonInfo;
+    const nodeDist = (deg) => Math.min(deg, Math.abs(deg - 15), 30 - deg);
+    const sig = { forceEng: [], forceEngS: [], forceAll: [], engOnly: [], forceEng3x: [], forceEngClose: [], forceEngNode: [] };
+    for (let i = cfg.lookback; i < bars.length; i++) {
+      const b = bars[i], dir = b.close >= b.open ? 1 : -1;
+      const f = forceAt ? forceAt(bars, i, cfg) : null, eng = engulfing(bars, i);
+      const rng = b.high - b.low;
+      const strongClose = rng > 0 && (dir > 0 ? b.close >= b.high - 0.25 * rng : b.close <= b.low + 0.25 * rng);
+      const m = moonFn(b.timestamp), atNode = nodeDist(m.degInSign) <= nodeOrb;
+      if (f) sig.forceAll.push({ i, dir });
+      if (eng && !f) sig.engOnly.push({ i, dir });
+      if (f && eng) {
+        sig.forceEng.push({ i, dir });
+        if (f.sustained) sig.forceEngS.push({ i, dir });
+        if (f.ratio >= 3) sig.forceEng3x.push({ i, dir });
+        if (strongClose) sig.forceEngClose.push({ i, dir });
+        if (atNode) sig.forceEngNode.push({ i, dir });
+      }
+    }
+    const R = (set, rr) => simulateTrades(bars, set, rr, costPts);
+    return {
+      nForceEng: sig.forceEng.length,
+      rows: [
+        { key: 'Сила + поглощение', rr2: R(sig.forceEng, 2), rr3: R(sig.forceEng, 3), hl: true },
+        { key: 'Силища + поглощение (постфактум)', rr2: R(sig.forceEngS, 2), rr3: R(sig.forceEngS, 3), note: true },
+        { key: '+ у узла 0/15', rr2: R(sig.forceEngNode, 2), rr3: R(sig.forceEngNode, 3), hl: true },
+        { key: '+ сила ≥3×', rr2: R(sig.forceEng3x, 2), rr3: R(sig.forceEng3x, 3), hl: true },
+        { key: '+ сильное закрытие', rr2: R(sig.forceEngClose, 2), rr3: R(sig.forceEngClose, 3), hl: true },
+        { key: 'Сила без поглощения (базлайн)', rr2: R(sig.forceAll, 2), rr3: R(sig.forceAll, 3) },
+        { key: 'Поглощение без силы (базлайн)', rr2: R(sig.engOnly, 2), rr3: R(sig.engOnly, 3) },
+      ],
+    };
   }
 
   function analyzeForceTrades(allBars, opts) {
     opts = opts || {};
     const cfg = Object.assign({ lookback: 12, forceMult: 2, sustainBars: 5, sustainMult: 1.5 }, window.LUN.STRONGBAR || {});
+    const costPts = (window.LUN.TRADECOST && window.LUN.TRADECOST.pointsRoundTrip) || 0;
     const bars = filterBars(allBars, opts).slice().sort((a, b) => a.timestamp - b.timestamp);
-    const forceAt = window.LUN_FORCE_AT;
-    const sig = { forceEng: [], forceEngS: [], forceAll: [], engOnly: [] };
-    for (let i = cfg.lookback; i < bars.length; i++) {
-      const b = bars[i], dir = b.close >= b.open ? 1 : -1;
-      const f = forceAt ? forceAt(bars, i, cfg) : null;
-      const eng = engulfing(bars, i);
-      if (f) sig.forceAll.push({ i, dir });
-      if (eng && !f) sig.engOnly.push({ i, dir });
-      if (f && eng) { sig.forceEng.push({ i, dir }); if (f.sustained) sig.forceEngS.push({ i, dir }); }
-    }
-    const R = (set, rr) => simulateTrades(bars, set, rr);
-    return {
-      cfg, days: bars.length, nForceEng: sig.forceEng.length, nForceEngS: sig.forceEngS.length,
-      rows: [
-        { key: 'Сила + поглощение', rr2: R(sig.forceEng, 2), rr3: R(sig.forceEng, 3), hl: true },
-        { key: 'Силища + поглощение (постфактум)', rr2: R(sig.forceEngS, 2), rr3: R(sig.forceEngS, 3), hl: true, note: true },
-        { key: 'Сила без поглощения (базлайн)', rr2: R(sig.forceAll, 2), rr3: R(sig.forceAll, 3) },
-        { key: 'Поглощение без силы (базлайн)', rr2: R(sig.engOnly, 2), rr3: R(sig.engOnly, 3) },
-      ],
+    const full = tradesOn(bars, cfg, costPts);
+    // out-of-sample: первые 2/3 — обучение, последняя 1/3 — тест (по индексу/времени)
+    const cut = Math.floor(bars.length * 2 / 3);
+    const trainB = bars.slice(0, cut), testB = bars.slice(cut);
+    const mainRow = (t) => t.rows.find((r) => r.key === 'Сила + поглощение');
+    const oos = {
+      splitTs: bars[cut] ? bars[cut].timestamp : 0,
+      train: mainRow(tradesOn(trainB, cfg, costPts)),
+      test: mainRow(tradesOn(testB, cfg, costPts)),
     };
+    return { cfg, costPts, days: bars.length, nForceEng: full.nForceEng, rows: full.rows, oos };
   }
 
   /* ------------------------------- отчёт (UI) ------------------------------- */
@@ -303,22 +342,32 @@
       </div>`;
   }
 
+  const sgnR = (x) => (x >= 0 ? '+' : '') + x.toFixed(2) + 'R';
   function trdCell(t) {
-    const beat = t.n >= 5 && t.winRate > t.breakeven;
+    const good = t.n >= 30 && t.expRnet > 0;
     return `<td>${t.n}</td>
-      <td class="${cls(t.winRate - t.breakeven)}">${wpct(t.winRate, 0)}<span class="bt-mut"> /${wpct(t.breakeven, 0)}</span></td>
-      <td class="${cls(t.expR)}">${(t.expR >= 0 ? '+' : '') + t.expR.toFixed(2)}R${beat ? ' ✓' : ''}</td>`;
+      <td class="${cls(t.winRate - t.breakeven)}">${wpct(t.winRate, 0)}<span class="bt-mut">/${wpct(t.breakeven, 0)}</span></td>
+      <td class="${cls(t.expRnet)}">${sgnR(t.expRnet)}${good ? ' ✓' : ''}<span class="bt-mut"> вал ${sgnR(t.expR)}</span></td>`;
   }
   function tradesHTML(trd) {
     const rows = trd.rows.map((r) => `<tr${r.hl ? ' style="background:#141b26"' : ''}>
-      <td>${r.key}${r.note ? ' <span class="bt-mut">*</span>' : ''}</td>${trdCell(r.rr2)}${trdCell(r.rr3)}</tr>`).join('');
+      <td>${r.key}${r.note ? ' <span class="bt-mut">*</span>' : ''}</td><td class="bt-mut">${Math.round(r.rr2.avgRisk)}</td>${trdCell(r.rr2)}${trdCell(r.rr3)}</tr>`).join('');
+    const o = trd.oos, tr = o.train, te = o.test;
+    const oosCell = (t) => t && t.n ? `${sgnR(t.expRnet)} <span class="bt-mut">(${t.n} сд., винр ${wpct(t.winRate, 0)})</span>` : '—';
+    const holds = tr && te && tr.rr2.expRnet > 0 && te.rr2.expRnet > 0;
     return `
-      <div class="lun-sec"><h3 style="margin:4px 0">Автоторговля: сила/силища + поглощение → вход/стоп/тейк (R:R)</h3>
+      <div class="lun-sec"><h3 style="margin:4px 0">Автоторговля: сила/силища + поглощение → вход/стоп/тейк (R:R), ЧИСТО за вычетом издержек</h3>
         <table class="bt-tbl"><thead>
-          <tr><th rowspan="2">сетап</th><th colspan="3">R:R 1:2</th><th colspan="3">R:R 1:3</th></tr>
-          <tr><th>сделок</th><th>винрейт /BE</th><th>ожид.</th><th>сделок</th><th>винрейт /BE</th><th>ожид.</th></tr>
+          <tr><th rowspan="2">сетап</th><th rowspan="2">ср.риск, п.</th><th colspan="3">R:R 1:2</th><th colspan="3">R:R 1:3</th></tr>
+          <tr><th>сделок</th><th>винр/BE</th><th>ожид.нетто</th><th>сделок</th><th>винр/BE</th><th>ожид.нетто</th></tr>
         </thead><tbody>${rows}</tbody></table>
-        <p class="bt-recs" style="color:#8b93a7">Вход = открытие следующего бара, стоп = за сигнальным баром, тейк = вход ± R:R × риск. Что раньше задето (стоп конс. первым). <b>BE</b> — безубыточный винрейт (33% для 1:2, 25% для 1:3): винрейт выше BE = плюсовое ожидание. <b>ожид.</b> — среднее в R на сделку (главная метрика). * силища видна только через ${trd.cfg.sustainBars} баров — вход по ней постфактум, для справки.</p>
+        <p class="bt-recs" style="color:#8b93a7">Вход = открытие след. бара, стоп = за сигнальным баром, тейк = вход ± R:R × риск (стоп конс. первым). Издержки <b>${trd.costPts} п. на круг</b> (LUN.TRADECOST) вычтены → <b>ожид.нетто</b>, рядом «вал» — валовое. <b>BE</b> — безубыток (33%/25%). <b>✓</b> = чистое ожидание &gt;0 при n≥30. Строки «+…» — фильтры входа поверх «Сила+поглощение». * силища видна лишь через ${trd.cfg.sustainBars} баров (постфактум, не торгуемо в моменте).</p>
+        <div class="bt-sum" style="border-top:1px solid #1c2230;border-bottom:none;margin-top:4px">
+          <span><b>Out-of-sample</b> «Сила+поглощение» 1:2 (граница ${dstr(o.splitTs)}):</span>
+          <span>обучение (2/3): <b class="${cls(tr ? tr.rr2.expRnet : 0)}">${oosCell(tr && tr.rr2)}</b></span>
+          <span>тест (1/3): <b class="${cls(te ? te.rr2.expRnet : 0)}">${oosCell(te && te.rr2)}</b></span>
+          <span>${holds ? '✓ держится на невиданных данных' : '✗ на тесте перевес не держится — вероятна подгонка'}</span>
+        </div>
       </div>`;
   }
 
@@ -378,13 +427,19 @@
       else if (frc) out.push('Конфлюэнс (силища+узел+зона) — сигналов мало для вывода, копи историю/расширь период.');
     }
     if (trd) {
-      const fe = trd.rows[0], b2 = fe.rr2, b3 = fe.rr3;
-      if (b2.n >= 5) {
-        const best = b2.expR >= b3.expR ? { rr: '1:2', t: b2 } : { rr: '1:3', t: b3 };
-        out.push(`Сила + поглощение (${trd.nForceEng} сделок): при ${best.rr} винрейт ${wpct(best.t.winRate, 0)} при безубытке ${wpct(best.t.breakeven, 0)}, ожидание ${(best.t.expR >= 0 ? '+' : '') + best.t.expR.toFixed(2)}R — ${best.t.expR > 0.05 ? 'сетап плюсовой ✓, лучше брать ' + best.rr : 'на этом периоде без перевеса'}.`);
-        const eng = trd.rows[3].rr2, fa = trd.rows[2].rr2;
-        out.push(`Фильтр помогает? поглощение+сила ${(b2.expR >= 0 ? '+' : '') + b2.expR.toFixed(2)}R vs сила без поглощения ${(fa.expR >= 0 ? '+' : '') + fa.expR.toFixed(2)}R vs поглощение без силы ${(eng.expR >= 0 ? '+' : '') + eng.expR.toFixed(2)}R (все 1:2).`);
-      } else out.push('Сила + поглощение — сделок мало для вывода, расширь период.');
+      const row = (k) => trd.rows.find((r) => r.key === k);
+      const fe = row('Сила + поглощение'), b2 = fe.rr2, b3 = fe.rr3;
+      const R = (x) => (x >= 0 ? '+' : '') + x.toFixed(2) + 'R';
+      if (b2.n >= 30) {
+        const best = b2.expRnet >= b3.expRnet ? { rr: '1:2', t: b2 } : { rr: '1:3', t: b3 };
+        out.push(`Сила + поглощение (${b2.n} сд.): ЧИСТОЕ ожидание ${best.rr} = ${R(best.t.expRnet)} (валовое ${R(best.t.expR)}, издержки ${trd.costPts}п.) — ${best.t.expRnet > 0.03 ? 'после издержек в плюсе ✓' : 'издержки съедают перевес ✗'}.`);
+        const eng = row('Поглощение без силы (базлайн)').rr2, fa = row('Сила без поглощения (базлайн)').rr2;
+        out.push(`Вклад фильтров (нетто 1:2): сила+поглощение ${R(b2.expRnet)} · сила без поглощ. ${R(fa.expRnet)} · поглощ. без силы ${R(eng.expRnet)} — ${eng.expRnet < b2.expRnet ? 'сила и есть источник перевеса' : 'поглощение важнее силы'}.`);
+        const extras = ['+ у узла 0/15', '+ сила ≥3×', '+ сильное закрытие'].map((k) => { const r = row(k); return r && r.rr2.n >= 20 ? `${k.replace('+ ', '')} ${R(r.rr2.expRnet)} (${r.rr2.n})` : null; }).filter(Boolean);
+        if (extras.length) out.push(`Доп. фильтры (нетто 1:2): ${extras.join(' · ')} — бери тот, что поднимает ожидание при живой выборке.`);
+        const tr = trd.oos.train, te = trd.oos.test;
+        if (tr && te && te.rr2.n >= 15) out.push(`Out-of-sample: обучение ${R(tr.rr2.expRnet)} → тест ${R(te.rr2.expRnet)} — ${tr.rr2.expRnet > 0 && te.rr2.expRnet > 0 ? 'перевес держится на невиданных данных ✓ (кандидат в робот)' : 'на тесте разваливается — не торговать вслепую'}.`);
+      } else out.push(`Сила + поглощение — сделок мало (${b2.n}) для вывода, переключи ТФ на H1/M15 или расширь период.`);
     }
     out.push('Меняй период кнопками сверху (последние 2–3 года / без 2022) — сравни, где склонность чётче.');
     return out;
@@ -461,9 +516,12 @@
       t += line('КОНФЛЮЭНС силища+узел+зона', S.conflu);
     }
     if (trd) {
-      const cell = (t2) => `винрейт ${wpct(t2.winRate, 0)}/BE ${wpct(t2.breakeven, 0)}, ожид ${(t2.expR >= 0 ? '+' : '') + t2.expR.toFixed(2)}R (${t2.n} сд.)`;
-      t += `\nАВТОТОРГОВЛЯ (вход=откр.след.бара, стоп за бар):\n`;
+      const cell = (t2) => `винр ${wpct(t2.winRate, 0)}/BE ${wpct(t2.breakeven, 0)}, нетто ${(t2.expRnet >= 0 ? '+' : '') + t2.expRnet.toFixed(2)}R (вал ${(t2.expR >= 0 ? '+' : '') + t2.expR.toFixed(2)}, ${t2.n} сд., ср.риск ${Math.round(t2.avgRisk)}п.)`;
+      t += `\nАВТОТОРГОВЛЯ (вход=откр.след.бара, стоп за бар, издержки ${trd.costPts}п. на круг):\n`;
       trd.rows.forEach((r) => { t += `  ${r.key}${r.note ? ' *' : ''}:\n    1:2 — ${cell(r.rr2)}\n    1:3 — ${cell(r.rr3)}\n`; });
+      const tr = trd.oos.train, te = trd.oos.test;
+      const oc = (t2) => t2 && t2.n ? `нетто ${(t2.expRnet >= 0 ? '+' : '') + t2.expRnet.toFixed(2)}R (${t2.n} сд.)` : '—';
+      t += `  OUT-OF-SAMPLE «Сила+поглощение» 1:2 (граница ${dstr(trd.oos.splitTs)}): обучение ${oc(tr && tr.rr2)} · тест ${oc(te && te.rr2)}\n`;
     }
     return t;
   }
