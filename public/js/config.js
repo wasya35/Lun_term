@@ -108,8 +108,12 @@ LUN.ASPECT_PLANETS = [
 /* 11-я сводная полоса: все аспекты всех пар (планеты + Солнце). Подробные подписи
  * на M5/M15, на H1/D — только цветные отметки. */
 LUN.ALL_ASPECTS = { enabled: false };
-/* Сильный бар: диапазон и объём выше средних за lookback баров (импульс). */
-LUN.STRONGBAR = { lookback: 20, rangeK: 1.6, volK: 1.6 };
+/* Сила = всплеск объёма: объём бара ≥ forceMult × среднего объёма предыдущих
+ * lookback (мелких) баров. Силища = сила, после которой объём держится высоким
+ * (среднее следующих sustainBars ≥ sustainMult × базового). */
+LUN.STRONGBAR = { lookback: 12, forceMult: 2, sustainBars: 5, sustainMult: 1.5 };
+/* Орб (°) для узлов 0°/15° знака в бэктесте силы. */
+LUN.NODE_ORB = 4;
 LUN.BODY_GLYPH = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Pluto: '♇' };
 
 /* --- Линия Ганна -----------------------------------------------------------

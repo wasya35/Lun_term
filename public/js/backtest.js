@@ -114,6 +114,72 @@
     return { H, orb, frame, minMove, hard: rate(res.hard), soft: rate(res.soft), events: res.events };
   }
 
+  /* --- бэктест СИЛЫ: сила = всплеск объёма, силища = держится ---------------
+   * Три направления проверки (винрейты по горизонтам 2/3/5 баров + «все» = пул):
+   *   1) сила/силища В ЗОНАХ лонг/шорт — ставим ПО зоне, отрабатывает ли;
+   *   2) сила/силища У УЗЛОВ 0°/15° знака (орб NODE_ORB) — продолжает ли бар
+   *      своё направление (импульс от узла);
+   *   3) КОНФЛЮЭНС (моя проверка): силища + узел 0/15 + согласованная зона —
+   *      ставим по зоне, лучше ли редкий тройной сигнал одиночного.
+   * Базлайны: момент (любой бар — продолжение своего направления), зона (все
+   * бары в напр. зоне), узел (все бары у узла) — чтобы видеть перевес от силы. */
+  function analyzeForce(allBars, zones, opts) {
+    opts = opts || {};
+    const cfg = Object.assign({ lookback: 12, forceMult: 2, sustainBars: 5, sustainMult: 1.5 }, window.LUN.STRONGBAR || {});
+    const orb = window.LUN.NODE_ORB || 4;
+    const moonFn = (opts.moonFn) || window.LunAstro.moonInfo;
+    const bars = filterBars(allBars, opts).slice().sort((a, b) => a.timestamp - b.timestamp);
+    const zoneOf = (lon) => window.LunAstro.zoneOf(lon, zones);
+    const nodeDist = (deg) => Math.min(deg, Math.abs(deg - 15), 30 - deg);   // до ближайшего из 0/15/30
+    const HS = [2, 3, 5];
+    const forceAt = window.LUN_FORCE_AT;
+
+    const mk = () => ({ nBars: 0, 2: { n: 0, hit: 0 }, 3: { n: 0, hit: 0 }, 5: { n: 0, hit: 0 } });
+    const rec = (bk, i, dir) => {
+      if (dir === 0) return;
+      bk.nBars++;
+      for (const H of HS) {
+        if (i + H >= bars.length) continue;
+        const fwd = bars[i + H].close / bars[i].close - 1;
+        if (!fwd) continue;
+        bk[H].n++; if (Math.sign(fwd) === dir) bk[H].hit++;
+      }
+    };
+    const B = {
+      momBase: mk(),
+      zoneBase: mk(), zoneSila: mk(), zoneSilishcha: mk(),
+      nodeBase: mk(), nodeSila: mk(), nodeSilishcha: mk(),
+      conflu: mk(),
+    };
+    for (let i = cfg.lookback; i < bars.length; i++) {
+      const b = bars[i];
+      const dirOwn = b.close >= b.open ? 1 : -1;
+      rec(B.momBase, i, dirOwn);
+      const m = moonFn(b.timestamp);
+      const z = zoneOf(m.lon);
+      const bias = z ? biasSign(z.bias) : 0;
+      const atNode = nodeDist(m.degInSign) <= orb;
+      const f = forceAt ? forceAt(bars, i, cfg) : null;   // {ratio, sustained} | null
+      if (bias !== 0) {
+        rec(B.zoneBase, i, bias);
+        if (f) { rec(B.zoneSila, i, bias); if (f.sustained) rec(B.zoneSilishcha, i, bias); }
+      }
+      if (atNode) {
+        rec(B.nodeBase, i, dirOwn);
+        if (f) { rec(B.nodeSila, i, dirOwn); if (f.sustained) rec(B.nodeSilishcha, i, dirOwn); }
+      }
+      if (f && f.sustained && atNode && bias !== 0) rec(B.conflu, i, bias);
+    }
+    const wr = (bk) => {
+      const o = { nBars: bk.nBars }; let allN = 0, allHit = 0;
+      for (const H of HS) { const c = bk[H]; o[H] = c.n ? c.hit / c.n : 0; o['n' + H] = c.n; allN += c.n; allHit += c.hit; }
+      o.all = allN ? allHit / allN : 0; o.nAll = allN; o.z = zScore(o.all, allN);
+      return o;
+    };
+    const stats = {}; for (const k in B) stats[k] = wr(B[k]);
+    return { cfg, orb, days: bars.length, horizons: HS, stats };
+  }
+
   /* ------------------------------- отчёт (UI) ------------------------------- */
   const css = `
   .bt-sum{display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid #1c2230}
@@ -139,7 +205,38 @@
     return 'не отрабатывает ✗';
   }
 
-  function contentHTML(res, asp) {
+  function frcRow(label, s, hl) {
+    const c = (x) => cls(x - 0.5);
+    const nm = (n) => `<span class="bt-mut"> ${n}</span>`;
+    return `<tr${hl ? ' style="background:#141b26"' : ''}><td>${label}</td><td>${s.nBars}</td>
+      <td class="${c(s[2])}">${wpct(s[2], 0)}${nm(s.n2)}</td>
+      <td class="${c(s[3])}">${wpct(s[3], 0)}${nm(s.n3)}</td>
+      <td class="${c(s[5])}">${wpct(s[5], 0)}${nm(s.n5)}</td>
+      <td class="${c(s.all)}">${wpct(s.all, 0)} <span class="bt-mut">z${s.z.toFixed(1)}</span></td></tr>`;
+  }
+
+  function forceHTML(frc) {
+    const S = frc.stats, c = frc.cfg;
+    return `
+      <div class="lun-sec"><h3 style="margin:4px 0">Сила и силища — всплеск объёма (сила ≥ ${c.forceMult}× среднего ${c.lookback} баров; силища держится ${c.sustainBars} баров)</h3>
+        <table class="bt-tbl"><thead><tr><th>сценарий (ставка)</th><th>сигналов</th><th>H2</th><th>H3</th><th>H5</th><th>все · z</th></tr></thead><tbody>
+          ${frcRow('Момент — любой бар, продолжение своего направления', S.momBase)}
+          <tr><td colspan="6" class="bt-mut" style="padding-top:6px">① В зонах лонг/шорт (ставка ПО зоне)</td></tr>
+          ${frcRow('&nbsp;&nbsp;зона — все бары (базлайн)', S.zoneBase)}
+          ${frcRow('&nbsp;&nbsp;зона + сила', S.zoneSila)}
+          ${frcRow('&nbsp;&nbsp;зона + силища', S.zoneSilishcha, true)}
+          <tr><td colspan="6" class="bt-mut" style="padding-top:6px">② У узлов 0°/15° знака, орб ${frc.orb}° (продолжение своего направления)</td></tr>
+          ${frcRow('&nbsp;&nbsp;узел — все бары (базлайн)', S.nodeBase)}
+          ${frcRow('&nbsp;&nbsp;узел + сила', S.nodeSila)}
+          ${frcRow('&nbsp;&nbsp;узел + силища', S.nodeSilishcha, true)}
+          <tr><td colspan="6" class="bt-mut" style="padding-top:6px">③ Конфлюэнс: силища + узел + согласованная зона (ставка ПО зоне)</td></tr>
+          ${frcRow('&nbsp;&nbsp;тройной сигнал', S.conflu, true)}
+        </tbody></table>
+        <p class="bt-recs" style="color:#8b93a7">Винрейт = доля случаев, где движение за H баров совпало со ставкой. Серые числа — размер выборки. «все» = пул всех горизонтов, z — значимость (|z|≥1.6–2 = не случайность). Сравнивай строки силы с базлайном той же группы: важен ПЕРЕВЕС, а не абсолют.</p>
+      </div>`;
+  }
+
+  function contentHTML(res, asp, frc) {
     const zoneRows = res.zoneStats.map((z) => `<tr><td>${z.label}</td><td>${z.from}–${z.to}°</td><td>${z.bias}</td>
       <td>${z.nDir}</td><td class="${cls(z.winRate - 0.5)}">${wpct(z.winRate, 1)}</td><td>${z.z.toFixed(1)}</td>
       <td class="${cls(z.tradeMean)}">${pct(z.tradeMean, 3)}</td><td>${z.bias === 'range' ? 'рэндж' : zoneVerdict(z, res.baseUp)}</td></tr>`).join('');
@@ -170,10 +267,11 @@
         </tbody></table>
         <p class="bt-recs" style="color:#8b93a7">Твоя гипотеза: красные → разворот ~3/4, голубые → продолжение. «вбок» = движение за горизонт меньше ${wpct(asp.minMove, 1)}.</p>
       </div>
-      <div class="lun-sec"><h3 style="margin:4px 0">Итог</h3><ul class="bt-recs">${summary(res, asp).map((r) => `<li>${r}</li>`).join('')}</ul></div>`;
+      ${frc ? forceHTML(frc) : ''}
+      <div class="lun-sec"><h3 style="margin:4px 0">Итог</h3><ul class="bt-recs">${summary(res, asp, frc).map((r) => `<li>${r}</li>`).join('')}</ul></div>`;
   }
 
-  function summary(res, asp) {
+  function summary(res, asp, frc) {
     const out = [];
     const good = res.zoneStats.filter((z) => z.bias !== 'range' && z.z >= 1.6 && z.winRate > 0.5);
     const bad = res.zoneStats.filter((z) => z.bias !== 'range' && z.winRate < 0.5);
@@ -183,6 +281,13 @@
     if (asp.soft.n >= 8) out.push(`Голубые аспекты: продолжение в ${wpct(asp.soft.contRate, 0)} случаев.`);
     const flips = res.signStats.filter((s) => Math.sign(s.h1) !== Math.sign(s.h2) && s.n > 40).map((s) => s.name);
     if (flips.length) out.push(`Слом направления на 15° заметен в знаках: ${flips.join(', ')}.`);
+    if (frc) {
+      const S = frc.stats, edge = (a, b) => (a.all - b.all);
+      if (S.zoneSila.nAll >= 8) out.push(`Сила в зонах: винрейт по зоне ${wpct(S.zoneSila.all, 0)} против базлайна ${wpct(S.zoneBase.all, 0)} — перевес ${pct(edge(S.zoneSila, S.zoneBase), 0)}${S.zoneSilishcha.nAll >= 6 ? `; силища ${wpct(S.zoneSilishcha.all, 0)} (${S.zoneSilishcha.nBars} шт.)` : ''}.`);
+      if (S.nodeSila.nAll >= 8) out.push(`Сила у узлов 0°/15°: продолжение ${wpct(S.nodeSila.all, 0)} против базлайна ${wpct(S.nodeBase.all, 0)} (перевес ${pct(edge(S.nodeSila, S.nodeBase), 0)}).`);
+      if (S.conflu.nBars >= 4) out.push(`Конфлюэнс (силища+узел+зона): ${wpct(S.conflu.all, 0)} на ${S.conflu.nBars} сигналах, z=${S.conflu.z.toFixed(1)} — ${S.conflu.all > Math.max(S.zoneSilishcha.all, S.zoneSila.all) ? 'тройной сигнал сильнее одиночного ✓' : 'редкий, перевеса над одиночной силой не даёт'}.`);
+      else if (frc) out.push('Конфлюэнс (силища+узел+зона) — сигналов мало для вывода, копи историю/расширь период.');
+    }
     out.push('Меняй период кнопками сверху (последние 2–3 года / без 2022) — сравни, где склонность чётче.');
     return out;
   }
@@ -210,8 +315,9 @@
       modal.querySelectorAll('.bt-ctrl .lun-btn').forEach((x) => x.classList.remove('active')); if (btn) btn.classList.add('active');
       const res = analyze(state.bars, window.LUN.CYCLES[0].zones, opts);
       const asp = analyzeAspects(state.bars, opts);
-      modal.querySelector('#bt-content').innerHTML = contentHTML(res, asp);
-      lastText = plainReport(res, asp);
+      const frc = analyzeForce(state.bars, window.LUN.CYCLES[0].zones, opts);
+      modal.querySelector('#bt-content').innerHTML = contentHTML(res, asp, frc);
+      lastText = plainReport(res, asp, frc);
     };
     const now = Date.now(), yr = 365 * 86400000;
     const optsFor = (p) => p === 'no2022' ? { exclude2022: true } : (p === 'all' ? {} : { fromTs: now - (+p) * yr });
@@ -220,7 +326,7 @@
     refresh({ fromTs: now - 3 * yr }, modal.querySelector('[data-p="3"]'));   // по умолчанию 3 года
   }
 
-  function plainReport(res, asp) {
+  function plainReport(res, asp, frc) {
     let t = `Бэктест ${state.title || 'USD/RUB'} · ${dstr(res.from)}…${dstr(res.to)} · дней ${res.days} · базовый винрейт ${wpct(res.baseUp, 1)} · стратегия зон(интрадей) ${pct(res.strategyIntraday, 0)}\n\nЗОНЫ (винрейт направления):\n`;
     res.zoneStats.forEach((z) => { t += `  ${z.label} [${z.from}-${z.to}° ${z.bias}] n=${z.nDir} винрейт=${wpct(z.winRate, 1)} z=${z.z.toFixed(1)} ср=${pct(z.tradeMean, 3)}\n`; });
     t += '\nЗНАКИ (дни↑ | 0-15↑ | 15-30↑):\n';
@@ -228,6 +334,15 @@
     t += `\nАСПЕКТЫ ☉/☿ (${asp.frame}, орб ${asp.orb}, гор ${asp.H}д):\n`;
     t += `  красные: разворот ${wpct(asp.hard.revRate, 0)} (${asp.hard.rev}/${asp.hard.rev + asp.hard.cont}), вбок ${asp.hard.flat}\n`;
     t += `  голубые: продолжение ${wpct(asp.soft.contRate, 0)} (${asp.soft.cont}/${asp.soft.rev + asp.soft.cont}), вбок ${asp.soft.flat}\n`;
+    if (frc) {
+      const S = frc.stats;
+      const line = (lbl, s) => `  ${lbl}: H2 ${wpct(s[2], 0)} · H3 ${wpct(s[3], 0)} · H5 ${wpct(s[5], 0)} · все ${wpct(s.all, 0)} (z${s.z.toFixed(1)}, ${s.nBars} шт.)\n`;
+      t += `\nСИЛА/СИЛИЩА (сила ≥ ${frc.cfg.forceMult}× ср.${frc.cfg.lookback}, узлы 0/15 орб ${frc.orb}°):\n`;
+      t += line('момент базлайн', S.momBase);
+      t += line('зона базлайн', S.zoneBase) + line('зона+сила', S.zoneSila) + line('зона+силища', S.zoneSilishcha);
+      t += line('узел базлайн', S.nodeBase) + line('узел+сила', S.nodeSila) + line('узел+силища', S.nodeSilishcha);
+      t += line('КОНФЛЮЭНС силища+узел+зона', S.conflu);
+    }
     return t;
   }
 
@@ -263,5 +378,5 @@
     } finally { if (status) status.textContent = prev; }
   }
 
-  window.LunBacktest = { analyze, analyzeAspects, run };
+  window.LunBacktest = { analyze, analyzeAspects, analyzeForce, run };
 })();

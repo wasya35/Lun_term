@@ -224,7 +224,7 @@
     }, false, 'Дневная кумулятивная дельта (аппрокс. по OHLC)');
     // узлы Луны (0°/15°) и сильные бары на цене — для поиска «сильный бар в узле»
     [['MoonNodes', 'Узлы ☾', 'Ингрессии (0°) и середины (15°) знаков Луны на цене'],
-     ['StrongBars', 'Сильбары', 'Сильные бары: диапазон и объём выше средних (импульс)']].forEach(([name, label, tip]) =>
+     ['StrongBars', 'Сильбары', 'Сила: всплеск объёма ≥2× среднего · силища (двойной знак): объём держится']].forEach(([name, label, tip]) =>
       mkBtn(indWrap, label, (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
         if (on) state.chart.createIndicator({ name, paneId: 'candle_pane' }, true);

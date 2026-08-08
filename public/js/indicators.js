@@ -291,7 +291,29 @@
     },
   });
 
-  /* ============ Сильные бары (импульс: диапазон и объём выше средних) ============ */
+  /* ============ Сильные бары (всплеск объёма: «сила» / «силища») ============
+   * Сила    = объём бара ≥ forceMult × среднего объёма предыдущих lookback
+   *           (мелких) баров — импульс пришёл.
+   * Силища  = сила, после которой объём ДЕРЖИТСЯ высоким: среднее объёма
+   *           следующих sustainBars ≥ sustainMult × базового среднего.
+   * Рисуем: сила — маленький треугольник; силища — крупный двойной. */
+  function forceAt(list, i, cfg) {
+    if (i < cfg.lookback) return null;
+    let sv = 0, n = 0;
+    for (let j = i - cfg.lookback; j < i; j++) { sv += (list[j].volume || 0); n++; }
+    if (!n) return null;
+    const base = sv / n;
+    if (base <= 0) return null;
+    const vol = list[i].volume || 0;
+    if (vol < cfg.forceMult * base) return null;
+    // силища: держится ли объём высоким на следующих барах
+    let ss = 0, sn = 0;
+    for (let j = i + 1; j <= i + cfg.sustainBars && j < list.length; j++) { ss += (list[j].volume || 0); sn++; }
+    const sustained = sn > 0 && (ss / sn) >= cfg.sustainMult * base;
+    return { ratio: vol / base, sustained };
+  }
+  window.LUN_FORCE_AT = forceAt;   // для бэктеста
+
   kc.registerIndicator({
     name: 'StrongBars',
     shortName: 'Сильбары',
@@ -299,20 +321,25 @@
     figures: [],
     calc: (dataList) => dataList.map((d) => d.timestamp),
     draw: ({ ctx, chart, xAxis, yAxis }) => {
-      const cfg = window.LUN.STRONGBAR || { lookback: 20, rangeK: 1.6, volK: 1.6 };
+      const cfg = window.LUN.STRONGBAR || { lookback: 12, forceMult: 2, sustainBars: 5, sustainMult: 1.5 };
       const list = chart.getDataList();
       const range = chart.getVisibleRange();
       const from = Math.max(cfg.lookback, range.from), to = Math.min(list.length, range.to);
       for (let i = from; i < to; i++) {
-        let sr = 0, sv = 0, n = 0;
-        for (let j = i - cfg.lookback; j < i; j++) { if (j < 0) continue; sr += (list[j].high - list[j].low); sv += (list[j].volume || 0); n++; }
-        if (!n) continue;
-        const bar = list[i], rng = bar.high - bar.low, vol = bar.volume || 0;
-        if (!(rng > cfg.rangeK * (sr / n) && vol > cfg.volK * (sv / n))) continue;
-        const up = bar.close >= bar.open, x = xAxis.convertToPixel(i);
+        const f = forceAt(list, i, cfg);
+        if (!f) continue;
+        const bar = list[i], up = bar.close >= bar.open, x = xAxis.convertToPixel(i);
         ctx.fillStyle = up ? '#26e0b0' : '#ff5c7a';
-        if (up) { const y = yAxis.convertToPixel(bar.low) + 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4, y + 7); ctx.lineTo(x + 4, y + 7); ctx.closePath(); ctx.fill(); }
-        else { const y = yAxis.convertToPixel(bar.high) - 3; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 4, y - 7); ctx.lineTo(x + 4, y - 7); ctx.closePath(); ctx.fill(); }
+        const s = f.sustained ? 6 : 4;           // силища крупнее
+        if (up) {
+          const y = yAxis.convertToPixel(bar.low) + 3;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - s, y + s + 3); ctx.lineTo(x + s, y + s + 3); ctx.closePath(); ctx.fill();
+          if (f.sustained) { ctx.beginPath(); ctx.moveTo(x, y + 5); ctx.lineTo(x - s, y + 2 * s + 5); ctx.lineTo(x + s, y + 2 * s + 5); ctx.closePath(); ctx.fill(); }
+        } else {
+          const y = yAxis.convertToPixel(bar.high) - 3;
+          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - s, y - s - 3); ctx.lineTo(x + s, y - s - 3); ctx.closePath(); ctx.fill();
+          if (f.sustained) { ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x - s, y - 2 * s - 5); ctx.lineTo(x + s, y - 2 * s - 5); ctx.closePath(); ctx.fill(); }
+        }
       }
       return true;
     },
