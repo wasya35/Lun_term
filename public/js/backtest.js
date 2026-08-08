@@ -180,6 +180,73 @@
     return { cfg, orb, days: bars.length, horizons: HS, stats };
   }
 
+  /* --- АВТОТОРГОВЛЯ: сила/силища + поглощение, вход/стоп/тейк по R:R ---------
+   * Сетап (запасной вариант, «просто так», без зон/узлов):
+   *   сигнал = бар СИЛЫ, который ещё и БАР ПОГЛОЩЕНИЯ (тело перекрывает тело
+   *   предыдущего бара и крупнее его);
+   *   направление = направление сигнального бара (закр≥откр → лонг);
+   *   вход = ОТКРЫТИЕ следующего бара (начало бара);
+   *   стоп = за сигнальным баром (low для лонга / high для шорта);
+   *   тейк = вход ± RR × риск (RR = 2 и 3);
+   *   исход считаем по ходу баров: что раньше задето — стоп (конс.) или тейк.
+   * Метрики: винрейт, безубыточный винрейт (1/(1+RR)), ожидание в R.
+   * Базлайны: сила без фильтра поглощения и поглощение без силы. Силища —
+   * подмножество (справочно: силища видна лишь через sustainBars, вход по ней
+   * с оговоркой «постфактум»). */
+  function engulfing(bars, i) {
+    if (i < 1) return false;
+    const c = bars[i], p = bars[i - 1];
+    const ch = Math.max(c.open, c.close), cl = Math.min(c.open, c.close);
+    const ph = Math.max(p.open, p.close), pl = Math.min(p.open, p.close);
+    return ch >= ph && cl <= pl && (ch - cl) > (ph - pl);   // тело перекрывает и крупнее
+  }
+
+  function simulateTrades(bars, signals, rr) {
+    let wins = 0, losses = 0, open = 0, sumR = 0;
+    for (const s of signals) {
+      const entryBar = bars[s.i + 1]; if (!entryBar) continue;
+      const entry = entryBar.open, dir = s.dir;
+      const stop = dir > 0 ? bars[s.i].low : bars[s.i].high;
+      const risk = Math.abs(entry - stop); if (!(risk > 0)) continue;
+      const tp = dir > 0 ? entry + rr * risk : entry - rr * risk;
+      let res = 0;
+      for (let j = s.i + 1; j < bars.length; j++) {
+        const b = bars[j];
+        if (dir > 0) { if (b.low <= stop) { res = -1; break; } if (b.high >= tp) { res = 1; break; } }
+        else { if (b.high >= stop) { res = -1; break; } if (b.low <= tp) { res = 1; break; } }
+      }
+      if (res === 1) { wins++; sumR += rr; } else if (res === -1) { losses++; sumR -= 1; } else open++;
+    }
+    const n = wins + losses;
+    return { n, wins, losses, open, winRate: n ? wins / n : 0, breakeven: 1 / (1 + rr), expR: n ? sumR / n : 0 };
+  }
+
+  function analyzeForceTrades(allBars, opts) {
+    opts = opts || {};
+    const cfg = Object.assign({ lookback: 12, forceMult: 2, sustainBars: 5, sustainMult: 1.5 }, window.LUN.STRONGBAR || {});
+    const bars = filterBars(allBars, opts).slice().sort((a, b) => a.timestamp - b.timestamp);
+    const forceAt = window.LUN_FORCE_AT;
+    const sig = { forceEng: [], forceEngS: [], forceAll: [], engOnly: [] };
+    for (let i = cfg.lookback; i < bars.length; i++) {
+      const b = bars[i], dir = b.close >= b.open ? 1 : -1;
+      const f = forceAt ? forceAt(bars, i, cfg) : null;
+      const eng = engulfing(bars, i);
+      if (f) sig.forceAll.push({ i, dir });
+      if (eng && !f) sig.engOnly.push({ i, dir });
+      if (f && eng) { sig.forceEng.push({ i, dir }); if (f.sustained) sig.forceEngS.push({ i, dir }); }
+    }
+    const R = (set, rr) => simulateTrades(bars, set, rr);
+    return {
+      cfg, days: bars.length, nForceEng: sig.forceEng.length, nForceEngS: sig.forceEngS.length,
+      rows: [
+        { key: 'Сила + поглощение', rr2: R(sig.forceEng, 2), rr3: R(sig.forceEng, 3), hl: true },
+        { key: 'Силища + поглощение (постфактум)', rr2: R(sig.forceEngS, 2), rr3: R(sig.forceEngS, 3), hl: true, note: true },
+        { key: 'Сила без поглощения (базлайн)', rr2: R(sig.forceAll, 2), rr3: R(sig.forceAll, 3) },
+        { key: 'Поглощение без силы (базлайн)', rr2: R(sig.engOnly, 2), rr3: R(sig.engOnly, 3) },
+      ],
+    };
+  }
+
   /* ------------------------------- отчёт (UI) ------------------------------- */
   const css = `
   .bt-sum{display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid #1c2230}
@@ -236,7 +303,26 @@
       </div>`;
   }
 
-  function contentHTML(res, asp, frc) {
+  function trdCell(t) {
+    const beat = t.n >= 5 && t.winRate > t.breakeven;
+    return `<td>${t.n}</td>
+      <td class="${cls(t.winRate - t.breakeven)}">${wpct(t.winRate, 0)}<span class="bt-mut"> /${wpct(t.breakeven, 0)}</span></td>
+      <td class="${cls(t.expR)}">${(t.expR >= 0 ? '+' : '') + t.expR.toFixed(2)}R${beat ? ' ✓' : ''}</td>`;
+  }
+  function tradesHTML(trd) {
+    const rows = trd.rows.map((r) => `<tr${r.hl ? ' style="background:#141b26"' : ''}>
+      <td>${r.key}${r.note ? ' <span class="bt-mut">*</span>' : ''}</td>${trdCell(r.rr2)}${trdCell(r.rr3)}</tr>`).join('');
+    return `
+      <div class="lun-sec"><h3 style="margin:4px 0">Автоторговля: сила/силища + поглощение → вход/стоп/тейк (R:R)</h3>
+        <table class="bt-tbl"><thead>
+          <tr><th rowspan="2">сетап</th><th colspan="3">R:R 1:2</th><th colspan="3">R:R 1:3</th></tr>
+          <tr><th>сделок</th><th>винрейт /BE</th><th>ожид.</th><th>сделок</th><th>винрейт /BE</th><th>ожид.</th></tr>
+        </thead><tbody>${rows}</tbody></table>
+        <p class="bt-recs" style="color:#8b93a7">Вход = открытие следующего бара, стоп = за сигнальным баром, тейк = вход ± R:R × риск. Что раньше задето (стоп конс. первым). <b>BE</b> — безубыточный винрейт (33% для 1:2, 25% для 1:3): винрейт выше BE = плюсовое ожидание. <b>ожид.</b> — среднее в R на сделку (главная метрика). * силища видна только через ${trd.cfg.sustainBars} баров — вход по ней постфактум, для справки.</p>
+      </div>`;
+  }
+
+  function contentHTML(res, asp, frc, trd) {
     const zoneRows = res.zoneStats.map((z) => `<tr><td>${z.label}</td><td>${z.from}–${z.to}°</td><td>${z.bias}</td>
       <td>${z.nDir}</td><td class="${cls(z.winRate - 0.5)}">${wpct(z.winRate, 1)}</td><td>${z.z.toFixed(1)}</td>
       <td class="${cls(z.tradeMean)}">${pct(z.tradeMean, 3)}</td><td>${z.bias === 'range' ? 'рэндж' : zoneVerdict(z, res.baseUp)}</td></tr>`).join('');
@@ -268,10 +354,11 @@
         <p class="bt-recs" style="color:#8b93a7">Твоя гипотеза: красные → разворот ~3/4, голубые → продолжение. «вбок» = движение за горизонт меньше ${wpct(asp.minMove, 1)}.</p>
       </div>
       ${frc ? forceHTML(frc) : ''}
-      <div class="lun-sec"><h3 style="margin:4px 0">Итог</h3><ul class="bt-recs">${summary(res, asp, frc).map((r) => `<li>${r}</li>`).join('')}</ul></div>`;
+      ${trd ? tradesHTML(trd) : ''}
+      <div class="lun-sec"><h3 style="margin:4px 0">Итог</h3><ul class="bt-recs">${summary(res, asp, frc, trd).map((r) => `<li>${r}</li>`).join('')}</ul></div>`;
   }
 
-  function summary(res, asp, frc) {
+  function summary(res, asp, frc, trd) {
     const out = [];
     const good = res.zoneStats.filter((z) => z.bias !== 'range' && z.z >= 1.6 && z.winRate > 0.5);
     const bad = res.zoneStats.filter((z) => z.bias !== 'range' && z.winRate < 0.5);
@@ -287,6 +374,15 @@
       if (S.nodeSila.nAll >= 8) out.push(`Сила у узлов 0°/15°: продолжение ${wpct(S.nodeSila.all, 0)} против базлайна ${wpct(S.nodeBase.all, 0)} (перевес ${pct(edge(S.nodeSila, S.nodeBase), 0)}).`);
       if (S.conflu.nBars >= 4) out.push(`Конфлюэнс (силища+узел+зона): ${wpct(S.conflu.all, 0)} на ${S.conflu.nBars} сигналах, z=${S.conflu.z.toFixed(1)} — ${S.conflu.all > Math.max(S.zoneSilishcha.all, S.zoneSila.all) ? 'тройной сигнал сильнее одиночного ✓' : 'редкий, перевеса над одиночной силой не даёт'}.`);
       else if (frc) out.push('Конфлюэнс (силища+узел+зона) — сигналов мало для вывода, копи историю/расширь период.');
+    }
+    if (trd) {
+      const fe = trd.rows[0], b2 = fe.rr2, b3 = fe.rr3;
+      if (b2.n >= 5) {
+        const best = b2.expR >= b3.expR ? { rr: '1:2', t: b2 } : { rr: '1:3', t: b3 };
+        out.push(`Сила + поглощение (${trd.nForceEng} сделок): при ${best.rr} винрейт ${wpct(best.t.winRate, 0)} при безубытке ${wpct(best.t.breakeven, 0)}, ожидание ${(best.t.expR >= 0 ? '+' : '') + best.t.expR.toFixed(2)}R — ${best.t.expR > 0.05 ? 'сетап плюсовой ✓, лучше брать ' + best.rr : 'на этом периоде без перевеса'}.`);
+        const eng = trd.rows[3].rr2, fa = trd.rows[2].rr2;
+        out.push(`Фильтр помогает? поглощение+сила ${(b2.expR >= 0 ? '+' : '') + b2.expR.toFixed(2)}R vs сила без поглощения ${(fa.expR >= 0 ? '+' : '') + fa.expR.toFixed(2)}R vs поглощение без силы ${(eng.expR >= 0 ? '+' : '') + eng.expR.toFixed(2)}R (все 1:2).`);
+      } else out.push('Сила + поглощение — сделок мало для вывода, расширь период.');
     }
     out.push('Меняй период кнопками сверху (последние 2–3 года / без 2022) — сравни, где склонность чётче.');
     return out;
@@ -316,8 +412,9 @@
       const res = analyze(state.bars, window.LUN.CYCLES[0].zones, opts);
       const asp = analyzeAspects(state.bars, opts);
       const frc = analyzeForce(state.bars, window.LUN.CYCLES[0].zones, opts);
-      modal.querySelector('#bt-content').innerHTML = contentHTML(res, asp, frc);
-      lastText = plainReport(res, asp, frc);
+      const trd = analyzeForceTrades(state.bars, opts);
+      modal.querySelector('#bt-content').innerHTML = contentHTML(res, asp, frc, trd);
+      lastText = plainReport(res, asp, frc, trd);
     };
     const now = Date.now(), yr = 365 * 86400000;
     const optsFor = (p) => p === 'no2022' ? { exclude2022: true } : (p === 'all' ? {} : { fromTs: now - (+p) * yr });
@@ -326,7 +423,7 @@
     refresh({ fromTs: now - 3 * yr }, modal.querySelector('[data-p="3"]'));   // по умолчанию 3 года
   }
 
-  function plainReport(res, asp, frc) {
+  function plainReport(res, asp, frc, trd) {
     let t = `Бэктест ${state.title || 'USD/RUB'} · ${dstr(res.from)}…${dstr(res.to)} · дней ${res.days} · базовый винрейт ${wpct(res.baseUp, 1)} · стратегия зон(интрадей) ${pct(res.strategyIntraday, 0)}\n\nЗОНЫ (винрейт направления):\n`;
     res.zoneStats.forEach((z) => { t += `  ${z.label} [${z.from}-${z.to}° ${z.bias}] n=${z.nDir} винрейт=${wpct(z.winRate, 1)} z=${z.z.toFixed(1)} ср=${pct(z.tradeMean, 3)}\n`; });
     t += '\nЗНАКИ (дни↑ | 0-15↑ | 15-30↑):\n';
@@ -342,6 +439,11 @@
       t += line('зона базлайн', S.zoneBase) + line('зона+сила', S.zoneSila) + line('зона+силища', S.zoneSilishcha);
       t += line('узел базлайн', S.nodeBase) + line('узел+сила', S.nodeSila) + line('узел+силища', S.nodeSilishcha);
       t += line('КОНФЛЮЭНС силища+узел+зона', S.conflu);
+    }
+    if (trd) {
+      const cell = (t2) => `винрейт ${wpct(t2.winRate, 0)}/BE ${wpct(t2.breakeven, 0)}, ожид ${(t2.expR >= 0 ? '+' : '') + t2.expR.toFixed(2)}R (${t2.n} сд.)`;
+      t += `\nАВТОТОРГОВЛЯ (вход=откр.след.бара, стоп за бар):\n`;
+      trd.rows.forEach((r) => { t += `  ${r.key}${r.note ? ' *' : ''}:\n    1:2 — ${cell(r.rr2)}\n    1:3 — ${cell(r.rr3)}\n`; });
     }
     return t;
   }
@@ -378,5 +480,5 @@
     } finally { if (status) status.textContent = prev; }
   }
 
-  window.LunBacktest = { analyze, analyzeAspects, analyzeForce, run };
+  window.LunBacktest = { analyze, analyzeAspects, analyzeForce, analyzeForceTrades, run };
 })();
