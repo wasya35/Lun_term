@@ -104,7 +104,8 @@
   kc.registerOverlay({
     name: 'lun_hray',
     totalStep: 2,
-    needDefaultPointFigure: false,
+    needDefaultPointFigure: true,        // ручка в точке старта → можно двигать уровень
+
     createPointFigures: ({ coordinates, overlay, chart, xAxis, bounding }) => {
       if (!coordinates.length) return [];
       const p0 = coordinates[0];
@@ -141,7 +142,7 @@
   kc.registerOverlay({
     name: 'lun_vprofile',
     totalStep: 3,
-    needDefaultPointFigure: false,
+    needDefaultPointFigure: true,        // ручки на углах рамки → можно тянуть/менять охват
     createPointFigures: ({ coordinates, overlay, chart, xAxis, yAxis }) => {
       if (coordinates.length < 2) return [];
       const [a, b] = coordinates;
