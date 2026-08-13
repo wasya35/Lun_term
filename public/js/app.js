@@ -163,6 +163,7 @@
     { id: 'lun_text',               label: 'Текст',         key: 'x' },
     { id: 'lun_gann',               label: 'Ган 1×1',       key: 'g' },
     { id: 'lun_hray',               label: 'Луч ⨯N',        key: 'h' },
+    { id: 'lun_vprofile',           label: 'Об.профиль',    key: 'p' },
   ];
   function startDraw(toolId) {
     if (toolId === 'lun_text') {

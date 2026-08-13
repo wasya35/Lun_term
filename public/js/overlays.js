@@ -132,6 +132,74 @@
     },
   });
 
+  /* --- профиль объёма (горизонтальный объём) по диапазону ---
+   * 2 точки задают ВРЕМЕННОЕ окно (цена точек не важна — рамка «натягивается»
+   * на тренд). Берём загруженные свечи в окне, ценовой диапазон low..high бьём
+   * на bins уровней, объём каждой свечи распределяем по перекрытым уровням.
+   * Рисуем гистограмму от левого края рамки вправо. POC — макс. уровень;
+   * зона стоимости (VA, ~70% объёма) — светлее. */
+  kc.registerOverlay({
+    name: 'lun_vprofile',
+    totalStep: 3,
+    needDefaultPointFigure: false,
+    createPointFigures: ({ coordinates, overlay, chart, xAxis, yAxis }) => {
+      if (coordinates.length < 2) return [];
+      const [a, b] = coordinates;
+      const box = {
+        type: 'rect',
+        attrs: { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) },
+        styles: { style: 'stroke', color: 'transparent', borderColor: 'rgba(240,192,64,0.35)', size: 1 },
+      };
+      const pts = overlay.points || [];
+      const i0 = pts[0] && pts[0].dataIndex != null ? Math.round(pts[0].dataIndex) : null;
+      const i1 = pts[1] && pts[1].dataIndex != null ? Math.round(pts[1].dataIndex) : null;
+      const list = chart.getDataList();
+      if (i0 == null || i1 == null || !list.length) return [box];
+      const lo = Math.max(0, Math.min(i0, i1)), hi = Math.min(list.length - 1, Math.max(i0, i1));
+      let minL = Infinity, maxH = -Infinity;
+      for (let i = lo; i <= hi; i++) { const bar = list[i]; if (!bar) continue; minL = Math.min(minL, bar.low); maxH = Math.max(maxH, bar.high); }
+      if (!(maxH > minL)) return [box];
+
+      const cfg = window.LUN.VPROFILE || { bins: 24, maxWidthPx: 150, valueAreaPct: 0.70 };
+      const N = Math.max(4, cfg.bins || 24);
+      const binH = (maxH - minL) / N;
+      const vol = new Array(N).fill(0);
+      for (let i = lo; i <= hi; i++) {
+        const bar = list[i]; if (!bar) continue; const v = bar.volume || 0; if (v <= 0) continue;
+        const k0 = Math.max(0, Math.floor((bar.low - minL) / binH));
+        const k1 = Math.min(N - 1, Math.floor((bar.high - minL) / binH));
+        const span = Math.max(1, k1 - k0 + 1), share = v / span;
+        for (let k = k0; k <= k1; k++) vol[k] += share;
+      }
+      const maxV = Math.max.apply(null, vol) || 1;
+      let pocK = 0; for (let k = 1; k < N; k++) if (vol[k] > vol[pocK]) pocK = k;
+
+      // зона стоимости (VA): растём от POC в обе стороны, пока не наберём долю объёма
+      const totV = vol.reduce((s, x) => s + x, 0);
+      const target = (cfg.valueAreaPct || 0.7) * totV;
+      let loK = pocK, hiK = pocK, acc = vol[pocK];
+      while (acc < target && (loK > 0 || hiK < N - 1)) {
+        const down = loK > 0 ? vol[loK - 1] : -1, up = hiK < N - 1 ? vol[hiK + 1] : -1;
+        if (up >= down) { hiK++; acc += Math.max(0, up); } else { loK--; acc += Math.max(0, down); }
+      }
+
+      const xLeft = Math.min(a.x, b.x);
+      const maxW = Math.min(cfg.maxWidthPx || 150, Math.max(60, Math.abs(b.x - a.x) * 0.6));
+      const figs = [box];
+      for (let k = 0; k < N; k++) {
+        const yTop = yAxis.convertToPixel(minL + (k + 1) * binH);
+        const yBot = yAxis.convertToPixel(minL + k * binH);
+        const w = Math.max(1, maxW * (vol[k] / maxV));
+        const inVA = k >= loK && k <= hiK;
+        const color = k === pocK ? 'rgba(240,140,40,0.9)' : (inVA ? 'rgba(90,150,200,0.7)' : 'rgba(90,150,200,0.4)');
+        figs.push({ type: 'rect', attrs: { x: xLeft, y: yTop, width: w, height: Math.max(1, yBot - yTop - 1) }, styles: { style: 'fill', color } });
+      }
+      const pocPrice = minL + (pocK + 0.5) * binH;
+      figs.push({ type: 'text', attrs: { x: xLeft + maxW + 4, y: yAxis.convertToPixel(pocPrice), text: 'POC ' + (pocPrice >= 1000 ? pocPrice.toFixed(0) : pocPrice.toFixed(3)), baseline: 'middle' }, ignoreEvent: true, styles: { color: '#e08a2a', size: 11 } });
+      return figs;
+    },
+  });
+
   /* --- текстовая метка --- */
   kc.registerOverlay({
     name: 'lun_text',
