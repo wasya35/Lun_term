@@ -58,5 +58,31 @@
     return null;
   }
 
-  window.LunAstro = { bodyInfo, moonInfo, zoneOf };
+  /* Следующий МАЖОРНЫЙ аспект пары тел (0/60/90/120/180) строго после fromTs.
+   * Возвращает timestamp точного аспекта (локальный минимум орб-дистанции) или
+   * null, если в пределах горизонта не нашли. Шаг 6ч — Солнце/планеты движутся
+   * медленно, этого хватает. По умолчанию гелио (как полосы аспектов к Солнцу). */
+  const MAJORS = [0, 60, 90, 120, 180];
+  function nextAspect(bodyA, bodyB, fromTs, frame, opts) {
+    opts = opts || {};
+    frame = frame || 'helio';
+    const step = opts.stepMs || 6 * 3600 * 1000;
+    const horizon = opts.horizonMs || 500 * 86400000;   // ~16 месяцев
+    const tight = opts.tightOrb || 0.5;
+    const sepAt = (ts) => {
+      let d = Math.abs(longitude(bodyA, new Date(ts), frame) - longitude(bodyB, new Date(ts), frame)) % 360;
+      return d > 180 ? 360 - d : d;
+    };
+    const distAt = (ts) => { const s = sepAt(ts); let m = 1e9; for (const x of MAJORS) m = Math.min(m, Math.abs(s - x)); return m; };
+    let prevPrev = distAt(fromTs), prev = distAt(fromTs + step);
+    for (let ts = fromTs + 2 * step; ts <= fromTs + horizon; ts += step) {
+      const cur = distAt(ts);
+      // локальный минимум орб-дистанции на середине (prev) и достаточно точный
+      if (prev <= prevPrev && prev < cur && prev < tight) return ts - step;
+      prevPrev = prev; prev = cur;
+    }
+    return null;
+  }
+
+  window.LunAstro = { bodyInfo, moonInfo, zoneOf, nextAspect };
 })();

@@ -4,6 +4,14 @@
 (function () {
   const kc = window.klinecharts;
 
+  const PERIOD_MS = { minute: 60000, hour: 3600000, day: 86400000 };
+  const periodMillis = (tf) => (PERIOD_MS[tf.type] || 3600000) * tf.span;
+
+  /* горячие клавиши: key(lower) -> fn. Регистрируем при сборке кнопок,
+   * срабатывают, если не набираем текст и не открыта модалка. */
+  const hotkeys = {};
+  const regHotkey = (k, fn) => { if (k) hotkeys[k.toLowerCase()] = fn; };
+
   const state = {
     chart: null,
     instrument: window.LUN.INSTRUMENTS[0],
@@ -148,12 +156,13 @@
 
   /* ---------- инструменты рисования ---------- */
   const DRAW_TOOLS = [
-    { id: 'horizontalStraightLine', label: 'Уровень' },
-    { id: 'segment',                label: 'Трендовая' },
-    { id: 'lun_rect',               label: 'Прямоугольник' },
-    { id: 'lun_arrow',              label: 'Стрелка' },
-    { id: 'lun_text',               label: 'Текст' },
-    { id: 'lun_gann',               label: 'Ган 1×1' },
+    { id: 'horizontalStraightLine', label: 'Уровень',       key: 'l' },
+    { id: 'segment',                label: 'Трендовая',     key: 't' },
+    { id: 'lun_rect',               label: 'Прямоугольник', key: 'r' },
+    { id: 'lun_arrow',              label: 'Стрелка',       key: 'a' },
+    { id: 'lun_text',               label: 'Текст',         key: 'x' },
+    { id: 'lun_gann',               label: 'Ган 1×1',       key: 'g' },
+    { id: 'lun_hray',               label: 'Луч ⨯N',        key: 'h' },
   ];
   function startDraw(toolId) {
     if (toolId === 'lun_text') {
@@ -164,9 +173,32 @@
       // фиксируем угол/режим на момент рисования — каждая линия независима
       const G = window.LUN.GANN;
       state.chart.createOverlay({ name: 'lun_gann', extendData: { unitPerBar: G.unitPerBar, extendRight: G.extendRight } });
+    } else if (toolId === 'lun_hray') {
+      const n = (window.LUN.HRAY && window.LUN.HRAY.maxCrossings) || 2;
+      state.chart.createOverlay({ name: 'lun_hray', extendData: { maxCrossings: n } });
     } else {
       state.chart.createOverlay(toolId);
     }
+  }
+
+  /* прогноз вперёд: продлить астро-полосы до следующего аспекта ☉–♅ */
+  function setForecast(on, btn) {
+    const c = state.chart, list = c.getDataList();
+    if (on && list && list.length) {
+      const F = window.LUN.FORECAST || { bodyA: 'Sun', bodyB: 'Uranus', frame: 'helio', maxBars: 500 };
+      const lastTs = list[list.length - 1].timestamp;
+      const until = window.LunAstro.nextAspect(F.bodyA, F.bodyB, lastTs, F.frame);
+      if (!until) { if (btn) btn.classList.remove('active'); alert('Ближайший аспект ' + F.bodyA + '–' + F.bodyB + ' не найден в горизонте.'); return; }
+      const stepMs = periodMillis(state.tf);
+      const extra = Math.min(F.maxBars || 500, Math.max(1, Math.ceil((until - lastTs) / stepMs)));
+      window.LUN_FORECAST = { enabled: true, untilTs: until, stepMs, maxBars: F.maxBars || 500 };
+      try { const bar = c.getBarSpace().bar || 6; c.setOffsetRightDistance(Math.max(80, extra * bar)); } catch (e) {}
+      if (btn) btn.title = 'Прогноз до аспекта ☉–♅: ' + new Date(until).toISOString().slice(0, 10) + ' (F)';
+    } else {
+      window.LUN_FORECAST = { enabled: false };
+      try { c.setOffsetRightDistance(80); } catch (e) {}
+    }
+    try { c.resize(); } catch (e) {}
   }
 
   /* ---------- статус-строка ---------- */
@@ -203,10 +235,13 @@
     findBtn.classList.add('find-btn');
 
     const tfWrap = document.getElementById('timeframes');
-    window.LUN.TIMEFRAMES.forEach((tf) => mkBtn(tfWrap, tf.title, (b) => {
-      state.tf = tf; load();
-      [...tfWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active');
-    }, tf === state.tf));
+    window.LUN.TIMEFRAMES.forEach((tf, i) => {
+      const b = mkBtn(tfWrap, tf.title, (bb) => {
+        state.tf = tf; load();
+        [...tfWrap.children].forEach((x) => x.classList.remove('active')); bb.classList.add('active');
+      }, tf === state.tf, tf.title + ' (' + (i + 1) + ')');
+      regHotkey(String(i + 1), () => b.click());   // 1..4 → ТФ
+    });
 
     const indWrap = document.getElementById('indicators');
     ['SMA', 'EMA', 'VWAP'].forEach((k) => mkBtn(indWrap, k, (b) => {
@@ -241,17 +276,27 @@
     buildCycleButtons();
 
     const drawWrap = document.getElementById('drawtools');
-    DRAW_TOOLS.forEach((t) => mkBtn(drawWrap, t.label, () => startDraw(t.id)));
+    DRAW_TOOLS.forEach((t) => {
+      mkBtn(drawWrap, t.label, () => startDraw(t.id), false, t.label + (t.key ? ' (' + t.key.toUpperCase() + ')' : ''));
+      regHotkey(t.key, () => startDraw(t.id));
+    });
     mkBtn(drawWrap, '✕ очистить', () => state.chart.removeOverlay()).className = 'danger';
 
     const setWrap = document.getElementById('settings');
-    mkBtn(setWrap, '⚙ Настройки', () => window.LunSettings.open(applySettings), false,
-      'Цвета знаков и торговые зоны циклов');
-    mkBtn(setWrap, '📊 Бэктест', async () => {
+    const fcBtn = mkBtn(setWrap, '🔮 Прогноз', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on); setForecast(on, b);
+    }, false, 'Продлить астро-полосы вправо до следующего аспекта ☉–♅ (F)');
+    state.forecastBtn = fcBtn;
+    regHotkey('f', () => fcBtn.click());
+    const setBtn = mkBtn(setWrap, '⚙ Настройки', () => window.LunSettings.open(applySettings), false,
+      'Цвета знаков и торговые зоны циклов (S)');
+    regHotkey('s', () => setBtn.click());
+    const btBtn = mkBtn(setWrap, '📊 Бэктест', async () => {
       const ins = state.instrument;
       const ticker = await window.LunData.resolveTicker(ins);
       window.LunBacktest.run({ engine: ins.engine || 'futures', market: ins.market || 'forts', ticker, title: (ins.title || ins.id) + ' · ' + ticker });
-    }, false, 'Сверка лунных зон и аспектов с историей текущего инструмента');
+    }, false, 'Сверка лунных зон и аспектов с историей текущего инструмента (B)');
+    regHotkey('b', () => btBtn.click());
   }
 
   // тумблеры аспектов: по планете (☉/планета) + сводная «∀ все»
@@ -267,6 +312,18 @@
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); window.LUN.ALL_ASPECTS.enabled = on;
       if (on) createAllAspect(); else if (state.allAspectPane) { state.chart.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
     }, window.LUN.ALL_ASPECTS.enabled, 'Сводная полоса всех аспектов всех пар (детально на M5/M15)');
+    // отдельная полоса: Уран — все планеты (мажорные аспекты)
+    const urBtn = mkBtn(aspWrap, '♅∀', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createUranusStrip(); else if (state.uranusPane) { state.chart.removeIndicator({ paneId: state.uranusPane }); state.uranusPane = null; }
+    }, !!state.uranusPane, 'Аспекты Урана ко всем планетам (U)');
+    regHotkey('u', () => urBtn.click());
+  }
+  const URANUS_PANE = 'pane_asp_uranus';
+  function createUranusStrip() {
+    state.chart.createIndicator({ name: 'UranusAspects', paneId: URANUS_PANE, shortName: '♅ ко всем', extendData: { orb: clampOrb() } }, false);
+    state.uranusPane = URANUS_PANE;
+    wishPane(URANUS_PANE, { height: window.LUN.PANE_HEIGHTS.cycle + 4, minHeight: 20, order: 28 });
   }
 
   // тумблеры циклов (пересобираются после изменения настроек)
@@ -300,6 +357,7 @@
     Object.keys(state.aspectPanes).forEach((k) => c.removeIndicator({ paneId: state.aspectPanes[k] }));
     state.aspectPanes = {};
     if (state.allAspectPane) { c.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
+    if (state.uranusPane) { c.removeIndicator({ paneId: state.uranusPane }); state.uranusPane = null; }
     window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });
     if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();
     buildAspectButtons();
@@ -321,6 +379,21 @@
       el.title = window.LUN_DATA_ERROR || '';
       el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
       scheduleApply();      // данные загружены — закрепляем высоты панелей
+      // смена инструмента/ТФ сбрасывает данные — прогноз выключаем (шаг ТФ иной)
+      if (window.LUN_FORECAST && window.LUN_FORECAST.enabled) {
+        window.LUN_FORECAST = { enabled: false };
+        if (state.forecastBtn) state.forecastBtn.classList.remove('active');
+        try { state.chart.setOffsetRightDistance(80); } catch (e) {}
+      }
+    });
+    // горячие клавиши (кроме ввода текста и открытых модалок)
+    window.addEventListener('keydown', (e) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (document.querySelector('.lun-modal-bg')) return;
+      const fn = hotkeys[e.key.toLowerCase()];
+      if (fn) { e.preventDefault(); fn(); }
     });
   }
 

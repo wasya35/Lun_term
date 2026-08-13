@@ -97,6 +97,41 @@
     },
   });
 
+  /* --- горизонтальный луч с обрезкой по пересечениям ---
+   * От точки вправо; обрывается на N-м баре, чей диапазон low..high накрывает
+   * уровень (пересечение с ценой). N берётся из extendData.maxCrossings (или
+   * LUN.HRAY). Если пересечений меньше N — луч до правого края. */
+  kc.registerOverlay({
+    name: 'lun_hray',
+    totalStep: 2,
+    needDefaultPointFigure: false,
+    createPointFigures: ({ coordinates, overlay, chart, xAxis, bounding }) => {
+      if (!coordinates.length) return [];
+      const p0 = coordinates[0];
+      const ed = overlay.extendData || {};
+      const maxX = ed.maxCrossings || (window.LUN.HRAY && window.LUN.HRAY.maxCrossings) || 2;
+      const pt = overlay.points && overlay.points[0];
+      const level = pt ? pt.value : null;
+      const startIdx = pt && pt.dataIndex != null ? Math.floor(pt.dataIndex) : null;
+      const list = chart.getDataList();
+      let endX = bounding.width, crossings = 0, hit = false;
+      if (level != null && startIdx != null) {
+        for (let i = Math.max(0, startIdx + 1); i < list.length; i++) {
+          const b = list[i];
+          if (b.low <= level && b.high >= level) {
+            crossings++;
+            if (crossings >= maxX) { endX = xAxis.convertToPixel(i); hit = true; break; }
+          }
+        }
+      }
+      const end = { x: endX, y: p0.y };
+      return [
+        { type: 'line', attrs: { coordinates: [{ x: p0.x, y: p0.y }, end] }, styles: { color: ACCENT, size: 1.6 } },
+        { type: 'text', attrs: { x: end.x - 3, y: p0.y - 6, text: hit ? '⨯' + maxX : '→', baseline: 'bottom', align: 'right' }, ignoreEvent: true, styles: { color: ACCENT, size: 11 } },
+      ];
+    },
+  });
+
   /* --- текстовая метка --- */
   kc.registerOverlay({
     name: 'lun_text',

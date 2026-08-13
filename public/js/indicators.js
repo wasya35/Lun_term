@@ -13,37 +13,57 @@
   const kc = window.klinecharts;
   const MSK_OFFSET = 3 * 3600 * 1000;
 
-  /* пробежать по видимым свечам: fn(i, x, halfBar, barData) */
+  /* Прогноз вперёд: астро-полосы можно продлить ВПРАВО за последнюю свечу до
+   * LUN_FORECAST.untilTs. Для будущих индексов синтезируем бар только с
+   * timestamp (астро от времени — этого достаточно). Возвращает предел индекса
+   * (cap) и функцию barAt(i). Если прогноз выключен — обычные границы. */
+  function forecastInfo(chart) {
+    const list = chart.getDataList();
+    const F = window.LUN_FORECAST;
+    const realLen = list.length;
+    if (!(F && F.enabled && F.stepMs > 0 && F.untilTs) || !realLen) {
+      return { cap: realLen, realLen, barAt: (i) => list[i] };
+    }
+    const lastTs = list[realLen - 1].timestamp;
+    const extra = Math.max(0, Math.min(F.maxBars || 500, Math.ceil((F.untilTs - lastTs) / F.stepMs)));
+    return {
+      cap: realLen + extra, realLen,
+      barAt: (i) => (i < realLen ? list[i] : { timestamp: lastTs + (i - (realLen - 1)) * F.stepMs, forecast: true }),
+    };
+  }
+
+  /* пробежать по видимым свечам (+ прогноз): fn(i, x, halfBar, barData) */
   function forEachVisibleBar(chart, xAxis, fn) {
     const range = chart.getVisibleRange();
     const bs = chart.getBarSpace();
-    const list = chart.getDataList();
+    const fc = forecastInfo(chart);
     const from = Math.max(0, range.from);
-    const to = Math.min(list.length, range.to);
-    for (let i = from; i < to; i++) fn(i, xAxis.convertToPixel(i), bs.halfBar, list[i]);
+    const to = Math.min(fc.cap, range.to);
+    for (let i = from; i < to; i++) fn(i, xAxis.convertToPixel(i), bs.halfBar, fc.barAt(i));
   }
 
-  /* разбить видимый диапазон на «прогоны» с одинаковым keyFn(bar):
+  /* разбить видимый диапазон (+ прогноз) на «прогоны» с одинаковым keyFn(bar):
    * cb(startI, endI, midX, leftX, rightX) */
   function runsOverVisible(chart, xAxis, keyFn, cb) {
     const range = chart.getVisibleRange();
     const bs = chart.getBarSpace();
-    const list = chart.getDataList();
+    const fc = forecastInfo(chart);
     const from = Math.max(0, range.from);
-    const to = Math.min(list.length, range.to);
+    const to = Math.min(fc.cap, range.to);
     if (to <= from) return;
-    let runStart = from, runKey = keyFn(list[from]);
+    let runStart = from, runKey = keyFn(fc.barAt(from));
     const flush = (endExcl) => {
       const leftX = xAxis.convertToPixel(runStart) - bs.halfBar;
       const rightX = xAxis.convertToPixel(endExcl - 1) + bs.halfBar;
       cb(runStart, endExcl - 1, (leftX + rightX) / 2, leftX, rightX);
     };
     for (let i = from + 1; i < to; i++) {
-      const k = keyFn(list[i]);
+      const k = keyFn(fc.barAt(i));
       if (k !== runKey) { flush(i); runStart = i; runKey = k; }
     }
     flush(to);
   }
+  window.LUN_FORECAST_INFO = forecastInfo;   // для полос со своим циклом (аспекты)
 
   /* ======================= Лента знаков (любое тело) ======================= */
   kc.registerIndicator({
@@ -179,18 +199,72 @@
       };
 
       const range = chart.getVisibleRange();
-      const from = Math.max(1, range.from), to = Math.min(list.length - 2, range.to);
+      const fc = window.LUN_FORECAST_INFO(chart);
+      const tsAt = (i) => fc.barAt(i).timestamp;
+      const from = Math.max(1, range.from), to = Math.min(fc.cap - 2, range.to);
       // риска на всю высоту в ТОЧНОМ центре аспекта (локальный минимум орб-дистанции)
       for (const [a, b, frame] of pairs) {
         for (let i = from; i <= to; i++) {
-          const cur = nearest(a, b, frame, list[i].timestamp);
+          const cur = nearest(a, b, frame, tsAt(i));
           if (cur.d > orb) continue;
-          const prev = nearest(a, b, frame, list[i - 1].timestamp);
-          const next = nearest(a, b, frame, list[i + 1].timestamp);
+          const prev = nearest(a, b, frame, tsAt(i - 1));
+          const next = nearest(a, b, frame, tsAt(i + 1));
           if (cur.d <= prev.d && cur.d < next.d) {
             const x = xAxis.convertToPixel(i);
             ctx.strokeStyle = cur.asp.color; ctx.lineWidth = 1.5;
             ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+          }
+        }
+      }
+      return true;
+    },
+  });
+
+  /* ============ Полоса «Уран — все планеты» (мажорные аспекты) ============
+   * Отметка на всю высоту в точный момент аспекта Урана с каждой планетой +
+   * глиф планеты и символ аспекта над риской. Уран движется медленно, поэтому
+   * такие аспекты — редкие «якорные» события. Гелио (с Луной — гео). */
+  kc.registerIndicator({
+    name: 'UranusAspects',
+    shortName: '♅ ко всем',
+    series: 'normal',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {};
+      const orb = ed.orb || (window.LUN.ASPECTS.orb || 3);
+      const GL = window.LUN.BODY_GLYPH || {};
+      const others = ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Neptune', 'Pluto'];
+      const H = bounding.height, list = chart.getDataList();
+      ctx.fillStyle = '#191d26'; ctx.fillRect(0, 0, bounding.width, H);
+
+      const memo = new Map();
+      const nearest = (other, frame, ts) => {
+        const key = other + Math.floor(ts / 60000);
+        let v = memo.get(key); if (v) return v;
+        const la = window.LunAstro.bodyInfo('Uranus', ts, frame).lon, lb = window.LunAstro.bodyInfo(other, ts, frame).lon;
+        const sep = separation(la, lb);
+        let best = null, bd = 1e9; for (const A of ASPECTS) { const dd = Math.abs(sep - A.angle); if (dd < bd) { bd = dd; best = A; } }
+        v = { d: bd, asp: best }; memo.set(key, v); return v;
+      };
+
+      const range = chart.getVisibleRange();
+      const fc = window.LUN_FORECAST_INFO(chart);
+      const tsAt = (i) => fc.barAt(i).timestamp;
+      const from = Math.max(1, range.from), to = Math.min(fc.cap - 2, range.to);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif';
+      for (const other of others) {
+        const frame = (other === 'Moon') ? 'geo' : 'helio';
+        for (let i = from; i <= to; i++) {
+          const cur = nearest(other, frame, tsAt(i));
+          if (cur.d > orb) continue;
+          const prev = nearest(other, frame, tsAt(i - 1)), next = nearest(other, frame, tsAt(i + 1));
+          if (cur.d <= prev.d && cur.d < next.d) {
+            const x = xAxis.convertToPixel(i);
+            ctx.strokeStyle = cur.asp.color; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.moveTo(x, 12); ctx.lineTo(x, H); ctx.stroke();
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.fillText((GL[other] || other[0]) + cur.asp.sym, x, 1);
           }
         }
       }
