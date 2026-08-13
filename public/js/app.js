@@ -165,16 +165,37 @@
     { id: 'lun_hray',               label: 'Луч ⨯N',        key: 'h' },
     { id: 'lun_vprofile',           label: 'Об.профиль',    key: 'p' },
   ];
+  /* Ctrl + перетаскивание = скопировать оверлей: в начале переноса при зажатом
+   * Ctrl создаём дубликат на СТАРОМ месте, а сам оверлей уносится мышью в новое.
+   * Клон получает те же обработчики — его тоже можно копировать. */
+  let ctrlDown = false;
+  const clonePoints = (pts) => (pts || []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value }));
+  function overlayEvents() {
+    return {
+      onPressedMoveStart: (event) => {
+        const ov = event && (event.overlay || event.currentOverlay);
+        if (!ctrlDown || !ov) return false;
+        try {
+          state.chart.createOverlay(Object.assign({
+            name: ov.name, points: clonePoints(ov.points), styles: ov.styles, extendData: ov.extendData,
+          }, overlayEvents()));
+        } catch (e) { /* клонирование не должно ломать перенос */ }
+        return false;   // не перехватываем — оригинал продолжает тянуться мышью
+      },
+    };
+  }
+
   function startDraw(toolId) {
+    const ev = overlayEvents();
     if (toolId === 'lun_text') {
       const t = window.prompt('Текст метки:', '');
       if (t === null) return;
-      state.chart.createOverlay({ name: 'lun_text', extendData: t });
+      state.chart.createOverlay(Object.assign({ name: 'lun_text', extendData: t }, ev));
     } else if (toolId === 'lun_hray') {
       const n = (window.LUN.HRAY && window.LUN.HRAY.maxCrossings) || 2;
-      state.chart.createOverlay({ name: 'lun_hray', extendData: { maxCrossings: n } });
+      state.chart.createOverlay(Object.assign({ name: 'lun_hray', extendData: { maxCrossings: n } }, ev));
     } else {
-      state.chart.createOverlay(toolId);
+      state.chart.createOverlay(Object.assign({ name: toolId }, ev));
     }
   }
 
@@ -383,6 +404,10 @@
         try { state.chart.setOffsetRightDistance(80); } catch (e) {}
       }
     });
+    // состояние Ctrl — для Ctrl+перетаскивание = копирование оверлея
+    window.addEventListener('keydown', (e) => { if (e.key === 'Control' || e.ctrlKey) ctrlDown = true; });
+    window.addEventListener('keyup', (e) => { if (e.key === 'Control') ctrlDown = false; });
+    window.addEventListener('blur', () => { ctrlDown = false; });
     // горячие клавиши (кроме ввода текста и открытых модалок)
     window.addEventListener('keydown', (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
