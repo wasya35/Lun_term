@@ -36,43 +36,28 @@
     name: 'lun_gann',
     totalStep: 3,
     needDefaultPointFigure: true,
-    createPointFigures: ({ coordinates, bounding, overlay, chart, yAxis }) => {
+    createPointFigures: ({ coordinates, bounding, overlay, chart }) => {
       if (coordinates.length < 2) return [];
-      const [p0, p1] = coordinates;
-      const G = window.LUN.GANN || overlay.extendData || {};   // ЖИВЫЕ настройки (не заморожены при рисовании)
+      const [p0, p1] = coordinates;                       // т1 = база (опора), т2 = задаёт направление
+      const G = window.LUN.GANN || {};
       const style = { color: '#e08a2a', size: 1.4 };
-      const dirX = (p1.x - p0.x) >= 0 ? 1 : -1;
-      const manual = (G.unitPerBar != null && G.unitPerBar !== '' && isFinite(+G.unitPerBar));
+      const dx = p1.x - p0.x, dy = p1.y - p0.y;
+      // луч ИЗ т1 ЧЕРЕЗ т2 до края (extendRight) либо отрезок т1..т2. Тянешь т2 —
+      // луч поворачивается вокруг т1 (угол = направление т1→т2), не параллельно.
+      const segA = { x: p0.x, y: p0.y };
+      let segB;
+      if (G.extendRight && dx !== 0) {
+        const edgeX = dx > 0 ? bounding.width : 0;
+        segB = { x: edgeX, y: p0.y + dy * ((edgeX - p0.x) / dx) };
+      } else {
+        segB = { x: p1.x, y: p1.y };
+      }
+      // живой «угол»: цена за бар (по т1→т2) + градусы луча (как в MT4/5)
       const barPx = chart.getBarSpace().bar || 6;
       const pts = overlay.points || [];
       const v0 = pts[0] ? pts[0].value : null, v1 = pts[1] ? pts[1].value : null;
-
-      let segA, segB, pricePerBar;
-      if (!manual) {
-        // наклон по двум точкам (через т1 и т2)
-        const dx = p1.x - p0.x, dy = p1.y - p0.y;
-        const barsBetween = Math.abs(dx) / barPx || 1;
-        pricePerBar = (v0 != null && v1 != null) ? (v1 - v0) / barsBetween : 0;
-        segA = { x: p0.x, y: p0.y };
-        segB = (G.extendRight && dx !== 0)
-          ? { x: dirX > 0 ? bounding.width : 0, y: p0.y + dy * (((dirX > 0 ? bounding.width : 0) - p0.x) / dx) }
-          : { x: p1.x, y: p1.y };
-      } else {
-        // ручной угол ИЗ НАСТРОЕК; линия проходит ЧЕРЕЗ точку 2 (т2) и держится за неё.
-        // Масштаб цена→пиксели берём с оси Y (надёжно при любом зуме).
-        const refP = (v1 != null ? v1 : (v0 != null ? v0 : 0));
-        const dyAbs = Math.abs(yAxis.convertToPixel(refP + 1) - yAxis.convertToPixel(refP)) || 0.05;
-        const signUp = (p1.y <= p0.y) ? 1 : -1;    // направление задаёт т2 относительно т1
-        const unit = Math.abs(+G.unitPerBar);
-        pricePerBar = signUp * unit;
-        const yAt = (x) => p1.y - signUp * unit * ((x - p1.x) / barPx) * dyAbs;   // yAt(p1.x)=p1.y → через т2
-        const leftX = p0.x;
-        const rightX = G.extendRight ? (dirX > 0 ? bounding.width : 0) : p1.x;
-        segA = { x: leftX, y: yAt(leftX) };
-        segB = { x: rightX, y: yAt(rightX) };
-      }
-
-      // живой «угол»: цена за бар + градусы луча (как в MT4/5)
+      const barsBetween = Math.abs(dx) / barPx || 1;
+      const pricePerBar = (v0 != null && v1 != null) ? (v1 - v0) / barsBetween : 0;
       const deg = Math.atan2(-(segB.y - segA.y), (segB.x - segA.x)) * 180 / Math.PI;
       const app = Math.abs(pricePerBar);
       const label = `${app < 10 ? app.toFixed(2) : app.toFixed(0)}/бар · ${deg.toFixed(1)}°`;
