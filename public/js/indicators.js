@@ -32,13 +32,17 @@
     };
   }
 
+  // правый видимый индекс: realTo включает поле офсета справа (для прогноза),
+  // range.to обрезан числом свечей.
+  const visRight = (range) => Math.ceil(range.realTo != null ? range.realTo : range.to);
+
   /* пробежать по видимым свечам (+ прогноз): fn(i, x, halfBar, barData) */
   function forEachVisibleBar(chart, xAxis, fn) {
     const range = chart.getVisibleRange();
     const bs = chart.getBarSpace();
     const fc = forecastInfo(chart);
     const from = Math.max(0, range.from);
-    const to = Math.min(fc.cap, range.to);
+    const to = Math.min(fc.cap, visRight(range));
     for (let i = from; i < to; i++) fn(i, xAxis.convertToPixel(i), bs.halfBar, fc.barAt(i));
   }
 
@@ -49,7 +53,7 @@
     const bs = chart.getBarSpace();
     const fc = forecastInfo(chart);
     const from = Math.max(0, range.from);
-    const to = Math.min(fc.cap, range.to);
+    const to = Math.min(fc.cap, visRight(range));
     if (to <= from) return;
     let runStart = from, runKey = keyFn(fc.barAt(from));
     const flush = (endExcl) => {
@@ -201,7 +205,8 @@
       const range = chart.getVisibleRange();
       const fc = window.LUN_FORECAST_INFO(chart);
       const tsAt = (i) => fc.barAt(i).timestamp;
-      const from = Math.max(1, range.from), to = Math.min(fc.cap - 2, range.to);
+      const rTo = Math.ceil(range.realTo != null ? range.realTo : range.to);
+      const from = Math.max(1, range.from), to = Math.min(fc.cap - 2, rTo);
       // риска на всю высоту в ТОЧНОМ центре аспекта (локальный минимум орб-дистанции)
       for (const [a, b, frame] of pairs) {
         for (let i = from; i <= to; i++) {
@@ -251,7 +256,8 @@
       const range = chart.getVisibleRange();
       const fc = window.LUN_FORECAST_INFO(chart);
       const tsAt = (i) => fc.barAt(i).timestamp;
-      const from = Math.max(1, range.from), to = Math.min(fc.cap - 2, range.to);
+      const rTo = Math.ceil(range.realTo != null ? range.realTo : range.to);
+      const from = Math.max(1, range.from), to = Math.min(fc.cap - 2, rTo);
       ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif';
       for (const other of others) {
         const frame = (other === 'Moon') ? 'geo' : 'helio';

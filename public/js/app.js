@@ -170,10 +170,6 @@
       const t = window.prompt('Текст метки:', '');
       if (t === null) return;
       state.chart.createOverlay({ name: 'lun_text', extendData: t });
-    } else if (toolId === 'lun_gann') {
-      // фиксируем угол/режим на момент рисования — каждая линия независима
-      const G = window.LUN.GANN;
-      state.chart.createOverlay({ name: 'lun_gann', extendData: { unitPerBar: G.unitPerBar, extendRight: G.extendRight } });
     } else if (toolId === 'lun_hray') {
       const n = (window.LUN.HRAY && window.LUN.HRAY.maxCrossings) || 2;
       state.chart.createOverlay({ name: 'lun_hray', extendData: { maxCrossings: n } });
