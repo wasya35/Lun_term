@@ -559,4 +559,44 @@
       return true;
     },
   });
+
+  /* ============ Торговые сессии (фон на цене) ============
+   * Полупрозрачные полосы по часам UTC каждого бара. Перекрытия сессий
+   * складывают альфу → зона ликвидности (Лондон+Нью-Йорк) заметно темнее.
+   * Только интрадей: на дневках/неделях выходим. */
+  function hexA(hex, a) {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  const sessActive = (ts, s) => { const h = ((ts % 86400000) / 3600000 + 24) % 24; return s.from <= s.to ? (h >= s.from && h < s.to) : (h >= s.from || h < s.to); };
+  kc.registerIndicator({
+    name: 'Sessions',
+    shortName: 'Сессии',
+    series: 'price',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const S = (window.LUN.SESSIONS) || []; if (!S.length) return true;
+      const bars = chart.getDataList(); if (bars.length < 2) return true;
+      if ((bars[1].timestamp - bars[0].timestamp) >= 12 * 3600000) return true;  // дневка+ — не рисуем
+      const H = bounding.height;
+      forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
+        if (i >= bars.length) return;
+        for (const s of S) if (sessActive(bar.timestamp, s)) { ctx.fillStyle = hexA(s.color, 0.08); ctx.fillRect(x - half, 0, half * 2 + 0.6, H); }
+      });
+      // подписи в начале каждой сессии (по строкам, чтобы не наезжали)
+      ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.font = '10px system-ui, sans-serif';
+      S.forEach((s, si) => {
+        let was = false;
+        forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
+          if (i >= bars.length) { was = false; return; }
+          const a = sessActive(bar.timestamp, s);
+          if (a && !was) { ctx.fillStyle = hexA(s.color, 0.95); ctx.fillText(s.name, x + 2, 2 + si * 12); }
+          was = a;
+        });
+      });
+      return true;
+    },
+  });
 })();
