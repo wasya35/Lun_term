@@ -11,6 +11,17 @@
    * срабатывают, если не набираем текст и не открыта модалка. */
   const hotkeys = {};
   const regHotkey = (k, fn) => { if (k) hotkeys[k.toLowerCase()] = fn; };
+  // канонический токен по ФИЗИЧЕСКОЙ клавише (e.code) — работает на любой
+  // раскладке (рус/eng): KeyL->'l', Digit1->'1', Equal->'=', Minus->'-'.
+  function keyFromEvent(e) {
+    const c = e.code || '';
+    if (c.indexOf('Key') === 0) return c.slice(3).toLowerCase();
+    if (c.indexOf('Digit') === 0) return c.slice(5);
+    if (c.indexOf('Numpad') === 0) { const n = c.slice(6); if (n === 'Add') return '+'; if (n === 'Subtract') return '-'; if (/^\d$/.test(n)) return n; }
+    if (c === 'Equal') return '=';
+    if (c === 'Minus') return '-';
+    return (e.key || '').toLowerCase();
+  }
 
   const state = {
     chart: null,
@@ -523,7 +534,7 @@
       if (document.querySelector('.lun-modal-bg')) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedOverlayId) { e.preventDefault(); deleteSelected(); return; }
       if (e.ctrlKey || e.metaKey) {
-        const k = e.key.toLowerCase();
+        const k = keyFromEvent(e);
         if (k === 'c') { if (copySelected()) e.preventDefault(); }
         else if (k === 'v') { if (pasteOverlay()) e.preventDefault(); }
         else if (k === 's') { e.preventDefault(); screenshot(); }
@@ -535,7 +546,7 @@
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (document.querySelector('.lun-modal-bg')) return;
-      const fn = hotkeys[e.key.toLowerCase()];
+      const fn = hotkeys[keyFromEvent(e)] || hotkeys[(e.key || '').toLowerCase()];
       if (fn) { e.preventDefault(); fn(); }
     });
   }

@@ -576,26 +576,30 @@
     series: 'price',
     figures: [],
     calc: (dataList) => dataList.map((d) => d.timestamp),
-    draw: ({ ctx, chart, bounding, xAxis }) => {
+    draw: ({ ctx, chart, bounding, xAxis, yAxis }) => {
       const S = (window.LUN.SESSIONS) || []; if (!S.length) return true;
       const bars = chart.getDataList(); if (bars.length < 2) return true;
       if ((bars[1].timestamp - bars[0].timestamp) >= 12 * 3600000) return true;  // дневка+ — не рисуем
-      const H = bounding.height;
-      forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
-        if (i >= bars.length) return;
-        for (const s of S) if (sessActive(bar.timestamp, s)) { ctx.fillStyle = hexA(s.color, 0.08); ctx.fillRect(x - half, 0, half * 2 + 0.6, H); }
-      });
-      // подписи в начале каждой сессии (по строкам, чтобы не наезжали)
-      ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.font = '10px system-ui, sans-serif';
-      S.forEach((s, si) => {
-        let was = false;
-        forEachVisibleBar(chart, xAxis, (i, x, half, bar) => {
-          if (i >= bars.length) { was = false; return; }
-          const a = sessActive(bar.timestamp, s);
-          if (a && !was) { ctx.fillStyle = hexA(s.color, 0.95); ctx.fillText(s.name, x + 2, 2 + si * 12); }
-          was = a;
-        });
-      });
+      const bs = chart.getBarSpace(), W = bounding.width;
+      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+      // каждая сессия — прямоугольная зона от первого до последнего бара сессии,
+      // по цене — диапазон high..low этой сессии (session-range box).
+      for (const s of S) {
+        let start = -1, hi = -Infinity, lo = Infinity;
+        const flush = (end) => {
+          const xL = xAxis.convertToPixel(start) - bs.halfBar, xR = xAxis.convertToPixel(end) + bs.halfBar;
+          if (xR < 0 || xL > W || !(hi > lo)) return;
+          const yT = yAxis.convertToPixel(hi), yB = yAxis.convertToPixel(lo);
+          ctx.fillStyle = hexA(s.color, 0.07); ctx.fillRect(xL, yT, xR - xL, yB - yT);
+          ctx.strokeStyle = hexA(s.color, 0.5); ctx.lineWidth = 1; ctx.strokeRect(xL, yT, xR - xL, yB - yT);
+          if (xR - xL > 34) { ctx.fillStyle = hexA(s.color, 0.95); ctx.fillText(s.name, Math.max(2, xL) + 2, yT - 2); }
+        };
+        for (let i = 0; i <= bars.length; i++) {
+          const a = i < bars.length && sessActive(bars[i].timestamp, s);
+          if (a) { if (start < 0) { start = i; hi = -Infinity; lo = Infinity; } if (bars[i].high > hi) hi = bars[i].high; if (bars[i].low < lo) lo = bars[i].low; }
+          else if (start >= 0) { flush(i - 1); start = -1; }
+        }
+      }
       return true;
     },
   });
