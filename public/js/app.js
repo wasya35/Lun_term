@@ -268,7 +268,14 @@
     };
   }
   // Delete — удалить выделенный оверлей; Ctrl+C/V — копия в буфер и вставка со сдвигом.
-  function deleteSelected() { if (state.selectedOverlayId) { try { state.chart.removeOverlay(state.selectedOverlayId); } catch (e) {} state.selectedOverlayId = null; } }
+  // ВАЖНО: removeOverlay без объекта-фильтра сносит ВСЕ фигуры. Удаляем строго
+  // по id одной выделенной ({ id }).
+  function deleteSelected() {
+    const id = state.selectedOverlayId;
+    if (!id || typeof id !== 'string') return;
+    try { state.chart.removeOverlay({ id }); } catch (e) {}
+    state.selectedOverlayId = null;
+  }
   function copySelected() {
     if (!state.selectedOverlayId || !state.chart.getOverlayById) return false;
     const ov = state.chart.getOverlayById(state.selectedOverlayId);
