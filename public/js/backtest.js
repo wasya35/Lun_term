@@ -339,12 +339,21 @@
     const wfAstro = window.LunMarkov.walkForward(bars, Object.assign({}, base, { astroProvider: prov }));
     const step = base.step > 0 ? base.step : base.window;
     const mat = window.LunMarkov.transitionMatrix(wfAstro.state, { size: wfAstro.size, step, sampleMode: base.sampleMode, upTo: bars.length - 1 });
+    const diag = (wf) => {
+      let tc = 0, mx = 0, rel = 0, stkSum = 0, stkN = 0;
+      for (let i = 0; i < wf.signal.length; i++) {
+        if (wf.tradable[i]) tc++;
+        if (wf.neff[i] >= base.minObs) { rel++; const a = Math.abs(wf.signal[i]); if (a > mx) mx = a; }
+      }
+      return { tradableBars: tc, reliableBars: rel, maxAbsSignal: mx, N: wf.signal.length };
+    };
     return {
-      days: bars.length, prov, costPts, step,
+      days: bars.length, prov, costPts, step, deadZone: base.deadZone, minObs: base.minObs,
       none: simulateMarkovStrategy(bars, wfNone, costPts),
       astro: simulateMarkovStrategy(bars, wfAstro, costPts),
       bh: buyHold(bars),
       mat, matSize: wfAstro.size, matNames: wfAstro.names,
+      diagNone: diag(wfNone), diagAstro: diag(wfAstro),
       zoneByRegime: analyzeZonesByRegime(bars, wfAstro),
     };
   }
@@ -443,14 +452,18 @@
     const cfgRow = (name, s) => `<tr><td>${name}</td><td>${s.trades}</td><td>${s.winRate == null ? '—' : wpct(s.winRate, 0)}</td>
       <td class="${cls(s.meanRet)}">${pct(s.meanRet, 2)}</td><td class="${cls(s.total)}">${pct(s.total, 0)}</td><td class="bt-neg">${wpct(s.maxDD, 0)}</td></tr>`;
     const edge = mk.astro.total - mk.none.total;
-    const N = mk.matSize, names = mk.matNames, m = mk.mat;
-    let head = '<th>сег.\\зав.</th>'; for (let c = 0; c < N; c++) head += `<th>${names[c]}</th>`; head += '<th>n_эфф</th>';
+    const N = mk.matSize, names = mk.matNames, m = mk.mat, aSize = N / 3;
+    const rowSignal = (r) => { let b = 0, be = 0; for (let c = 0; c < N; c++) { const pc = Math.floor(c / aSize); if (pc === 2) b += m.prob[r * N + c]; else if (pc === 0) be += m.prob[r * N + c]; } return b - be; };
+    let head = '<th>сег.\\зав.</th>'; for (let c = 0; c < N; c++) head += `<th>${names[c]}</th>`; head += '<th>n_эфф</th><th>сигнал</th>';
     let mrows = '';
     for (let r = 0; r < N; r++) {
-      const neff = m.rowNeff[r], dim = neff < minObs;
+      const neff = m.rowNeff[r], dim = neff < minObs, sg = rowSignal(r), hot = neff >= minObs && Math.abs(sg) >= mk.deadZone;
       let cells = ''; for (let c = 0; c < N; c++) cells += `<td class="${r === c ? 'bt-pos' : ''}">${(m.prob[r * N + c] * 100).toFixed(0)}%</td>`;
-      mrows += `<tr style="${dim ? 'opacity:.45' : ''}"><td>${names[r]}</td>${cells}<td class="bt-mut">${neff.toFixed(0)}</td></tr>`;
+      mrows += `<tr style="${dim ? 'opacity:.45' : ''}"><td>${names[r]}</td>${cells}<td class="bt-mut">${neff.toFixed(0)}</td><td class="${cls(sg)}">${(sg >= 0 ? '+' : '') + (sg * 100).toFixed(0)}%${hot ? ' ✓' : ''}</td></tr>`;
     }
+    const noTrades = mk.none.trades === 0 && mk.astro.trades === 0;
+    const diagLine = `Диагностика: мёртвая зона deadZone = ${wpct(mk.deadZone, 0)}. Макс |сигнал| на надёжных барах (n_эфф≥${minObs}): none ${wpct(mk.diagNone.maxAbsSignal, 0)} (${mk.diagNone.reliableBars}/${mk.diagNone.N}), 2D ${wpct(mk.diagAstro.maxAbsSignal, 0)} (${mk.diagAstro.reliableBars}/${mk.diagAstro.N}).` +
+      (noTrades ? ` <b>Сигнал не выходит за мёртвую зону → сделок нет: марковский режим на этом ТФ слаб.</b> Чтобы увидеть слабый сигнал — опусти <code>LUN.MARKOV.deadZone</code> (напр. до макс|сигнала|).` : '');
     const zbr = mk.zoneByRegime;
     const zrow = (bias) => { let c = ''; for (let r = 0; r < 3; r++) { const cell = zbr[bias][r], wr = cell.n ? cell.hit / cell.n : 0; c += `<td class="${cell.n < 20 ? 'bt-mut' : cls(wr - 0.5)}">${cell.n ? wpct(wr, 0) : '—'}<span class="bt-mut"> ${cell.n}</span></td>`; } return c; };
     return `
@@ -460,11 +473,12 @@
           ${cfgRow('astro = ' + mk.prov + ' (2D)', mk.astro)}
           ${cfgRow('buy & hold', mk.bh)}
         </tbody></table>
-        <p class="bt-recs" style="color:#8b93a7">Позиция = знак walk-forward сигнала (флэт, если не разрешён). <b>Прирост астро</b> = итог 2D − none = <b class="${cls(edge)}">${pct(edge, 0)}</b> — ${edge > 0.02 ? 'астро-ось добавляет к чистой цене ✓' : 'астро-ось НЕ даёт перевеса над чистой ценой на этом периоде'}.</p>
+        <p class="bt-recs" style="color:#8b93a7">Позиция = знак walk-forward сигнала (флэт, если не разрешён). <b>Прирост астро</b> = итог 2D − none = <b class="${cls(edge)}">${pct(edge, 0)}</b> — ${noTrades ? 'обе конфигурации без сделок (см. диагностику ниже)' : (edge > 0.02 ? 'астро-ось добавляет к чистой цене ✓' : 'астро-ось НЕ даёт перевеса над чистой ценой на этом периоде')}.</p>
+        <p class="bt-recs" style="color:#8b93a7">${diagLine}</p>
       </div>
       <div class="lun-sec"><h3 style="margin:4px 0">Матрица переходов (${mk.prov}, вся история, справочно) · шаг ${mk.step}</h3>
         <div style="overflow-x:auto"><table class="bt-tbl"><thead><tr>${head}</tr></thead><tbody>${mrows}</tbody></table></div>
-        <p class="bt-recs" style="color:#8b93a7">Диагональ (зелёным) = липкость режима. Строки с n_эфф &lt; ${minObs} приглушены — ненадёжны.</p>
+        <p class="bt-recs" style="color:#8b93a7">Диагональ (зелёным) = липкость режима. Колонка «сигнал» = P(BULL)−P(BEAR) строки; ✓ = выходит за мёртвую зону при надёжной выборке. Строки с n_эфф &lt; ${minObs} приглушены.</p>
       </div>
       <div class="lun-sec"><h3 style="margin:4px 0">Астро-зоны Луны в разрезе ценового режима (винрейт направления)</h3>
         <table class="bt-tbl"><thead><tr><th>зона</th><th>в BEAR</th><th>в SIDE</th><th>в BULL</th></tr></thead><tbody>
@@ -639,6 +653,14 @@
       t += `\nМАРКОВСКИЕ РЕЖИМЫ (издержки ${mk.costPts}п.):\n`;
       t += cfg('astro=none', mk.none) + cfg('astro=' + mk.prov + ' (2D)', mk.astro) + cfg('buy&hold', mk.bh);
       t += `  прирост астро (2D − none): ${pct(mk.astro.total - mk.none.total, 0)}\n`;
+      t += `  диагностика: deadZone ${wpct(mk.deadZone, 0)}; макс|сигнал| none ${wpct(mk.diagNone.maxAbsSignal, 0)} (надёжных ${mk.diagNone.reliableBars}/${mk.diagNone.N}), 2D ${wpct(mk.diagAstro.maxAbsSignal, 0)} (${mk.diagAstro.reliableBars}/${mk.diagAstro.N})\n`;
+      const N = mk.matSize, aSize = N / 3, m = mk.mat;
+      const rowSig = (r) => { let b = 0, be = 0; for (let c = 0; c < N; c++) { const pc = Math.floor(c / aSize); if (pc === 2) b += m.prob[r * N + c]; else if (pc === 0) be += m.prob[r * N + c]; } return b - be; };
+      t += '  матрица (состояние: липкость | сигнал | n_эфф):\n';
+      for (let r = 0; r < N; r++) t += `    ${mk.matNames[r]}: липк ${wpct(m.prob[r * N + r], 0)} | сигнал ${(rowSig(r) >= 0 ? '+' : '') + wpct(rowSig(r), 0)} | n_эфф ${m.rowNeff[r].toFixed(0)}\n`;
+      const zbr = mk.zoneByRegime, RN = ['BEAR', 'SIDE', 'BULL'];
+      t += '  астро-зоны по режиму (винрейт|n):\n';
+      ['long', 'short'].forEach((bias) => { t += `    ${bias === 'long' ? 'лонг-зоны' : 'шорт-зоны'}: ` + [0, 1, 2].map((r) => { const c = zbr[bias][r]; return RN[r] + ' ' + (c.n ? wpct(c.hit / c.n, 0) : '—') + '|' + c.n; }).join(' · ') + '\n'; });
     }
     return t;
   }
