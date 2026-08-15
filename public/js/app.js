@@ -113,6 +113,76 @@
     wishPane(state.deltaPane, { height: 72, order: 91 });
   }
 
+  /* ---------- Марков: лента режима + панель сигнала + матрица ---------- */
+  const MARKOV_STRIP = 'pane_markov_strip', MARKOV_SIG = 'pane_markov_sig';
+  function createMarkov() {
+    state.chart.createIndicator({ name: 'MarkovStrip', paneId: MARKOV_STRIP, shortName: 'Марков-режим' }, false);
+    wishPane(MARKOV_STRIP, { height: window.LUN.PANE_HEIGHTS.cycle, minHeight: 18, order: 27 });
+    state.chart.createIndicator({ name: 'MarkovRegime', paneId: MARKOV_SIG, shortName: 'Марков' }, false);
+    wishPane(MARKOV_SIG, { height: 64, order: 89 });
+    state.markovPanes = [MARKOV_STRIP, MARKOV_SIG];
+    showMarkovPanel(true);
+  }
+  function removeMarkov() {
+    (state.markovPanes || []).forEach((p) => { try { state.chart.removeIndicator({ paneId: p }); } catch (e) {} });
+    state.markovPanes = null; showMarkovPanel(false);
+  }
+  function markovPanelHTML() {
+    const bars = state.chart.getDataList();
+    if (!bars || !bars.length || !window.LunMarkov) return '<div>нет данных</div>';
+    const O = window.LUN.MARKOV, step = O.step > 0 ? O.step : O.window;
+    const wf = window.LunMarkov.walkForwardCached(bars, O);
+    const last = bars.length - 1, price = wf.priceStates, curPrice = price[last] < 0 ? 1 : price[last];
+    const pm = window.LunMarkov.transitionMatrix(price, { size: 3, step, sampleMode: O.sampleMode, upTo: last });
+    const sig = window.LunMarkov.signalAt(pm, curPrice, { size: 3, priceSize: 3, horizon: O.horizon, minObs: O.minObs, deadZone: O.deadZone });
+    const stat = window.LunMarkov.stationary(pm.prob, 3);
+    const PN = ['BEAR', 'SIDE', 'BULL'], PCOL = ['#ef5350', '#8a8f3a', '#26a69a'];
+    const pct = (x) => (x * 100).toFixed(1) + '%';
+    let rows = '';
+    for (let r = 0; r < 3; r++) {
+      const hl = r === price[last], neff = pm.rowNeff[r], dim = neff < O.minObs;
+      rows += `<tr style="${hl ? 'background:#1b2431;' : ''}${dim ? 'opacity:.5;' : ''}">
+        <td style="color:${PCOL[r]}">${PN[r]}</td><td>${pct(pm.prob[r * 3])}</td><td>${pct(pm.prob[r * 3 + 1])}</td><td>${pct(pm.prob[r * 3 + 2])}</td>
+        <td style="color:#8b93a7">${neff.toFixed(0)}</td><td>${hl ? '←' : ''}</td></tr>`;
+    }
+    const astroName = O.astroProvider === 'none' ? 'нет' : O.astroProvider;
+    const curName = wf.names[wf.state[last]] || '—';
+    const trad = wf.tradable[last], s = wf.signal[last];
+    return `<div style="font-weight:600;margin-bottom:3px">МАРКОВ · W=${O.window} · шаг=${step} · ${O.thrMode} · астро: ${astroName}</div>
+      <div style="margin-bottom:3px">Сейчас: <b style="color:${PCOL[curPrice]}">${curName}</b></div>
+      <table class="mk-tbl"><thead><tr><th>сег.\\зав.</th><th>BEAR</th><th>SIDE</th><th>BULL</th><th>n_эфф</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="margin-top:3px">Сигнал: <b style="color:${sig.signal > 0 ? '#26a69a' : '#ef5350'}">${(sig.signal >= 0 ? '+' : '') + pct(sig.signal)}</b> ±${pct(sig.ci)} · липкость ${pct(sig.stickiness)}</div>
+      <div>Прогноз ${O.horizon} шагов: ${(sig.signalN >= 0 ? '+' : '') + pct(sig.signalN)}</div>
+      <div>Вердикт (с астро): <b>${trad ? (s > 0 ? 'РАЗРЕШЁН ЛОНГ' : 'РАЗРЕШЁН ШОРТ') : 'нет сигнала'}</b></div>
+      <div style="color:#8b93a7">Стационарное: bear ${pct(stat[0])} / side ${pct(stat[1])} / bull ${pct(stat[2])}</div>`;
+  }
+  function refreshMarkovPanel() {
+    const el = document.getElementById('markov-panel');
+    if (el && el.style.display !== 'none') { try { el.innerHTML = markovPanelHTML(); } catch (e) { el.innerHTML = 'Марков: ' + e.message; } }
+  }
+  function showMarkovPanel(on) {
+    let el = document.getElementById('markov-panel');
+    if (on) {
+      const host = document.getElementById('chart'); host.style.position = 'relative';
+      if (!el) { el = document.createElement('div'); el.id = 'markov-panel'; el.className = 'markov-panel'; host.appendChild(el); }
+      el.style.display = 'block'; refreshMarkovPanel();
+      if (!state.markovTimer) state.markovTimer = setInterval(refreshMarkovPanel, 4000);
+    } else {
+      if (el) el.style.display = 'none';
+      if (state.markovTimer) { clearInterval(state.markovTimer); state.markovTimer = null; }
+    }
+  }
+  function addMarkovCss() {
+    if (document.getElementById('markov-css')) return;
+    const s = document.createElement('style'); s.id = 'markov-css';
+    s.textContent = `.markov-panel{position:absolute;top:8px;right:8px;z-index:20;background:rgba(12,16,22,.92);border:1px solid #2a3242;border-radius:6px;padding:8px 10px;font:11px/1.35 system-ui,sans-serif;color:#cdd3df;max-width:340px}
+    .markov-panel .mk-tbl{border-collapse:collapse;margin:2px 0;font-size:11px}
+    .markov-panel .mk-tbl th,.markov-panel .mk-tbl td{padding:1px 6px;text-align:right}
+    .markov-panel .mk-tbl th:first-child,.markov-panel .mk-tbl td:first-child{text-align:left}
+    .markov-panel .mk-tbl th{color:#8b93a7;font-weight:400}`;
+    document.head.appendChild(s);
+  }
+
   function buildPanes() {
     const H = window.LUN.PANE_HEIGHTS;
     state.signPane = 'pane_sign_Moon';
@@ -275,6 +345,12 @@
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createDeltaPane(); else if (state.deltaPane) { state.chart.removeIndicator({ paneId: state.deltaPane }); state.deltaPane = null; }
     }, false, 'Дневная кумулятивная дельта (аппрокс. по OHLC)');
+    // марковский режим: лента BEAR/SIDE/BULL + панель сигнала + матрица
+    const mkBtnRef = mkBtn(indWrap, 'Марков', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createMarkov(); else removeMarkov();
+    }, false, 'Марковский режим: лента BEAR/SIDE/BULL + сигнал + матрица переходов (M)');
+    regHotkey('m', () => mkBtnRef.click());
     // узлы Луны (0°/15°) и сильные бары на цене — для поиска «сильный бар в узле»
     [['MoonNodes', 'Узлы ☾', 'Ингрессии (0°) и середины (15°) знаков Луны на цене'],
      ['StrongBars', 'Сильбары', 'Сила: всплеск объёма ≥2× среднего · силища (двойной знак): объём держится']].forEach(([name, label, tip]) =>
@@ -386,6 +462,7 @@
   function init() {
     state.chart = kc.init('chart', { styles: THEME });
     window.LUN_CHART = state.chart;        // доступ из консоли для отладки
+    addMarkovCss();
     buildPanes();
     buildUI();
     load();
@@ -397,6 +474,7 @@
       el.title = window.LUN_DATA_ERROR || '';
       el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
       scheduleApply();      // данные загружены — закрепляем высоты панелей
+      if (state.markovPanes) setTimeout(refreshMarkovPanel, 200);   // пересчёт панели Маркова на новых данных
       // смена инструмента/ТФ сбрасывает данные — прогноз выключаем (шаг ТФ иной)
       if (window.LUN_FORECAST && window.LUN_FORECAST.enabled) {
         window.LUN_FORECAST = { enabled: false };

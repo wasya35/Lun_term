@@ -498,4 +498,65 @@
       return true;
     },
   });
+
+  /* ============ Марков: лента режима (BEAR/SIDE/BULL цветом) ============
+   * В стиле астро-лент: заливка по ценовому режиму бара + точка сверху там, где
+   * марковский сигнал разрешён (tradable) — зелёная в лонг, красная в шорт. */
+  const REGIME_COL = ['#7a2b2b', '#3a3f2f', '#1f6f43'];   // bear / side / bull (приглушённые)
+  kc.registerIndicator({
+    name: 'MarkovStrip',
+    shortName: 'Марков-режим',
+    series: 'normal',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const bars = chart.getDataList(); if (!bars.length || !window.LunMarkov) return true;
+      const wf = window.LunMarkov.walkForwardCached(bars, window.LUN.MARKOV);
+      const H = bounding.height;
+      forEachVisibleBar(chart, xAxis, (i, x, half) => {
+        if (i >= bars.length) return;                      // будущее (прогноз) — состояний нет
+        const ps = wf.priceStates[i];
+        ctx.fillStyle = ps < 0 ? '#20252f' : REGIME_COL[ps];
+        ctx.fillRect(x - half, 0, half * 2 + 0.6, H);
+        if (wf.tradable[i]) {
+          ctx.fillStyle = wf.signal[i] > 0 ? '#26e0b0' : '#ff5c7a';
+          ctx.beginPath(); ctx.arc(x, 4.5, 2, 0, 6.283); ctx.fill();
+        }
+      });
+      return true;
+    },
+  });
+
+  /* ============ Марков: панель сигнала (бар сигнала + линия прогноза) ============
+   * Бар = signal (−1..+1) от нуля: зелёный лонг / красный шорт / серый —
+   * не торговый (малая выборка/шум). Жёлтая линия = прогноз на horizon (P^n). */
+  kc.registerIndicator({
+    name: 'MarkovRegime',
+    shortName: 'Марков',
+    series: 'normal',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const bars = chart.getDataList(); if (!bars.length || !window.LunMarkov) return true;
+      const wf = window.LunMarkov.walkForwardCached(bars, window.LUN.MARKOV);
+      const H = bounding.height, mid = H / 2;
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(bounding.width, mid); ctx.stroke();
+      forEachVisibleBar(chart, xAxis, (i, x, half) => {
+        if (i >= bars.length) return;
+        const s = wf.signal[i], y = mid - s * mid * 0.92;
+        ctx.fillStyle = wf.tradable[i] ? (s > 0 ? '#26a69a' : '#ef5350') : 'rgba(120,130,150,0.30)';
+        ctx.fillRect(x - half, Math.min(mid, y), half * 2 + 0.6, Math.max(1, Math.abs(mid - y)));
+      });
+      // линия прогноза signalN
+      ctx.strokeStyle = '#f0c040'; ctx.lineWidth = 1.2; ctx.beginPath(); let started = false;
+      forEachVisibleBar(chart, xAxis, (i, x) => {
+        if (i >= bars.length) return;
+        const y = mid - wf.signalN[i] * mid * 0.92;
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      return true;
+    },
+  });
 })();

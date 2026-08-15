@@ -261,9 +261,19 @@
     return { pass, lines: out };
   }
 
+  // Кэш walkForward: рисование полосы/панели зовётся на каждый кадр — считаем
+  // один раз на (длина+последний ts+конфиг), пока данные/настройки не сменились.
+  let _wf = null, _wfKey = '';
+  function walkForwardCached(bars, opt) {
+    if (!bars || !bars.length) return walkForward(bars || [], opt);
+    const key = bars.length + ':' + bars[bars.length - 1].timestamp + ':' + JSON.stringify(opt || cfg());
+    if (_wfKey === key && _wf) return _wf;
+    _wf = walkForward(bars, opt); _wfKey = key; return _wf;
+  }
+
   window.LunMarkov = {
     priceStates, astroStates, composeStates,
     transitionMatrix, matMul, matPow, stationary,
-    signalAt, walkForward, selfTest,
+    signalAt, walkForward, walkForwardCached, selfTest,
   };
 })();
