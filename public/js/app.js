@@ -226,33 +226,61 @@
 
   /* ---------- инструменты рисования ---------- */
   const DRAW_TOOLS = [
-    { id: 'horizontalStraightLine', label: 'Уровень',       key: 'l' },
-    { id: 'segment',                label: 'Трендовая',     key: 't' },
+    { id: 'horizontalStraightLine', label: 'Уровень',       key: 't' },
+    { id: 'segment',                label: 'Трендовая',     key: 'l' },
     { id: 'lun_rect',               label: 'Прямоугольник', key: 'r' },
     { id: 'lun_arrow',              label: 'Стрелка',       key: 'a' },
     { id: 'lun_text',               label: 'Текст',         key: 'x' },
     { id: 'lun_gann',               label: 'Ган 1×1',       key: 'g' },
     { id: 'lun_hray',               label: 'Луч ⨯N',        key: 'h' },
-    { id: 'lun_vprofile',           label: 'Об.профиль',    key: 'p' },
+    { id: 'lun_vprofile',           label: 'Об.профиль',    key: 'd' },
   ];
   /* Ctrl + перетаскивание = скопировать оверлей: в начале переноса при зажатом
    * Ctrl создаём дубликат на СТАРОМ месте, а сам оверлей уносится мышью в новое.
    * Клон получает те же обработчики — его тоже можно копировать. */
   let ctrlDown = false;
   const clonePoints = (pts) => (pts || []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value }));
+  const ovOf = (event) => event && (event.overlay || event.currentOverlay);
   function overlayEvents() {
+    const sel = (event) => { const ov = ovOf(event); if (ov) state.selectedOverlayId = ov.id; return false; };
     return {
+      onSelected: sel, onClick: sel,
+      onDeselected: () => { state.selectedOverlayId = null; return false; },
       onPressedMoveStart: (event) => {
-        const ov = event && (event.overlay || event.currentOverlay);
+        sel(event);
+        const ov = ovOf(event);
         if (!ctrlDown || !ov) return false;
-        try {
-          state.chart.createOverlay(Object.assign({
-            name: ov.name, points: clonePoints(ov.points), styles: ov.styles, extendData: ov.extendData,
-          }, overlayEvents()));
-        } catch (e) { /* клонирование не должно ломать перенос */ }
+        try { state.chart.createOverlay(Object.assign({ name: ov.name, points: clonePoints(ov.points), styles: ov.styles, extendData: ov.extendData }, overlayEvents())); }
+        catch (e) { /* клонирование не должно ломать перенос */ }
         return false;   // не перехватываем — оригинал продолжает тянуться мышью
       },
     };
+  }
+  // Delete — удалить выделенный оверлей; Ctrl+C/V — копия в буфер и вставка со сдвигом.
+  function deleteSelected() { if (state.selectedOverlayId) { try { state.chart.removeOverlay(state.selectedOverlayId); } catch (e) {} state.selectedOverlayId = null; } }
+  function copySelected() {
+    if (!state.selectedOverlayId || !state.chart.getOverlayById) return false;
+    const ov = state.chart.getOverlayById(state.selectedOverlayId);
+    if (ov) { state.clipboardOverlay = { name: ov.name, points: clonePoints(ov.points), styles: ov.styles, extendData: ov.extendData }; return true; }
+    return false;
+  }
+  function pasteOverlay() {
+    const c = state.clipboardOverlay; if (!c) return false;
+    const pts = c.points.map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: (p.value != null ? p.value * 1.004 : p.value) }));  // сдвиг ↑0.4%, чтобы копия была видна
+    try { state.chart.createOverlay(Object.assign({ name: c.name, points: pts, styles: c.styles, extendData: c.extendData }, overlayEvents())); return true; } catch (e) { return false; }
+  }
+  // Ctrl+S — скрин графика (PNG). +/- — зум.
+  function screenshot() {
+    const c = state.chart; let url = null;
+    try { if (c.getConvertPictureUrl) url = c.getConvertPictureUrl(true, 'png', '#0b0e14'); } catch (e) {}
+    if (!url) { alert('Скрин не поддерживается этой версией графика.'); return; }
+    const a = document.createElement('a'); a.href = url; a.download = 'lun_term_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.png';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function zoomChart(inn) {
+    const c = state.chart;
+    try { if (c.zoomAtCoordinate) { c.zoomAtCoordinate(inn ? 1.15 : 0.87); return; } } catch (e) {}
+    try { const bs = c.getBarSpace().bar; if (c.setBarSpace) c.setBarSpace(Math.max(1, bs * (inn ? 1.15 : 0.87))); } catch (e) {}
   }
 
   function startDraw(toolId) {
@@ -375,6 +403,7 @@
       regHotkey(t.key, () => startDraw(t.id));
     });
     mkBtn(drawWrap, '✕ очистить', () => state.chart.removeOverlay()).className = 'danger';
+    regHotkey('+', () => zoomChart(true)); regHotkey('=', () => zoomChart(true)); regHotkey('-', () => zoomChart(false));   // зум +/−
 
     const setWrap = document.getElementById('settings');
     const fcBtn = mkBtn(setWrap, '🔮 Прогноз', (b) => {
@@ -486,6 +515,19 @@
     window.addEventListener('keydown', (e) => { if (e.key === 'Control' || e.ctrlKey) ctrlDown = true; });
     window.addEventListener('keyup', (e) => { if (e.key === 'Control') ctrlDown = false; });
     window.addEventListener('blur', () => { ctrlDown = false; });
+    // Delete / Ctrl+C·V·S — работа с выделенным оверлеем и скрин
+    window.addEventListener('keydown', (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      if (document.querySelector('.lun-modal-bg')) return;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedOverlayId) { e.preventDefault(); deleteSelected(); return; }
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'c') { if (copySelected()) e.preventDefault(); }
+        else if (k === 'v') { if (pasteOverlay()) e.preventDefault(); }
+        else if (k === 's') { e.preventDefault(); screenshot(); }
+      }
+    });
     // горячие клавиши (кроме ввода текста и открытых модалок)
     window.addEventListener('keydown', (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
