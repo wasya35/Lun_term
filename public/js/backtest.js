@@ -358,6 +358,49 @@
     };
   }
 
+  /* --- СИНТЕЗ: лунная зона × ценовой режим ---------------------------------
+   * Находка из разреза зон по режиму: лунная зона отрабатывает только В
+   * СОГЛАСИИ с режимом (лонг-зона в BULL, шорт-зона в BEAR), а против режима
+   * сливает. Торгуем это как сделку (вход/стоп/тейк, как в автоторговле) и
+   * гоняем через OOS. Режим = ценовое состояние Маркова (walk-forward). */
+  function zoneRegimeSignals(bars, ps) {
+    const zones = window.LUN.CYCLES[0].zones;
+    const sig = { strict: [], loose: [], counter: [], all: [] };
+    for (let i = 1; i < bars.length; i++) {
+      const z = window.LunAstro.zoneOf(window.LunAstro.moonInfo(bars[i].timestamp).lon, zones);
+      if (!z || z.bias === 'range') continue;
+      const dir = z.bias === 'long' ? 1 : -1;
+      sig.all.push({ i, dir });
+      const r = ps[i]; if (r < 0) continue;
+      const agree = (dir > 0 && r === 2) || (dir < 0 && r === 0);
+      const counter = (dir > 0 && r === 0) || (dir < 0 && r === 2);
+      if (agree) sig.strict.push({ i, dir });
+      if (agree || r === 1) sig.loose.push({ i, dir });
+      if (counter) sig.counter.push({ i, dir });
+    }
+    return sig;
+  }
+  function analyzeZoneRegime(allBars, opts) {
+    if (!window.LunMarkov) return null;
+    const bars = filterBars(allBars, opts).slice().sort((a, b) => a.timestamp - b.timestamp);
+    if (bars.length < 120) return { tooFew: true, days: bars.length };
+    const costPts = (window.LUN.TRADECOST && window.LUN.TRADECOST.pointsRoundTrip) || 0;
+    const build = (sub) => {
+      const p = window.LunMarkov.priceStates(sub, window.LUN.MARKOV);
+      const s = zoneRegimeSignals(sub, p);
+      const R = (set, rr) => simulateTrades(sub, set, rr, costPts);
+      return {
+        strict: { rr2: R(s.strict, 2), rr3: R(s.strict, 3) },
+        loose: { rr2: R(s.loose, 2), rr3: R(s.loose, 3) },
+        counter: { rr2: R(s.counter, 2), rr3: R(s.counter, 3) },
+        all: { rr2: R(s.all, 2), rr3: R(s.all, 3) },
+      };
+    };
+    const full = build(bars), cut = Math.floor(bars.length * 2 / 3);
+    const train = build(bars.slice(0, cut)), test = build(bars.slice(cut));
+    return { days: bars.length, costPts, full, oos: { splitTs: bars[cut] ? bars[cut].timestamp : 0, train: train.strict, test: test.strict } };
+  }
+
   /* ------------------------------- отчёт (UI) ------------------------------- */
   const css = `
   .bt-sum{display:flex;gap:16px;flex-wrap:wrap;padding:8px 16px;border-bottom:1px solid #1c2230}
@@ -462,8 +505,8 @@
       mrows += `<tr style="${dim ? 'opacity:.45' : ''}"><td>${names[r]}</td>${cells}<td class="bt-mut">${neff.toFixed(0)}</td><td class="${cls(sg)}">${(sg >= 0 ? '+' : '') + (sg * 100).toFixed(0)}%${hot ? ' ✓' : ''}</td></tr>`;
     }
     const noTrades = mk.none.trades === 0 && mk.astro.trades === 0;
-    const diagLine = `Диагностика: мёртвая зона deadZone = ${wpct(mk.deadZone, 0)}. Макс |сигнал| на надёжных барах (n_эфф≥${minObs}): none ${wpct(mk.diagNone.maxAbsSignal, 0)} (${mk.diagNone.reliableBars}/${mk.diagNone.N}), 2D ${wpct(mk.diagAstro.maxAbsSignal, 0)} (${mk.diagAstro.reliableBars}/${mk.diagAstro.N}).` +
-      (noTrades ? ` <b>Сигнал не выходит за мёртвую зону → сделок нет: марковский режим на этом ТФ слаб.</b> Чтобы увидеть слабый сигнал — опусти <code>LUN.MARKOV.deadZone</code> (напр. до макс|сигнала|).` : '');
+    const diagLine = `Диагностика: deadZone = ${wpct(mk.deadZone, 0)}. Макс |сигнал| на надёжных барах (n_эфф≥${minObs}): none ${wpct(mk.diagNone.maxAbsSignal, 0)} (${mk.diagNone.reliableBars}/${mk.diagNone.N}), 2D ${wpct(mk.diagAstro.maxAbsSignal, 0)} (${mk.diagAstro.reliableBars}/${mk.diagAstro.N}). Разрешено (tradable) баров: none ${mk.diagNone.tradableBars}, 2D ${mk.diagAstro.tradableBars}.` +
+      (noTrades ? ` <b>Ни один бар не проходит одновременно значимость и мёртвую зону → сделок нет.</b> Высокий |сигнал| встречается лишь при малом n_эфф (широкий доверит. интервал глушит его). Марковский режим на этом ТФ торгово не выражен.` : '');
     const zbr = mk.zoneByRegime;
     const zrow = (bias) => { let c = ''; for (let r = 0; r < 3; r++) { const cell = zbr[bias][r], wr = cell.n ? cell.hit / cell.n : 0; c += `<td class="${cell.n < 20 ? 'bt-mut' : cls(wr - 0.5)}">${cell.n ? wpct(wr, 0) : '—'}<span class="bt-mut"> ${cell.n}</span></td>`; } return c; };
     return `
@@ -489,7 +532,35 @@
       </div>`;
   }
 
-  function contentHTML(res, asp, frc, trd, mk) {
+  function zoneRegimeHTML(zr) {
+    if (!zr || zr.tooFew) return '';
+    const f = zr.full;
+    const row = (name, r, hl) => `<tr${hl ? ' style="background:#141b26"' : ''}><td>${name}</td><td class="bt-mut">${r.rr2.avgRisk ? Math.round(r.rr2.avgRisk) : '—'}</td>${trdCell(r.rr2)}${trdCell(r.rr3)}</tr>`;
+    const o = zr.oos, tr = o.train, te = o.test;
+    const enough = tr && te && tr.rr2.n >= 20 && te.rr2.n >= 20;
+    const holds = enough && tr.rr2.expRnet > 0 && te.rr2.expRnet > 0;
+    return `
+      <div class="lun-sec"><h3 style="margin:4px 0">Синтез: лунная зона × ценовой режим (Марков) — зона в СОГЛАСИИ с режимом</h3>
+        <table class="bt-tbl"><thead>
+          <tr><th rowspan="2">сетап</th><th rowspan="2">ср.риск</th><th colspan="3">R:R 1:2</th><th colspan="3">R:R 1:3</th></tr>
+          <tr><th>сделок</th><th>винр/BE</th><th>ожид.нетто</th><th>сделок</th><th>винр/BE</th><th>ожид.нетто</th></tr>
+        </thead><tbody>
+          ${row('Согласие строгое (лонг-зона+BULL / шорт-зона+BEAR)', f.strict, true)}
+          ${row('Согласие + SIDE', f.loose, true)}
+          ${row('ПРОТИВ режима (лонг+BEAR / шорт+BULL)', f.counter)}
+          ${row('Все зоны без фильтра (наивная)', f.all)}
+        </tbody></table>
+        <p class="bt-recs" style="color:#8b93a7">Вход = откр. след. бара, стоп за баром, тейк по R:R, издержки ${zr.costPts}п. <b>ожид.нетто</b> — среднее в R после издержек. Гипотеза: зона в согласии с режимом плюсовая, «против режима» — минус. ✓ = нетто&gt;0 при n≥30.</p>
+        <div class="bt-sum" style="border-top:1px solid #1c2230;border-bottom:none;margin-top:4px">
+          <span><b>Out-of-sample</b> строгого согласия 1:2 (граница ${dstr(o.splitTs)}):</span>
+          <span>обучение: <b class="${cls(tr ? tr.rr2.expRnet : 0)}">${tr && tr.rr2.n ? sgnR(tr.rr2.expRnet) + ' (' + tr.rr2.n + ')' : '—'}</b></span>
+          <span>тест: <b class="${cls(te ? te.rr2.expRnet : 0)}">${te && te.rr2.n ? sgnR(te.rr2.expRnet) + ' (' + te.rr2.n + ')' : '—'}</b></span>
+          <span>${!enough ? '⚠ мало сделок для OOS-вывода' : (holds ? '✓ держится на невиданных данных' : '✗ на тесте не держится')}</span>
+        </div>
+      </div>`;
+  }
+
+  function contentHTML(res, asp, frc, trd, mk, zr) {
     const zoneRows = res.zoneStats.map((z) => `<tr><td>${z.label}</td><td>${z.from}–${z.to}°</td><td>${z.bias}</td>
       <td>${z.nDir}</td><td class="${cls(z.winRate - 0.5)}">${wpct(z.winRate, 1)}</td><td>${z.z.toFixed(1)}</td>
       <td class="${cls(z.tradeMean)}">${pct(z.tradeMean, 3)}</td><td>${z.bias === 'range' ? 'рэндж' : zoneVerdict(z, res.baseUp)}</td></tr>`).join('');
@@ -525,10 +596,11 @@
       ${frc ? forceHTML(frc) : ''}
       ${trd ? tradesHTML(trd) : ''}
       ${mk ? markovHTML(mk) : ''}
-      <div class="lun-sec"><h3 style="margin:4px 0">Итог</h3><ul class="bt-recs">${summary(res, asp, frc, trd, mk).map((r) => `<li>${r}</li>`).join('')}</ul></div>`;
+      ${zr ? zoneRegimeHTML(zr) : ''}
+      <div class="lun-sec"><h3 style="margin:4px 0">Итог</h3><ul class="bt-recs">${summary(res, asp, frc, trd, mk, zr).map((r) => `<li>${r}</li>`).join('')}</ul></div>`;
   }
 
-  function summary(res, asp, frc, trd, mk) {
+  function summary(res, asp, frc, trd, mk, zr) {
     const out = [];
     const good = res.zoneStats.filter((z) => z.bias !== 'range' && z.z >= 1.6 && z.winRate > 0.5);
     const bad = res.zoneStats.filter((z) => z.bias !== 'range' && z.winRate < 0.5);
@@ -564,6 +636,13 @@
     if (mk && !mk.tooFew) {
       const edge = mk.astro.total - mk.none.total;
       out.push(`Марков: чистая цена ${pct(mk.none.total, 0)} (просадка ${wpct(mk.none.maxDD, 0)}) · 2D (${mk.prov}) ${pct(mk.astro.total, 0)} · buy&hold ${pct(mk.bh.total, 0)}. Прирост астро ${pct(edge, 0)} — ${edge > 0.02 ? 'астро-ось добавляет ✓' : 'астро-ось не отличается от шума на этом периоде'}.`);
+    }
+    if (zr && !zr.tooFew) {
+      const R = (x) => (x >= 0 ? '+' : '') + x.toFixed(2) + 'R';
+      const s = zr.full.strict.rr2, c = zr.full.counter.rr2, a = zr.full.all.rr2;
+      out.push(`Синтез зона×режим (нетто 1:2): согласие ${R(s.expRnet)} (${s.n}) · против режима ${R(c.expRnet)} (${c.n}) · без фильтра ${R(a.expRnet)} (${a.n}) — ${s.expRnet > a.expRnet && s.expRnet > c.expRnet ? 'фильтр режима улучшает зону ✓' : 'фильтр не помогает на этом периоде'}.`);
+      const tr = zr.oos.train, te = zr.oos.test;
+      if (tr && te && te.rr2.n >= 20) out.push(`Синтез OOS: обучение ${R(tr.rr2.expRnet)} → тест ${R(te.rr2.expRnet)} — ${tr.rr2.expRnet > 0 && te.rr2.expRnet > 0 ? 'держится на тесте ✓ (кандидат в робот)' : 'на тесте не держится'}.`);
     }
     out.push('Меняй период кнопками сверху (последние 2–3 года / без 2022) — сравни, где склонность чётче.');
     return out;
@@ -603,8 +682,9 @@
       const frc = analyzeForce(state.bars, window.LUN.CYCLES[0].zones, opts);
       const trd = analyzeForceTrades(state.bars, opts);
       const mk = analyzeMarkov(state.bars, opts);
-      modal.querySelector('#bt-content').innerHTML = contentHTML(res, asp, frc, trd, mk);
-      lastText = plainReport(res, asp, frc, trd, mk);
+      const zr = analyzeZoneRegime(state.bars, opts);
+      modal.querySelector('#bt-content').innerHTML = contentHTML(res, asp, frc, trd, mk, zr);
+      lastText = plainReport(res, asp, frc, trd, mk, zr);
     };
     const now = Date.now(), yr = 365 * 86400000;
     const optsFor = (p) => p === 'no2022' ? { exclude2022: true } : (p === 'all' ? {} : { fromTs: now - (+p) * yr });
@@ -623,7 +703,7 @@
     refresh({ fromTs: now - 3 * yr }, modal.querySelector('[data-p="3"]'));   // по умолчанию 3 года
   }
 
-  function plainReport(res, asp, frc, trd, mk) {
+  function plainReport(res, asp, frc, trd, mk, zr) {
     let t = `Бэктест ${state.title || 'USD/RUB'} · ТФ ${state.tfLabel || 'D1'} · ${dstr(res.from)}…${dstr(res.to)} · ${state.unit || 'дней'} ${res.days} · базовый винрейт ${wpct(res.baseUp, 1)} · стратегия зон(интрадей) ${pct(res.strategyIntraday, 0)}\n\nЗОНЫ (винрейт направления):\n`;
     res.zoneStats.forEach((z) => { t += `  ${z.label} [${z.from}-${z.to}° ${z.bias}] n=${z.nDir} винрейт=${wpct(z.winRate, 1)} z=${z.z.toFixed(1)} ср=${pct(z.tradeMean, 3)}\n`; });
     t += '\nЗНАКИ (дни↑ | 0-15↑ | 15-30↑):\n';
@@ -661,6 +741,18 @@
       const zbr = mk.zoneByRegime, RN = ['BEAR', 'SIDE', 'BULL'];
       t += '  астро-зоны по режиму (винрейт|n):\n';
       ['long', 'short'].forEach((bias) => { t += `    ${bias === 'long' ? 'лонг-зоны' : 'шорт-зоны'}: ` + [0, 1, 2].map((r) => { const c = zbr[bias][r]; return RN[r] + ' ' + (c.n ? wpct(c.hit / c.n, 0) : '—') + '|' + c.n; }).join(' · ') + '\n'; });
+    }
+    if (zr && !zr.tooFew) {
+      const cell = (t2) => `нетто ${(t2.expRnet >= 0 ? '+' : '') + t2.expRnet.toFixed(2)}R (винр ${wpct(t2.winRate, 0)}, ${t2.n} сд.)`;
+      t += `\nСИНТЕЗ ЗОНА×РЕЖИМ (издержки ${zr.costPts}п.):\n`;
+      const f = zr.full;
+      t += `  согласие строгое:   1:2 ${cell(f.strict.rr2)} · 1:3 ${cell(f.strict.rr3)}\n`;
+      t += `  согласие + SIDE:    1:2 ${cell(f.loose.rr2)} · 1:3 ${cell(f.loose.rr3)}\n`;
+      t += `  против режима:      1:2 ${cell(f.counter.rr2)} · 1:3 ${cell(f.counter.rr3)}\n`;
+      t += `  без фильтра (наив): 1:2 ${cell(f.all.rr2)} · 1:3 ${cell(f.all.rr3)}\n`;
+      const tr = zr.oos.train, te = zr.oos.test;
+      const oc = (x) => x && x.n ? `нетто ${(x.expRnet >= 0 ? '+' : '') + x.expRnet.toFixed(2)}R (${x.n} сд.)` : '—';
+      t += `  OOS строгого согласия 1:2 (граница ${dstr(zr.oos.splitTs)}): обучение ${oc(tr && tr.rr2)} · тест ${oc(te && te.rr2)}\n`;
     }
     return t;
   }
@@ -719,5 +811,5 @@
     } finally { if (status) status.textContent = prev; }
   }
 
-  window.LunBacktest = { analyze, analyzeAspects, analyzeForce, analyzeForceTrades, analyzeMarkov, run };
+  window.LunBacktest = { analyze, analyzeAspects, analyzeForce, analyzeForceTrades, analyzeMarkov, analyzeZoneRegime, run };
 })();
