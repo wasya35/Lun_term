@@ -176,5 +176,28 @@ LUN.ISS_GATEWAYS = [
   { name: 'corsproxy',  wrap: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
 ];
 
+/* --- Марковские режимы -------------------------------------------------------
+ * Состояние бара = доходность за window баров, разложенная на BEAR/SIDE/BULL.
+ * Пороги: 'sigma' (k×сигма, адаптивно), 'quantile' (квантили распределения),
+ * 'fixed' (жёсткий %, только для сверки с первоисточником).
+ * astroProvider — вторая ось состояния: 'none' (чистая цена, базовая линия),
+ * 'cycleZone' (bias зоны цикла), 'moonElement' (стихия знака Луны),
+ * 'moonHalf' (половина знака), 'aspect' (аспект пары в орбе).
+ * ВАЖНО: число состояний = 3 × размер астро-оси. Держать в пределах 9,
+ * иначе матрица разреженная и статистики нет.
+ * sampleMode: 'allLag' — все пары с лагом step (больше данных, наблюдения
+ * перекрываются, поэтому n_эфф = n/step); 'grid' — несмежная сетка.
+ * minObs — ниже этого эффективного числа наблюдений сигнал не выдаётся.
+ * deadZone — модуль сигнала ниже порога считается отсутствием сигнала. */
+LUN.MARKOV = {
+  window: 20, step: 0,                 // step 0 = равен window
+  thrMode: 'sigma', sigmaK: 1.0,
+  qLow: 33, qHigh: 67, fixedPct: 5,
+  thrLookback: 500,
+  astroProvider: 'cycleZone', cycleId: 'cycle1',
+  sampleMode: 'allLag',
+  minObs: 20, horizon: 5, deadZone: 0.10,
+};
+
 /* Высоты панелей (px) */
 LUN.PANE_HEIGHTS = { moonSign: 42, cycle: 26, volume: 90 };
