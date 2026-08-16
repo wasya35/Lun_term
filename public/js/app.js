@@ -66,19 +66,21 @@
       </table>`);
   }
 
-  const state = {
-    chart: null,
-    instrument: window.LUN.INSTRUMENTS[0],
-    tf: window.LUN.TIMEFRAMES.find((t) => t.id === window.LUN.DEFAULT_TIMEFRAME),
-    signPane: null,
-    signPanes: {},          // body -> paneId (ленты знаков Луна/Меркурий/Солнце)
-    volumePane: null,
-    aspectPanes: {},        // body -> paneId (полосы ☉/планета)
-    allAspectPane: null,    // сводная полоса всех аспектов
-    deltaPane: null,        // дневная кумулятивная дельта
-    cyclePanes: {},         // cycleId -> paneId
-    overlayIds: {},         // EMA/SMA/VWAP на ценовой панели
-  };
+  const DEFAULT_TF = window.LUN.TIMEFRAMES.find((t) => t.id === window.LUN.DEFAULT_TIMEFRAME);
+  // Каждая ячейка сетки — независимый слот со своей копией структуры. `state`
+  // всегда указывает на АКТИВНЫЙ слот, поэтому весь тулбар работает как раньше.
+  function makeSlot(i) {
+    return {
+      slotId: i, chart: null, cellEl: null,
+      instrument: window.LUN.INSTRUMENTS[0], tf: DEFAULT_TF,
+      signPane: null, signPanes: {}, volumePane: null, aspectPanes: {}, allAspectPane: null,
+      deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
+      overlayIds: {}, candleInds: {}, selectedOverlayId: null, forecastOn: false, paneWish: {},
+    };
+  }
+  let slots = [];
+  let activeIdx = 0;
+  let state = makeSlot(0);   // переустанавливается при активации ячейки
 
   const THEME = {
     grid: { horizontal: { color: '#1c2230' }, vertical: { color: '#1c2230' } },
@@ -102,17 +104,16 @@
    * KLineChart раскладывает новую панель асинхронно, поэтому setPaneOptions
    * сразу после createIndicator не срабатывает — копим параметры и применяем
    * их отложенно (и повторно после загрузки данных). */
-  const paneWish = {};                 // paneId -> { height, minHeight, order }
-  function applyPaneWishes() {
-    Object.entries(paneWish).forEach(([pid, o]) => {
-      try { state.chart.setPaneOptions({ id: pid, ...o }); }
-      catch (e) { console.warn('[pane] setPaneOptions failed', pid, e.message); }
+  function applyPaneWishes(slot) {
+    slot = slot || state; if (!slot || !slot.chart) return;
+    Object.entries(slot.paneWish).forEach(([pid, o]) => {
+      try { slot.chart.setPaneOptions({ id: pid, ...o }); } catch (e) { /* панель ещё не готова */ }
     });
   }
-  // Загрузка данных пересобирает раскладку, поэтому применяем желаемые размеры
-  // на нескольких тиках — последний (после укладки данных) закрепляет результат.
-  function scheduleApply() { [0, 150, 400].forEach((ms) => setTimeout(applyPaneWishes, ms)); }
-  function wishPane(id, opts) { if (id) { paneWish[id] = opts; scheduleApply(); } }
+  // Загрузка данных пересобирает раскладку — применяем размеры на нескольких
+  // тиках, привязываясь к КОНКРЕТНОМУ слоту (важно для нескольких графиков).
+  function scheduleApply(slot) { slot = slot || state; [0, 150, 400].forEach((ms) => setTimeout(() => applyPaneWishes(slot), ms)); }
+  function wishPane(id, opts) { if (id && state) { state.paneWish[id] = opts; scheduleApply(state); } }
 
   // ВАЖНО: createIndicator возвращает id индикатора, а НЕ id панели. Поэтому
   // задаём paneId явно — тогда мы знаем панель и можем управлять её высотой.
@@ -217,8 +218,9 @@
   function showMarkovPanel(on) {
     let el = document.getElementById('markov-panel');
     if (on) {
-      const host = document.getElementById('chart'); host.style.position = 'relative';
-      if (!el) { el = document.createElement('div'); el.id = 'markov-panel'; el.className = 'markov-panel'; host.appendChild(el); }
+      const host = state.cellEl || document.getElementById('chart'); host.style.position = 'relative';
+      if (!el) { el = document.createElement('div'); el.id = 'markov-panel'; el.className = 'markov-panel'; }
+      if (el.parentElement !== host) host.appendChild(el);   // панель следует за активной ячейкой
       el.style.display = 'block'; refreshMarkovPanel();
       if (!state.markovTimer) state.markovTimer = setInterval(refreshMarkovPanel, 4000);
     } else {
@@ -266,8 +268,9 @@
   }
 
   /* ---------- загрузка инструмента/ТФ ---------- */
-  async function load() {
-    const c = state.chart, ins = state.instrument, tf = state.tf;
+  async function load(slot) {
+    slot = slot || state;
+    const c = slot.chart, ins = slot.instrument, tf = slot.tf;
     const ticker = await window.LunData.resolveTicker(ins);
     c.setSymbol({
       ticker, symbol: ticker, provider: ins.provider || 'moex',
@@ -276,7 +279,7 @@
     });
     c.setPeriod({ span: tf.span, type: tf.type });
     c.setDataLoader(window.LunData.makeDataLoader());
-    document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
+    if (slot === state) document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
   }
 
   /* ---------- инструменты рисования ---------- */
@@ -372,9 +375,11 @@
       const extra = Math.min(F.maxBars || 500, Math.max(1, Math.ceil((until - lastTs) / stepMs)));
       window.LUN_FORECAST = { enabled: true, untilTs: until, stepMs, maxBars: F.maxBars || 500 };
       try { const bar = c.getBarSpace().bar || 6; c.setOffsetRightDistance(Math.max(80, extra * bar)); } catch (e) {}
+      state.forecastOn = true;
       if (btn) btn.title = 'Прогноз до аспекта ☉–♅: ' + new Date(until).toISOString().slice(0, 10) + ' (F)';
     } else {
       window.LUN_FORECAST = { enabled: false };
+      state.forecastOn = false;
       try { c.setOffsetRightDistance(80); } catch (e) {}
     }
     try { c.resize(); } catch (e) {}
@@ -411,7 +416,7 @@
       mkBtn(insWrap, ins.title, (b) => {
         state.instrument = ins; load(); closeMenus();
         clearActive(); b.classList.add('active');
-      }, ins === state.instrument, ins.title);
+      }, ins === state.instrument, ins.title).dataset.sync = 'ins:' + ins.id;
     });
     // поиск любого инструмента MOEX (акции/фьючерсы)
     const findBtn = mkBtn(insWrap, '🔍 Поиск инструмента…', () => { closeMenus(); window.LunInstruments.open((instr) => {
@@ -426,43 +431,45 @@
         state.tf = tf; load(); closeMenus();
         [...tfWrap.children].forEach((x) => x.classList.remove('active')); bb.classList.add('active');
       }, tf === state.tf, tf.title + ' (' + (i + 1) + ')');
+      b.dataset.sync = 'tf:' + tf.id;
       regHotkey(String(i + 1), () => b.click());   // 1..4 → ТФ
     });
 
     const indWrap = document.getElementById('indicators');
-    ['SMA', 'EMA', 'VWAP'].forEach((k) => mkBtn(indWrap, k, (b) => {
+    ['SMA', 'EMA', 'VWAP'].forEach((k) => { const b = mkBtn(indWrap, k, (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleOverlay(k, on);
-    }));
+    }); b.dataset.sync = 'ov:' + k; });
     // объём — включён по умолчанию, можно убрать
     mkBtn(indWrap, 'Объём', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createVolumePane(); else if (state.volumePane) { state.chart.removeIndicator({ paneId: state.volumePane }); state.volumePane = null; }
-    }, true);
+    }, true).dataset.sync = 'vol';
     // дневная кумулятивная дельта — по умолчанию выключена (полное отключение)
     mkBtn(indWrap, 'Δ дельта', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createDeltaPane(); else if (state.deltaPane) { state.chart.removeIndicator({ paneId: state.deltaPane }); state.deltaPane = null; }
-    }, false, 'Дневная кумулятивная дельта (аппрокс. по OHLC)');
+    }, false, 'Дневная кумулятивная дельта (аппрокс. по OHLC)').dataset.sync = 'delta';
     // марковский режим: лента BEAR/SIDE/BULL + панель сигнала + матрица
     const mkBtnRef = mkBtn(indWrap, 'Марков', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createMarkov(); else removeMarkov();
     }, false, 'Марковский режим: лента BEAR/SIDE/BULL + сигнал + матрица переходов (M)');
+    mkBtnRef.dataset.sync = 'markov';
     regHotkey('m', () => mkBtnRef.click());
     // узлы Луны (0°/15°) и сильные бары на цене — для поиска «сильный бар в узле»
     [['MoonNodes', 'Узлы ☾', 'Ингрессии (0°) и середины (15°) знаков Луны на цене'],
      ['StrongBars', 'Сильбары', 'Сила: всплеск объёма ≥2× среднего · силища (двойной знак): объём держится'],
      ['Sessions', 'Сессии', 'Сессии Азия/Лондон/Нью-Йорк/Сидней фоном (UTC, только интрадей)']].forEach(([name, label, tip]) =>
-      mkBtn(indWrap, label, (b) => {
+      (mkBtn(indWrap, label, (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
-        if (on) state.chart.createIndicator({ name, paneId: 'candle_pane' }, true);
-        else state.chart.removeIndicator({ paneId: 'candle_pane', name });
-      }, false, tip));
+        if (on) { state.chart.createIndicator({ name, paneId: 'candle_pane' }, true); state.candleInds[name] = true; }
+        else { state.chart.removeIndicator({ paneId: 'candle_pane', name }); delete state.candleInds[name]; }
+      }, false, tip)).dataset.sync = 'cand:' + name);
     // положения Меркурия и Солнца в знаках (словами)
-    [['Mercury', '☿ знак', 25], ['Sun', '☉ знак', 26]].forEach(([body, label, order]) => mkBtn(indWrap, label, (b) => {
+    [['Mercury', '☿ знак', 25], ['Sun', '☉ знак', 26]].forEach(([body, label, order]) => { mkBtn(indWrap, label, (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createSignPane(body, order); else if (state.signPanes[body]) { state.chart.removeIndicator({ paneId: state.signPanes[body] }); delete state.signPanes[body]; }
-    }, false, `Положение ${BODY_LABEL[body]} в знаках`));
+    }, false, `Положение ${BODY_LABEL[body]} в знаках`).dataset.sync = 'sign:' + body; });
 
     buildAspectButtons();
 
@@ -481,7 +488,7 @@
     const fcBtn = mkBtn(setWrap, '🔮 Прогноз', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); setForecast(on, b); closeMenus();
     }, false, 'Продлить астро-полосы вправо до следующего аспекта ☉–♅ (F)');
-    state.forecastBtn = fcBtn;
+    fcBtn.dataset.sync = 'forecast';
     regHotkey('f', () => fcBtn.click());
     const setBtn = mkBtn(setWrap, '⚙ Настройки', () => { closeMenus(); window.LunSettings.open(applySettings); }, false,
       'Цвета знаков и торговые зоны циклов (S)');
@@ -496,31 +503,97 @@
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
 
-    // Экраны (мультичарт — следующий этап ТЗ; пока один график)
+    // Экраны — сетка графиков
     const layWrap = document.getElementById('layouts');
-    [['1', '1 график'], ['2', '1×2'], ['4', '2×2'], ['6', '3×2'], ['8', '4×2']].forEach(([k, label]) => {
-      mkBtn(layWrap, label, () => { closeMenus(); if (k !== '1') alert('Мультичарт (' + label + ') — следующий этап (ТЗ мультибиржа/мультичарт). Сейчас один график.'); }, k === '1');
-    });
+    Object.keys(LAYOUTS).forEach((k) => mkBtn(layWrap, LAYOUTS[k].label, (b) => {
+      closeMenus(); [...layWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active'); setLayout(k);
+    }, k === '1', LAYOUTS[k].label).dataset.lay = k);
+  }
+
+  /* ---------- мультичарт: сетка независимых слотов ---------- */
+  const LAYOUTS = {
+    '1': { label: '1 график', cells: 1, rows: '1fr', cols: '1fr' },
+    '2': { label: '1×2', cells: 2, rows: '1fr', cols: '1fr 1fr' },
+    '4': { label: '2×2', cells: 4, rows: '1fr 1fr', cols: '1fr 1fr' },
+    '6': { label: '3×2', cells: 6, rows: '1fr 1fr', cols: '1fr 1fr 1fr' },
+    '8': { label: '4×2', cells: 8, rows: '1fr 1fr', cols: '1fr 1fr 1fr 1fr' },
+  };
+  function highlightActive() {
+    slots.forEach((s, i) => { if (s.cellEl) s.cellEl.classList.toggle('cell-active', i === activeIdx && slots.length > 1); });
+  }
+  function slotHasSync(key) {
+    const p = key.split(':'), t = p[0], arg = p[1];
+    switch (t) {
+      case 'ins': return state.instrument.id === arg;
+      case 'tf': return state.tf.id === arg;
+      case 'ov': return !!state.overlayIds[arg];
+      case 'vol': return !!state.volumePane;
+      case 'delta': return !!state.deltaPane;
+      case 'markov': return !!state.markovPanes;
+      case 'cand': return !!state.candleInds[arg];
+      case 'sign': return !!state.signPanes[arg];
+      case 'cyc': return !!state.cyclePanes[arg];
+      case 'asp': return !!state.aspectPanes[arg];
+      case 'allasp': return !!state.allAspectPane;
+      case 'uranus': return !!state.uranusPane;
+      case 'forecast': return !!state.forecastOn;
+    }
+    return false;
+  }
+  function syncToolbar() {
+    document.querySelectorAll('[data-sync]').forEach((b) => b.classList.toggle('active', slotHasSync(b.dataset.sync)));
+    document.getElementById('sym-title').textContent = `${state.instrument.title}  ·  ${state.tf.title}` + (slots.length > 1 ? `   [ячейка ${activeIdx + 1}/${slots.length}]` : '');
+  }
+  function activateSlot(i) {
+    if (i < 0 || i >= slots.length || i === activeIdx) return;
+    activeIdx = i; state = slots[i]; window.LUN_CHART = state.chart;
+    highlightActive(); syncToolbar();
+    showMarkovPanel(!!state.markovPanes);   // панель Маркова следует за активной ячейкой
+  }
+  function setLayout(key) {
+    const L = LAYOUTS[key] || LAYOUTS['1'];
+    const prev = slots.map((s) => ({ instrument: s.instrument, tf: s.tf }));
+    slots.forEach((s) => { if (s.markovTimer) { clearInterval(s.markovTimer); s.markovTimer = null; } try { kc.dispose(s.cellEl); } catch (e) {} });
+    const mp = document.getElementById('markov-panel'); if (mp) mp.remove();
+    const grid = document.getElementById('chart');
+    grid.innerHTML = ''; grid.style.display = 'grid'; grid.style.gap = '2px';
+    grid.style.gridTemplateRows = L.rows; grid.style.gridTemplateColumns = L.cols;
+    slots = [];
+    for (let i = 0; i < L.cells; i++) {
+      const cell = document.createElement('div'); cell.className = 'cell'; cell.dataset.slot = i; grid.appendChild(cell);
+      const slot = makeSlot(i); slot.cellEl = cell;
+      if (prev[i]) { slot.instrument = prev[i].instrument; slot.tf = prev[i].tf; }
+      else { slot.instrument = window.LUN.INSTRUMENTS[Math.min(i, window.LUN.INSTRUMENTS.length - 1)]; slot.tf = DEFAULT_TF; }
+      slot.chart = kc.init(cell, { styles: THEME });
+      cell.addEventListener('mousedown', () => activateSlot(i));
+      slots.push(slot);
+    }
+    activeIdx = 0; state = slots[0]; window.LUN_CHART = state.chart;
+    slots.forEach((s) => { state = s; buildPanes(); });   // buildPanes синхронно, по активному state
+    state = slots[0];
+    slots.forEach((s) => load(s));
+    highlightActive(); syncToolbar();
   }
 
   // тумблеры аспектов: по планете (☉/планета) + сводная «∀ все»
   function buildAspectButtons() {
     const aspWrap = document.getElementById('aspects');
     aspWrap.innerHTML = '';
-    window.LUN.ASPECT_PLANETS.forEach((pl, i) => mkBtn(aspWrap, pl.glyph, (b) => {
+    window.LUN.ASPECT_PLANETS.forEach((pl, i) => { mkBtn(aspWrap, pl.glyph, (b) => {
       pl.enabled = !b.classList.contains('active'); b.classList.toggle('active', pl.enabled);
       if (pl.enabled) createSunAspect(pl, 15 + i);
       else if (state.aspectPanes[pl.body]) { state.chart.removeIndicator({ paneId: state.aspectPanes[pl.body] }); delete state.aspectPanes[pl.body]; }
-    }, pl.enabled, `Аспекты ☉/${pl.glyph} (${pl.body})`));
+    }, pl.enabled, `Аспекты ☉/${pl.glyph} (${pl.body})`).dataset.sync = 'asp:' + pl.body; });
     mkBtn(aspWrap, '∀ все', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); window.LUN.ALL_ASPECTS.enabled = on;
       if (on) createAllAspect(); else if (state.allAspectPane) { state.chart.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
-    }, window.LUN.ALL_ASPECTS.enabled, 'Сводная полоса всех аспектов всех пар (детально на M5/M15)');
+    }, window.LUN.ALL_ASPECTS.enabled, 'Сводная полоса всех аспектов всех пар (детально на M5/M15)').dataset.sync = 'allasp';
     // отдельная полоса: Уран — все планеты (мажорные аспекты)
     const urBtn = mkBtn(aspWrap, '♅∀', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createUranusStrip(); else if (state.uranusPane) { state.chart.removeIndicator({ paneId: state.uranusPane }); state.uranusPane = null; }
     }, !!state.uranusPane, 'Аспекты Урана ко всем планетам (U)');
+    urBtn.dataset.sync = 'uranus';
     regHotkey('u', () => urBtn.click());
   }
   const URANUS_PANE = 'pane_asp_uranus';
@@ -534,11 +607,11 @@
   function buildCycleButtons() {
     const cycWrap = document.getElementById('cycles');
     cycWrap.innerHTML = '';
-    window.LUN.CYCLES.forEach((cy, i) => mkBtn(cycWrap, String(i + 1), (b) => {
+    window.LUN.CYCLES.forEach((cy, i) => { mkBtn(cycWrap, String(i + 1), (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) { if (!state.cyclePanes[cy.id]) createCyclePane(cy, 11 + i); }
       else if (state.cyclePanes[cy.id]) { state.chart.removeIndicator({ paneId: state.cyclePanes[cy.id] }); delete state.cyclePanes[cy.id]; }
-    }, cy.enabled, cy.title));
+    }, cy.enabled, cy.title).dataset.sync = 'cyc:' + cy.id; });
   }
 
   // применить настройки: пересобрать ленту знаков и полосы циклов
@@ -570,17 +643,14 @@
 
   /* ---------- init ---------- */
   function init() {
-    state.chart = kc.init('chart', { styles: THEME });
-    window.LUN_CHART = state.chart;        // доступ из консоли для отладки
     addMarkovCss();
-    buildPanes();
     buildUI();
     // выпадающие меню: клик по пункту открывает/закрывает, клик вне — закрывает
     document.querySelectorAll('.menubar .menu-btn').forEach((btn) => {
       btn.onclick = (e) => { e.stopPropagation(); const menu = btn.parentElement, open = menu.classList.contains('open'); closeMenus(); if (!open) menu.classList.add('open'); };
     });
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
-    load();
+    setLayout('1');       // создаёт график(и), панели и загрузку
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
     window.addEventListener('lun:datasource', () => {
@@ -588,14 +658,10 @@
       el.textContent = window.LUN_DATA_SOURCE || '';
       el.title = window.LUN_DATA_ERROR || '';
       el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
-      scheduleApply();      // данные загружены — закрепляем высоты панелей
-      if (state.markovPanes) setTimeout(refreshMarkovPanel, 200);   // пересчёт панели Маркова на новых данных
-      // смена инструмента/ТФ сбрасывает данные — прогноз выключаем (шаг ТФ иной)
-      if (window.LUN_FORECAST && window.LUN_FORECAST.enabled) {
-        window.LUN_FORECAST = { enabled: false };
-        if (state.forecastBtn) state.forecastBtn.classList.remove('active');
-        try { state.chart.setOffsetRightDistance(80); } catch (e) {}
-      }
+      slots.forEach((s) => scheduleApply(s));   // данные загружены — закрепляем высоты панелей всех слотов
+      if (state.markovPanes) setTimeout(refreshMarkovPanel, 200);
+      // прогноз в активном слоте выключаем при перезагрузке данных (шаг ТФ иной)
+      if (state.forecastOn) { window.LUN_FORECAST = { enabled: false }; state.forecastOn = false; try { state.chart.setOffsetRightDistance(80); } catch (e) {} syncToolbar(); }
     });
     // состояние Ctrl — для Ctrl+перетаскивание = копирование оверлея
     window.addEventListener('keydown', (e) => { if (e.key === 'Control' || e.ctrlKey) ctrlDown = true; });
