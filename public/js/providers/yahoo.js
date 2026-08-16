@@ -16,6 +16,14 @@
   P.register({
     id: 'yahoo', title: 'Yahoo', markets: ['stocks', 'etf'], needsKey: false, hasStream: false, tfMap: map,
     resolveSymbol: async (ins) => ins.symbol || ins.ticker,
+    searchSymbols: async (query) => {
+      if (!query || query.length < 1) return [];
+      const url = 'https://query1.finance.yahoo.com/v1/finance/search?q=' + encodeURIComponent(query) + '&quotesCount=25&newsCount=0';
+      const j = await J(url);
+      const qs = (j && j.quotes) || [];
+      return qs.filter((x) => ['EQUITY', 'ETF', 'INDEX', 'CURRENCY', 'FUTURE'].indexOf(x.quoteType) >= 0)
+        .map((x) => ({ provider: 'yahoo', symbol: x.symbol, ticker: x.symbol, title: (x.shortname || x.longname || x.symbol) + (x.exchange ? ' · ' + x.exchange : ''), pricePrecision: 2, volumePrecision: 0, _kind: 'us' }));
+    },
     fetchCandles: async (symbol, tf) => {
       const m = map[tf.id] || map.D1, sym = symbol.symbol || symbol.ticker;
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${m.i}&range=${m.r}`;

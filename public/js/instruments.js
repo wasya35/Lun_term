@@ -49,44 +49,82 @@
   .in-row:hover{background:#1a2130}
   .in-tk{font-weight:600;min-width:88px;color:#d7deea}
   .in-nm{color:#8b93a7;font-size:12px;flex:1}
-  .in-badge{font-size:10px;color:#6b7280;border:1px solid #2a3242;border-radius:4px;padding:0 5px}`;
+  .in-badge{font-size:10px;color:#6b7280;border:1px solid #2a3242;border-radius:4px;padding:0 5px}
+  .lun-modal h2{display:flex;align-items:center;gap:6px}
+  .in-ex{display:inline-flex;gap:4px}`;
   let cssAdded = false;
   function addCss() { if (cssAdded) return; const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s); cssAdded = true; }
+
+  const prov = (id) => window.LunProviders && window.LunProviders.get(id);
 
   async function open(onPick) {
     addCss();
     const bg = document.createElement('div'); bg.className = 'lun-modal-bg';
     const modal = document.createElement('div'); modal.className = 'lun-modal'; modal.style.width = 'min(560px,94vw)';
-    modal.innerHTML = `<h2>Инструмент MOEX<span class="x" title="закрыть">×</span></h2>
+    modal.innerHTML = `<h2>Инструмент<span style="flex:1"></span>
+        <span class="in-ex">
+          <button class="lun-btn mini active" data-ex="moex">MOEX</button>
+          <button class="lun-btn mini" data-ex="crypto">Крипта</button>
+          <button class="lun-btn mini" data-ex="us">США</button>
+        </span><span class="x" title="закрыть" style="margin-left:10px">×</span></h2>
       <div class="lun-sec">
-        <input class="in-search" placeholder="Поиск по тикеру или названию (напр. SBER, GAZP, RTS, BR)…" />
-        <div class="in-tabs">
+        <input class="in-search" placeholder="Поиск по тикеру или названию…" />
+        <div class="in-tabs" id="in-tabs">
           <button class="lun-btn mini active" data-t="futures">Фьючерсы</button>
           <button class="lun-btn mini" data-t="stocks">Акции</button>
         </div>
       </div>
-      <div class="in-list" id="in-list"><div style="padding:12px;color:#8b93a7">загрузка списка…</div></div>`;
+      <div class="in-list" id="in-list"></div>`;
     bg.appendChild(modal); document.body.appendChild(bg);
     const close = () => bg.remove();
     modal.querySelector('.x').onclick = close; bg.onclick = (e) => { if (e.target === bg) close(); };
 
-    const input = modal.querySelector('.in-search'); const listEl = modal.querySelector('#in-list');
-    let tab = 'futures', data = { futures: null, stocks: null };
-    const load = async (t) => {
-      if (!data[t]) { listEl.innerHTML = '<div style="padding:12px;color:#8b93a7">загрузка списка…</div>'; try { data[t] = t === 'futures' ? await futures() : await stocks(); } catch (e) { listEl.innerHTML = '<div style="padding:12px;color:#e0a030">не удалось загрузить: ' + e.message + '</div>'; return; } }
-      render();
-    };
-    const render = () => {
+    const input = modal.querySelector('.in-search'), listEl = modal.querySelector('#in-list'), tabsEl = modal.querySelector('#in-tabs');
+    let ex = 'moex', tab = 'futures', items = [], searchTimer = null;
+    const cacheMoex = { futures: null, stocks: null };
+    const info = (t) => { listEl.innerHTML = '<div style="padding:12px;color:#8b93a7">' + t + '</div>'; };
+    const badge = { futures: 'фьюч', stock: 'акция', crypto: 'crypto', us: 'US' };
+
+    const draw = () => {
       const q = input.value.trim().toLowerCase();
-      const items = (data[tab] || []).filter((x) => !q || x.ticker.toLowerCase().includes(q) || (x.title || '').toLowerCase().includes(q)).slice(0, 300);
-      listEl.innerHTML = items.length ? items.map((x, i) =>
-        `<div class="in-row" data-i="${i}"><span class="in-tk">${x.ticker}</span><span class="in-nm">${x.title}</span>${x.type === 'futures' ? '<span class="in-badge">фьюч</span>' : '<span class="in-badge">акция</span>'}</div>`).join('') : '<div style="padding:12px;color:#8b93a7">ничего не найдено</div>';
-      [...listEl.querySelectorAll('.in-row')].forEach((row) => { row.onclick = () => { close(); onPick(items[+row.dataset.i]); }; });
+      const shown = (ex === 'us' ? items : items.filter((x) => !q || (x.ticker || '').toLowerCase().includes(q) || (x.title || '').toLowerCase().includes(q))).slice(0, 300);
+      if (!shown.length) { info(ex === 'us' && !q ? 'введите тикер (напр. NVDA, AAPL, SPY)…' : 'ничего не найдено'); return; }
+      const bk = (x) => badge[x._kind] || badge[x.type] || '';
+      listEl.innerHTML = shown.map((x, i) => `<div class="in-row" data-i="${i}"><span class="in-tk">${x.ticker}</span><span class="in-nm">${x.title}</span><span class="in-badge">${bk(x)}</span></div>`).join('');
+      [...listEl.querySelectorAll('.in-row')].forEach((row) => { row.onclick = () => { close(); onPick(shown[+row.dataset.i]); }; });
     };
-    input.oninput = render;
-    modal.querySelectorAll('.in-tabs .lun-btn').forEach((btn) => btn.onclick = () => { tab = btn.dataset.t; modal.querySelectorAll('.in-tabs .lun-btn').forEach((x) => x.classList.remove('active')); btn.classList.add('active'); load(tab); });
+    const loadMoex = async () => {
+      if (!cacheMoex[tab]) { info('загрузка списка…'); try { cacheMoex[tab] = tab === 'futures' ? await futures() : await stocks(); } catch (e) { info('не удалось: ' + e.message); return; } }
+      items = cacheMoex[tab]; draw();
+    };
+    const loadCrypto = async () => {
+      const p = prov('bybit'); if (!p) { info('провайдер крипты не подключён'); return; }
+      info('загрузка списка Bybit…'); try { items = await p.searchSymbols(''); draw(); } catch (e) { info('не удалось: ' + e.message); }
+    };
+    const loadUs = async () => {
+      const q = input.value.trim();
+      if (!q) { items = []; draw(); return; }
+      const p = prov('yahoo'); if (!p) { info('провайдер США не подключён'); return; }
+      info('поиск…'); try { items = await p.searchSymbols(q); draw(); } catch (e) { info('не удалось: ' + e.message); }
+    };
+    const reload = () => { if (ex === 'moex') loadMoex(); else if (ex === 'crypto') loadCrypto(); else loadUs(); };
+
+    input.oninput = () => {
+      if (ex === 'us') { clearTimeout(searchTimer); searchTimer = setTimeout(loadUs, 300); }   // Yahoo — поиск по вводу
+      else draw();
+    };
+    // биржи
+    modal.querySelectorAll('.in-ex .lun-btn').forEach((btn) => btn.onclick = () => {
+      ex = btn.dataset.ex; modal.querySelectorAll('.in-ex .lun-btn').forEach((x) => x.classList.remove('active')); btn.classList.add('active');
+      tabsEl.style.display = ex === 'moex' ? 'flex' : 'none';
+      input.placeholder = ex === 'us' ? 'тикер США (NVDA, AAPL, SPY)…' : (ex === 'crypto' ? 'символ (BTC, ETH, SOL)…' : 'тикер MOEX (SBER, GAZP, BR)…');
+      items = []; reload();
+    });
+    // вкладки MOEX
+    tabsEl.querySelectorAll('.lun-btn').forEach((btn) => btn.onclick = () => { tab = btn.dataset.t; tabsEl.querySelectorAll('.lun-btn').forEach((x) => x.classList.remove('active')); btn.classList.add('active'); loadMoex(); });
+
     input.focus();
-    load('futures');
+    loadMoex();
   }
 
   window.LunInstruments = { open };

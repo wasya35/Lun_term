@@ -11,10 +11,28 @@
   const P = window.LunProviders; if (!P) return;
   const J = window.LunFetchJSON, N = window.LunNormBars;
 
+  let bybitList = null;   // кэш списка спота для поиска
+  const dec = (x) => { const n = (x || '').split('.')[1]; return n ? n.length : 0; };
+  async function bybitSearch(query) {
+    if (!bybitList) {
+      const j = await J('https://api.bybit.com/v5/market/instruments-info?category=spot');
+      const list = (j && j.result && j.result.list) || [];
+      bybitList = list.filter((s) => s.status === 'Trading').map((s) => ({
+        provider: 'bybit', symbol: s.symbol, ticker: s.symbol, market: 'spot',
+        title: (s.baseCoin || s.symbol) + '/' + (s.quoteCoin || ''),
+        pricePrecision: dec(s.priceFilter && s.priceFilter.tickSize) || 2,
+        volumePrecision: dec(s.lotSizeFilter && s.lotSizeFilter.basePrecision) || 3, _kind: 'crypto',
+      }));
+    }
+    const q = (query || '').toUpperCase();
+    return bybitList.filter((s) => !q || s.symbol.includes(q));
+  }
+
   const bybitTf = { M5: '5', M15: '15', H1: '60', D1: 'D', W1: 'W', MN1: 'M' };
   P.register({
     id: 'bybit', title: 'Bybit', markets: ['spot'], needsKey: false, hasStream: true, tfMap: bybitTf,
     resolveSymbol: async (ins) => ins.symbol || ins.ticker,
+    searchSymbols: bybitSearch,
     fetchCandles: async (symbol, tf) => {
       const iv = bybitTf[tf.id] || '60';
       const sym = symbol.symbol || symbol.ticker;
