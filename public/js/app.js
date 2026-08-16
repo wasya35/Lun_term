@@ -280,6 +280,8 @@
     c.setPeriod({ span: tf.span, type: tf.type });
     c.setDataLoader(window.LunData.makeDataLoader());
     if (slot === state) document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
+    // подключить/переподключить поток после подгрузки истории
+    if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);
   }
 
   /* ---------- инструменты рисования ---------- */
@@ -503,6 +505,19 @@
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
 
+    // Коннекторы — реалтайм-потоки
+    const conWrap = document.getElementById('connectors');
+    [['crypto', 'Крипто · Bybit realtime', 'Настоящий поток (WebSocket): последняя свеча тикает вживую'],
+     ['us', 'Америка · Yahoo (опрос)', 'Псевдо-реалтайм: опрос ~каждые 15–30с (без ключа Finnhub)'],
+     ['moex', 'MOEX · псевдо (~15м)', 'ISS без потока: опрос; истинный realtime у биржи платный']].forEach(([name, label, tip]) => {
+      mkBtn(conWrap, label, (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (window.LunStream) window.LunStream.setConnector(name, on, slots);
+      }, false, tip);
+    });
+    const stub = mkBtn(conWrap, '➕ Свой коннектор (Finam/MOEX API)', () => alert('Свой коннектор (Finam Trade / MOEX API с ключами) — задел на будущее. Здесь появится подключение брокерского потока и торговли.'), false, 'Задел на будущее');
+    stub.style.opacity = '0.6';
+
     // Экраны — сетка графиков
     const layWrap = document.getElementById('layouts');
     Object.keys(LAYOUTS).forEach((k) => mkBtn(layWrap, LAYOUTS[k].label, (b) => {
@@ -553,6 +568,7 @@
   function setLayout(key) {
     const L = LAYOUTS[key] || LAYOUTS['1'];
     const prev = slots.map((s) => ({ instrument: s.instrument, tf: s.tf }));
+    if (window.LunStream) window.LunStream.detachAll();
     slots.forEach((s) => { if (s.markovTimer) { clearInterval(s.markovTimer); s.markovTimer = null; } try { kc.dispose(s.cellEl); } catch (e) {} });
     const mp = document.getElementById('markov-panel'); if (mp) mp.remove();
     const grid = document.getElementById('chart');
@@ -650,6 +666,7 @@
       btn.onclick = (e) => { e.stopPropagation(); const menu = btn.parentElement, open = menu.classList.contains('open'); closeMenus(); if (!open) menu.classList.add('open'); };
     });
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
+    if (window.LunStream) window.LunStream.onStatus((txt, color) => { const el = document.getElementById('stream-status'); if (el) { el.textContent = txt; el.style.color = color; } });
     setLayout('1');       // создаёт график(и), панели и загрузку
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);

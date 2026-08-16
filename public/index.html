@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lun_term — терминал с лунной лентой</title>
-  <link rel="stylesheet" href="/css/style.css?v=43" />
+  <link rel="stylesheet" href="/css/style.css?v=44" />
 </head>
 <body>
   <header class="menubar">
@@ -16,6 +16,7 @@
       <div class="menu-sub">Циклы</div><div id="cycles" class="btns"></div>
       <div class="menu-sub">Планеты / аспекты</div><div id="aspects" class="btns"></div>
     </div></div>
+    <div class="menu"><button class="menu-btn">🔌 Коннекторы ▾</button><div class="menu-drop"><div id="connectors" class="btns"></div></div></div>
     <div class="menu"><button class="menu-btn">⚙️ Настройки ▾</button><div class="menu-drop"><div id="settings" class="btns"></div></div></div>
     <div class="menu"><button class="menu-btn">🔔 Алерты ▾</button><div class="menu-drop"><div class="menu-note">Алерты — следующий этап</div></div></div>
     <span class="spacer"></span>
@@ -28,6 +29,7 @@
   <footer class="statusbar">
     <span id="moon-now">☾ …</span>
     <span class="spacer"></span>
+    <span id="stream-status" style="color:#6b7280">поток: выкл</span>
     <span>Данные: <b id="datasource">загрузка…</b></span>
   </footer>
 
@@ -35,19 +37,20 @@
   <script src="/vendor/klinecharts.min.js"></script>
   <script src="/vendor/astronomy.browser.min.js"></script>
   <!-- код приложения (порядок важен). ?v= — сброс кэша при обновлении. -->
-  <script src="/js/config.js?v=43"></script>
-  <script src="/js/settings.js?v=43"></script>
-  <script src="/js/astro.js?v=43"></script>
-  <script src="/js/markov.js?v=43"></script>
-  <script src="/js/indicators.js?v=43"></script>
-  <script src="/js/overlays.js?v=43"></script>
-  <script src="/js/iss-client.js?v=43"></script>
-  <script src="/js/providers/base.js?v=43"></script>
-  <script src="/js/providers/crypto.js?v=43"></script>
-  <script src="/js/providers/yahoo.js?v=43"></script>
-  <script src="/js/instruments.js?v=43"></script>
-  <script src="/js/data.js?v=43"></script>
-  <script src="/js/backtest.js?v=43"></script>
-  <script src="/js/app.js?v=43"></script>
+  <script src="/js/config.js?v=44"></script>
+  <script src="/js/settings.js?v=44"></script>
+  <script src="/js/astro.js?v=44"></script>
+  <script src="/js/markov.js?v=44"></script>
+  <script src="/js/indicators.js?v=44"></script>
+  <script src="/js/overlays.js?v=44"></script>
+  <script src="/js/iss-client.js?v=44"></script>
+  <script src="/js/providers/base.js?v=44"></script>
+  <script src="/js/providers/crypto.js?v=44"></script>
+  <script src="/js/providers/yahoo.js?v=44"></script>
+  <script src="/js/instruments.js?v=44"></script>
+  <script src="/js/data.js?v=44"></script>
+  <script src="/js/stream.js?v=44"></script>
+  <script src="/js/backtest.js?v=44"></script>
+  <script src="/js/app.js?v=44"></script>
 </body>
 </html>
