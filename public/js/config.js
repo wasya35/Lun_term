@@ -21,12 +21,21 @@ window.LUN = window.LUN || {};
  * с ISS (коды металлов/нефти могут отличаться: золото GOLD/GD, серебро SILV/SV,
  * Brent BR — месячные контракты, ED — EUR/USD). */
 LUN.INSTRUMENTS = [
-  { id: 'Si',     title: 'Si · USD/RUB',   assetCode: 'Si',   ticker: 'SiU6', pricePrecision: 0, volumePrecision: 0 },
-  { id: 'CNY',    title: 'CNY · CNY/RUB',  assetCode: 'CNY',  ticker: 'CRU6', pricePrecision: 3, volumePrecision: 0 },
-  { id: 'GOLD',   title: 'GD · Золото',    assetCode: 'GOLD', ticker: 'GDU6', pricePrecision: 1, volumePrecision: 0 },
-  { id: 'BR',     title: 'BR · Brent',     assetCode: 'BR',   ticker: 'BRV6', pricePrecision: 2, volumePrecision: 0 },
-  { id: 'ED',     title: 'ED · EUR/USD',   assetCode: 'ED',   ticker: 'EDU6', pricePrecision: 4, volumePrecision: 0 },
-  { id: 'SILV',   title: 'SV · Серебро',   assetCode: 'SILV', ticker: 'SVU6', pricePrecision: 3, volumePrecision: 0 },
+  // MOEX FORTS (provider 'moex' — по умолчанию)
+  { id: 'Si',   title: 'Si · USD/RUB',  provider: 'moex', assetCode: 'Si',   ticker: 'SiU6', pricePrecision: 0, volumePrecision: 0 },
+  { id: 'CNY',  title: 'CNY · CNY/RUB', provider: 'moex', assetCode: 'CNY',  ticker: 'CRU6', pricePrecision: 3, volumePrecision: 0 },
+  { id: 'GOLD', title: 'GD · Золото',   provider: 'moex', assetCode: 'GOLD', ticker: 'GDU6', pricePrecision: 1, volumePrecision: 0 },
+  { id: 'BR',   title: 'BR · Brent',    provider: 'moex', assetCode: 'BR',   ticker: 'BRV6', pricePrecision: 2, volumePrecision: 0 },
+  { id: 'ED',   title: 'ED · EUR/USD',  provider: 'moex', assetCode: 'ED',   ticker: 'EDU6', pricePrecision: 4, volumePrecision: 0 },
+  { id: 'SILV', title: 'SV · Серебро',  provider: 'moex', assetCode: 'SILV', ticker: 'SVU6', pricePrecision: 3, volumePrecision: 0 },
+  // Крипта (Bybit spot — публично, без ключей, CORS открыт)
+  { id: 'BTC',  title: 'BTC/USDT', provider: 'bybit', symbol: 'BTCUSDT', market: 'spot', pricePrecision: 1, volumePrecision: 3 },
+  { id: 'ETH',  title: 'ETH/USDT', provider: 'bybit', symbol: 'ETHUSDT', market: 'spot', pricePrecision: 2, volumePrecision: 3 },
+  { id: 'SOL',  title: 'SOL/USDT', provider: 'bybit', symbol: 'SOLUSDT', market: 'spot', pricePrecision: 3, volumePrecision: 2 },
+  // США (Yahoo — бесплатно, через шлюзы, ~15 мин задержка)
+  { id: 'SPY',  title: 'SPY · S&P 500', provider: 'yahoo', symbol: 'SPY',  pricePrecision: 2, volumePrecision: 0 },
+  { id: 'QQQ',  title: 'QQQ · Nasdaq',  provider: 'yahoo', symbol: 'QQQ',  pricePrecision: 2, volumePrecision: 0 },
+  { id: 'NVDA', title: 'NVDA',          provider: 'yahoo', symbol: 'NVDA', pricePrecision: 2, volumePrecision: 0 },
 ];
 
 /* --- 2. Таймфреймы ---------------------------------------------------------

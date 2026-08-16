@@ -270,7 +270,8 @@
     const c = state.chart, ins = state.instrument, tf = state.tf;
     const ticker = await window.LunData.resolveTicker(ins);
     c.setSymbol({
-      ticker, pricePrecision: ins.pricePrecision, volumePrecision: ins.volumePrecision,
+      ticker, symbol: ticker, provider: ins.provider || 'moex',
+      pricePrecision: ins.pricePrecision, volumePrecision: ins.volumePrecision,
       engine: ins.engine || 'futures', market: ins.market || 'forts', type: ins.type || 'futures',
     });
     c.setPeriod({ span: tf.span, type: tf.type });
@@ -401,10 +402,17 @@
 
   function buildUI() {
     const insWrap = document.getElementById('instruments');
-    window.LUN.INSTRUMENTS.forEach((ins) => mkBtn(insWrap, ins.title, (b) => {
-      state.instrument = ins; load(); closeMenus();
-      [...insWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active');
-    }, ins === state.instrument, ins.title));
+    const MARKET = { moex: 'MOEX', bybit: 'Крипта', binance: 'Крипта', yahoo: 'США' };
+    let curMarket = null;
+    const clearActive = () => [...insWrap.querySelectorAll('button')].forEach((x) => x.classList.remove('active'));
+    window.LUN.INSTRUMENTS.forEach((ins) => {
+      const grp = MARKET[ins.provider || 'moex'] || 'Прочее';
+      if (grp !== curMarket) { const h = document.createElement('div'); h.className = 'menu-sub'; h.textContent = grp; insWrap.appendChild(h); curMarket = grp; }
+      mkBtn(insWrap, ins.title, (b) => {
+        state.instrument = ins; load(); closeMenus();
+        clearActive(); b.classList.add('active');
+      }, ins === state.instrument, ins.title);
+    });
     // поиск любого инструмента MOEX (акции/фьючерсы)
     const findBtn = mkBtn(insWrap, '🔍 Поиск инструмента…', () => { closeMenus(); window.LunInstruments.open((instr) => {
       state.instrument = instr; load();

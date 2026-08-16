@@ -42,6 +42,13 @@
   /* --- ближний контракт: прямой ISS -> прокси -> запасной тикер --- */
   const frontCache = new Map();
   async function resolveTicker(instrument) {
+    // не-MOEX провайдеры сами резолвят символ (крипта/США)
+    const provId = instrument.provider || 'moex';
+    if (provId !== 'moex') {
+      const prov = window.LunProviders && window.LunProviders.get(provId);
+      if (prov && prov.resolveSymbol) { try { return await prov.resolveSymbol(instrument); } catch (e) { /* фолбэк ниже */ } }
+      return instrument.symbol || instrument.ticker;
+    }
     if (!instrument.assetCode) return instrument.ticker;
     if (frontCache.has(instrument.assetCode)) return frontCache.get(instrument.assetCode);
     const today = new Date().toISOString().slice(0, 10);
@@ -59,8 +66,20 @@
     return ticker;
   }
 
-  /* --- свечи: прямой ISS -> прокси -> демо --- */
+  /* --- свечи: провайдер (крипта/США) ИЛИ MOEX (прямой ISS -> прокси) -> демо --- */
   async function loadCandles(symbol, tf) {
+    const provId = symbol.provider || 'moex';
+    if (provId !== 'moex') {
+      const prov = window.LunProviders && window.LunProviders.get(provId);
+      if (prov) {
+        try {
+          const bars = await prov.fetchCandles(symbol, tf);
+          if (bars && bars.length) { window.LUN_DATA_SOURCE = prov.title; window.LUN_DATA_ERROR = ''; return bars; }
+          throw new Error('пусто');
+        } catch (e) { window.LUN_DATA_ERROR = provId + ': ' + e.message; window.LUN_DATA_SOURCE = 'ДЕМО — ' + e.message; return null; }
+      }
+      window.LUN_DATA_ERROR = 'провайдер ' + provId + ' не подключён'; window.LUN_DATA_SOURCE = 'ДЕМО'; return null;
+    }
     const { from, till } = rangeFor(tf);
     const agg = (tf.iss === 5 || tf.iss === 15);
     const eng = symbol.engine || 'futures', mkt = symbol.market || 'forts';
