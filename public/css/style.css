@@ -35,6 +35,39 @@ body {
 .btns button.find-btn { padding: 5px 14px; font-size: 13px; font-weight: 600; background: #1f2b3d; border-color: var(--accent); }
 .btns button.find-btn:hover { background: var(--accent); color: #04121f; }
 
+/* ---- menubar (верхнее меню с выпадашками) ---- */
+.menubar {
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 8px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.menu { position: relative; }
+.menu-btn {
+  background: transparent; color: var(--text); border: 1px solid transparent;
+  border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; white-space: nowrap;
+}
+.menu-btn:hover { background: var(--panel-2); }
+.menu.open > .menu-btn { background: var(--panel-2); border-color: var(--border); }
+.menu-drop {
+  display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; z-index: 50;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px; min-width: 190px; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+}
+.menu.open > .menu-drop { display: block; }
+#layouts-drop { left: auto; right: 0; }
+.menu-drop.scroll { max-height: 70vh; overflow-y: auto; }
+.menu-sub { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .5px; padding: 6px 6px 3px; }
+.menu-note { color: var(--muted); padding: 8px 10px; font-size: 12px; }
+/* кнопки внутри выпадашек — списком, во всю ширину */
+.menu-drop .btns { display: flex; flex-direction: column; gap: 3px; align-items: stretch; }
+.menu-drop .btns button { text-align: left; padding: 6px 10px; }
+/* галочки-тумблеры для индикаторов / циклов / аспектов */
+#indicators button::before, #cycles button::before, #aspects button::before { content: '☐ '; color: var(--muted); }
+#indicators button.active::before, #cycles button.active::before, #aspects button.active::before { content: '☑ '; color: var(--accent); }
+#indicators button.active, #cycles button.active, #aspects button.active { background: var(--panel-2); color: var(--text); font-weight: 400; }
+/* подсказка хоткея справа на кнопке рисования */
+.menu-drop .btns button .hk { float: right; color: var(--muted); font-size: 11px; margin-left: 14px; }
+
 /* ---- chart ---- */
 .sym-title { padding: 4px 12px; color: var(--muted); font-size: 12px; }
 #chart { flex: 1 1 auto; min-height: 0; }

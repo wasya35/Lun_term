@@ -4,17 +4,22 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lun_term — терминал с лунной лентой</title>
-  <link rel="stylesheet" href="/css/style.css?v=39" />
+  <link rel="stylesheet" href="/css/style.css?v=40" />
 </head>
 <body>
-  <header class="toolbar">
-    <div class="group"><span class="glabel">Инструмент</span><div id="instruments" class="btns"></div></div>
-    <div class="group"><span class="glabel">ТФ</span><div id="timeframes" class="btns"></div></div>
-    <div class="group"><span class="glabel">Индикаторы</span><div id="indicators" class="btns"></div></div>
-    <div class="group"><span class="glabel">Циклы</span><div id="cycles" class="btns"></div></div>
-    <div class="group"><span class="glabel">Аспекты</span><div id="aspects" class="btns"></div></div>
-    <div class="group"><span class="glabel">Рисование</span><div id="drawtools" class="btns"></div></div>
-    <div class="group"><div id="settings" class="btns"></div></div>
+  <header class="menubar">
+    <div class="menu"><button class="menu-btn">🎯 Инструменты ▾</button><div class="menu-drop"><div class="menu-sub">Избранное</div><div id="instruments" class="btns"></div></div></div>
+    <div class="menu"><button class="menu-btn">⏱ ТФ ▾</button><div class="menu-drop"><div id="timeframes" class="btns"></div></div></div>
+    <div class="menu"><button class="menu-btn">📈 Индикаторы ▾</button><div class="menu-drop scroll"><div id="indicators" class="btns"></div></div></div>
+    <div class="menu"><button class="menu-btn">✏️ Рисование ▾</button><div class="menu-drop"><div id="drawtools" class="btns"></div></div></div>
+    <div class="menu"><button class="menu-btn">🌙 Астро ▾</button><div class="menu-drop scroll">
+      <div class="menu-sub">Циклы</div><div id="cycles" class="btns"></div>
+      <div class="menu-sub">Планеты / аспекты</div><div id="aspects" class="btns"></div>
+    </div></div>
+    <div class="menu"><button class="menu-btn">⚙️ Настройки ▾</button><div class="menu-drop"><div id="settings" class="btns"></div></div></div>
+    <div class="menu"><button class="menu-btn">🔔 Алерты ▾</button><div class="menu-drop"><div class="menu-note">Алерты — следующий этап</div></div></div>
+    <span class="spacer"></span>
+    <div class="menu"><button class="menu-btn">▦ Экраны ▾</button><div class="menu-drop" id="layouts-drop"><div id="layouts" class="btns"></div></div></div>
   </header>
 
   <div id="sym-title" class="sym-title"></div>
@@ -30,16 +35,16 @@
   <script src="/vendor/klinecharts.min.js"></script>
   <script src="/vendor/astronomy.browser.min.js"></script>
   <!-- код приложения (порядок важен). ?v= — сброс кэша при обновлении. -->
-  <script src="/js/config.js?v=39"></script>
-  <script src="/js/settings.js?v=39"></script>
-  <script src="/js/astro.js?v=39"></script>
-  <script src="/js/markov.js?v=39"></script>
-  <script src="/js/indicators.js?v=39"></script>
-  <script src="/js/overlays.js?v=39"></script>
-  <script src="/js/iss-client.js?v=39"></script>
-  <script src="/js/instruments.js?v=39"></script>
-  <script src="/js/data.js?v=39"></script>
-  <script src="/js/backtest.js?v=39"></script>
-  <script src="/js/app.js?v=39"></script>
+  <script src="/js/config.js?v=40"></script>
+  <script src="/js/settings.js?v=40"></script>
+  <script src="/js/astro.js?v=40"></script>
+  <script src="/js/markov.js?v=40"></script>
+  <script src="/js/indicators.js?v=40"></script>
+  <script src="/js/overlays.js?v=40"></script>
+  <script src="/js/iss-client.js?v=40"></script>
+  <script src="/js/instruments.js?v=40"></script>
+  <script src="/js/data.js?v=40"></script>
+  <script src="/js/backtest.js?v=40"></script>
+  <script src="/js/app.js?v=40"></script>
 </body>
 </html>

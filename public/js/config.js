@@ -16,9 +16,17 @@ window.LUN = window.LUN || {};
  * ticker    — запасной тикер, если авто-подбор недоступен (нет сети и т.п.).
  *   Формат: буква месяца (H=март, M=июнь, U=сентябрь, Z=декабрь) + цифра года.
  *   На 08.2026 ближний квартальный: Si → SiU6, CNY → CRU6 (сентябрь 2026). */
+/* Избранное сверху. assetCode — код базового актива на MOEX FORTS (по нему ISS
+ * находит ближний контракт). ЕСЛИ инструмент не грузится — сверь assetCode/ticker
+ * с ISS (коды металлов/нефти могут отличаться: золото GOLD/GD, серебро SILV/SV,
+ * Brent BR — месячные контракты, ED — EUR/USD). */
 LUN.INSTRUMENTS = [
-  { id: 'Si',  title: 'Si · USD/RUB',  assetCode: 'Si',  ticker: 'SiU6', pricePrecision: 0, volumePrecision: 0 },
-  { id: 'CNY', title: 'CNY · CNY/RUB', assetCode: 'CNY', ticker: 'CRU6', pricePrecision: 3, volumePrecision: 0 },
+  { id: 'Si',     title: 'Si · USD/RUB',   assetCode: 'Si',   ticker: 'SiU6', pricePrecision: 0, volumePrecision: 0 },
+  { id: 'CNY',    title: 'CNY · CNY/RUB',  assetCode: 'CNY',  ticker: 'CRU6', pricePrecision: 3, volumePrecision: 0 },
+  { id: 'GOLD',   title: 'GD · Золото',    assetCode: 'GOLD', ticker: 'GDU6', pricePrecision: 1, volumePrecision: 0 },
+  { id: 'BR',     title: 'BR · Brent',     assetCode: 'BR',   ticker: 'BRV6', pricePrecision: 2, volumePrecision: 0 },
+  { id: 'ED',     title: 'ED · EUR/USD',   assetCode: 'ED',   ticker: 'EDU6', pricePrecision: 4, volumePrecision: 0 },
+  { id: 'SILV',   title: 'SV · Серебро',   assetCode: 'SILV', ticker: 'SVU6', pricePrecision: 3, volumePrecision: 0 },
 ];
 
 /* --- 2. Таймфреймы ---------------------------------------------------------

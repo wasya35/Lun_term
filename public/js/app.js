@@ -23,6 +23,49 @@
     return (e.key || '').toLowerCase();
   }
 
+  function closeMenus() { document.querySelectorAll('.menu.open').forEach((m) => m.classList.remove('open')); }
+
+  // простая модалка (класс lun-modal-bg — чтобы хоткеи глушились, пока открыта)
+  function openModal(title, html) {
+    const bg = document.createElement('div'); bg.className = 'lun-modal-bg';
+    bg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
+    const m = document.createElement('div');
+    m.style.cssText = 'background:#121722;border:1px solid #232b3a;border-radius:10px;max-width:760px;width:100%;max-height:84vh;overflow:auto;color:#d7deea;box-shadow:0 12px 40px rgba(0,0,0,.55)';
+    m.innerHTML = '<h2 style="margin:0;padding:12px 16px;border-bottom:1px solid #232b3a;font-size:15px;display:flex;justify-content:space-between;align-items:center">' + title + '<span class="x" style="cursor:pointer;font-size:20px;color:#8b93a7">×</span></h2><div style="padding:14px 18px;font-size:13px;line-height:1.55">' + html + '</div>';
+    bg.appendChild(m); document.body.appendChild(bg);
+    const close = () => bg.remove();
+    m.querySelector('.x').onclick = close; bg.onclick = (e) => { if (e.target === bg) close(); };
+  }
+  function helpModal() {
+    openModal('Справка — Lun_term', `
+      <p><b>Lun_term</b> — астро-трейдинг терминал по инструментам MOEX с лунной лентой и марковскими режимами.</p>
+      <p><b>Инструменты</b> — избранное (Si, CNY, золото, Brent, EUR/USD, серебро) + поиск любого тикера MOEX.</p>
+      <p><b>Астро:</b> лента знаков Луны (цвет по знаку, градус), торговые циклы (зоны лонг/шорт по долготе), полосы аспектов планет к Солнцу, узлы 0°/15°, прогноз шкал вперёд до аспекта ☉–♅.</p>
+      <p><b>Индикаторы:</b> SMA/EMA/VWAP, объём, кумулятивная дельта, сильные бары (всплеск объёма «сила/силища»), торговые сессии (Азия/Лондон/Нью-Йорк), марковский режим (BEAR/SIDE/BULL) с сигналом и матрицей переходов.</p>
+      <p><b>Рисование:</b> уровень, трендовая, прямоугольник, стрелка, текст, линия Ганна (луч из т1 через т2), горизонтальный луч с обрезкой по пересечениям, профиль объёма (горизонтальный объём по диапазону).</p>
+      <p><b>Бэктест</b> (в «Настройки») — сверка зон/знаков/аспектов, сила+поглощение с издержками и out-of-sample, марковские режимы и синтез «зона × режим».</p>
+      <p style="color:#8b93a7">Данные: MOEX ISS прямо из браузера (с задержкой ~15 мин). Настройки цветов/зон — в «⚙ Настройки».</p>`);
+  }
+  function hotkeysModal() {
+    const row = (k, d) => `<tr><td style="padding:3px 12px 3px 0;color:#3aa0ff;white-space:nowrap"><b>${k}</b></td><td style="padding:3px 0">${d}</td></tr>`;
+    openModal('Горячие клавиши', `
+      <p style="color:#8b93a7;margin-top:0">Работают на русской и английской раскладке (по физической клавише).</p>
+      <table style="border-collapse:collapse">
+        ${row('1 · 2 · 3 · 4', 'таймфрейм M5 / M15 / H1 / D1')}
+        ${row('+ / −', 'приблизить / отдалить график')}
+        ${row('T', 'уровень')}${row('L', 'трендовая')}${row('R', 'прямоугольник')}
+        ${row('A', 'стрелка')}${row('X', 'текст')}${row('G', 'линия Ганна')}
+        ${row('H', 'горизонтальный луч ⨯N')}${row('D', 'профиль объёма (гор. объём)')}
+        ${row('клик', 'выделить объект')}${row('Delete', 'удалить выделенный объект')}
+        ${row('Ctrl+C / Ctrl+V', 'копировать / вставить объект')}
+        ${row('Ctrl+перетаскивание', 'копия объекта на новое место')}
+        ${row('Ctrl+S', 'скрин графика (PNG)')}
+        ${row('F', 'прогноз шкал вперёд')}${row('M', 'марковский режим')}
+        ${row('U', 'аспекты Урана ко всем')}
+        ${row('S', 'настройки')}${row('B', 'бэктест')}
+      </table>`);
+  }
+
   const state = {
     chart: null,
     instrument: window.LUN.INSTRUMENTS[0],
@@ -302,6 +345,7 @@
   }
 
   function startDraw(toolId) {
+    closeMenus();
     const ev = overlayEvents();
     if (toolId === 'lun_text') {
       const t = window.prompt('Текст метки:', '');
@@ -357,21 +401,21 @@
 
   function buildUI() {
     const insWrap = document.getElementById('instruments');
-    window.LUN.INSTRUMENTS.forEach((ins) => mkBtn(insWrap, ins.id, (b) => {
-      state.instrument = ins; load();
+    window.LUN.INSTRUMENTS.forEach((ins) => mkBtn(insWrap, ins.title, (b) => {
+      state.instrument = ins; load(); closeMenus();
       [...insWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active');
     }, ins === state.instrument, ins.title));
-    // поиск любого инструмента MOEX (акции/фьючерсы) — крупная кнопка
-    const findBtn = mkBtn(insWrap, '🔍 Инструменты', () => window.LunInstruments.open((instr) => {
+    // поиск любого инструмента MOEX (акции/фьючерсы)
+    const findBtn = mkBtn(insWrap, '🔍 Поиск инструмента…', () => { closeMenus(); window.LunInstruments.open((instr) => {
       state.instrument = instr; load();
       [...insWrap.children].forEach((x) => x.classList.remove('active'));
-    }), false, 'Поиск любой акции или фьючерса MOEX');
+    }); }, false, 'Поиск любой акции или фьючерса MOEX');
     findBtn.classList.add('find-btn');
 
     const tfWrap = document.getElementById('timeframes');
     window.LUN.TIMEFRAMES.forEach((tf, i) => {
       const b = mkBtn(tfWrap, tf.title, (bb) => {
-        state.tf = tf; load();
+        state.tf = tf; load(); closeMenus();
         [...tfWrap.children].forEach((x) => x.classList.remove('active')); bb.classList.add('active');
       }, tf === state.tf, tf.title + ' (' + (i + 1) + ')');
       regHotkey(String(i + 1), () => b.click());   // 1..4 → ТФ
@@ -418,27 +462,37 @@
 
     const drawWrap = document.getElementById('drawtools');
     DRAW_TOOLS.forEach((t) => {
-      mkBtn(drawWrap, t.label, () => startDraw(t.id), false, t.label + (t.key ? ' (' + t.key.toUpperCase() + ')' : ''));
+      const b = mkBtn(drawWrap, t.label, () => startDraw(t.id), false, t.label + (t.key ? ' (' + t.key.toUpperCase() + ')' : ''));
+      if (t.key) b.innerHTML = t.label + '<span class="hk">' + t.key.toUpperCase() + '</span>';   // хоткей справа
       regHotkey(t.key, () => startDraw(t.id));
     });
-    mkBtn(drawWrap, '✕ очистить', () => state.chart.removeOverlay()).className = 'danger';
+    mkBtn(drawWrap, '✕ очистить всё', () => { closeMenus(); state.chart.removeOverlay(); }).className = 'danger';
     regHotkey('+', () => zoomChart(true)); regHotkey('=', () => zoomChart(true)); regHotkey('-', () => zoomChart(false));   // зум +/−
 
     const setWrap = document.getElementById('settings');
     const fcBtn = mkBtn(setWrap, '🔮 Прогноз', (b) => {
-      const on = !b.classList.contains('active'); b.classList.toggle('active', on); setForecast(on, b);
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on); setForecast(on, b); closeMenus();
     }, false, 'Продлить астро-полосы вправо до следующего аспекта ☉–♅ (F)');
     state.forecastBtn = fcBtn;
     regHotkey('f', () => fcBtn.click());
-    const setBtn = mkBtn(setWrap, '⚙ Настройки', () => window.LunSettings.open(applySettings), false,
+    const setBtn = mkBtn(setWrap, '⚙ Настройки', () => { closeMenus(); window.LunSettings.open(applySettings); }, false,
       'Цвета знаков и торговые зоны циклов (S)');
     regHotkey('s', () => setBtn.click());
     const btBtn = mkBtn(setWrap, '📊 Бэктест', async () => {
+      closeMenus();
       const ins = state.instrument;
       const ticker = await window.LunData.resolveTicker(ins);
       window.LunBacktest.run({ engine: ins.engine || 'futures', market: ins.market || 'forts', ticker, title: (ins.title || ins.id) + ' · ' + ticker });
     }, false, 'Сверка лунных зон и аспектов с историей текущего инструмента (B)');
     regHotkey('b', () => btBtn.click());
+    mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
+    mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
+
+    // Экраны (мультичарт — следующий этап ТЗ; пока один график)
+    const layWrap = document.getElementById('layouts');
+    [['1', '1 график'], ['2', '1×2'], ['4', '2×2'], ['6', '3×2'], ['8', '4×2']].forEach(([k, label]) => {
+      mkBtn(layWrap, label, () => { closeMenus(); if (k !== '1') alert('Мультичарт (' + label + ') — следующий этап (ТЗ мультибиржа/мультичарт). Сейчас один график.'); }, k === '1');
+    });
   }
 
   // тумблеры аспектов: по планете (☉/планета) + сводная «∀ все»
@@ -513,6 +567,11 @@
     addMarkovCss();
     buildPanes();
     buildUI();
+    // выпадающие меню: клик по пункту открывает/закрывает, клик вне — закрывает
+    document.querySelectorAll('.menubar .menu-btn').forEach((btn) => {
+      btn.onclick = (e) => { e.stopPropagation(); const menu = btn.parentElement, open = menu.classList.contains('open'); closeMenus(); if (!open) menu.classList.add('open'); };
+    });
+    document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
     load();
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
