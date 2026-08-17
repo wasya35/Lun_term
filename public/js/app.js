@@ -77,7 +77,7 @@
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
       overlayIds: {}, candleInds: {}, selectedOverlayId: null, forecastOn: false, paneWish: {},
       compareInstrument: null, comparePane: false, oiPane: null, arbPane: null, arbBundle: null,
-      retroPane: null,
+      retroPane: null, bradleyPane: null,
     };
   }
   let slots = [];
@@ -423,6 +423,58 @@
     wishPane(state.retroPane, { height: 84, order: 40 });
   }
   function removeRetroPane() { if (state.retroPane) { try { state.chart.removeIndicator({ paneId: state.retroPane }); } catch (e) {} state.retroPane = null; } }
+  function createBradleyPane() {
+    state.bradleyPane = 'pane_bradley';
+    state.chart.createIndicator({ name: 'BradleyStrip', paneId: state.bradleyPane }, false);
+    wishPane(state.bradleyPane, { height: 96, order: 41 });
+  }
+  function removeBradleyPane() { if (state.bradleyPane) { try { state.chart.removeIndicator({ paneId: state.bradleyPane }); } catch (e) {} state.bradleyPane = null; } }
+
+  // Космограмма: колесо зодиака с планетами и аспектами на выбранную дату.
+  function cosmogramModal() {
+    const AG = window.LUN.ASTROGANN, SIGNS = window.LUN.SIGNS;
+    let ts = Date.now(); try { const l = state.chart.getDataList(); if (l.length) ts = l[l.length - 1].timestamp; } catch (e) {}
+    const bodies = ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto'];
+    const ASP = [{ a: 0, sym: '☌', c: '#c0392b' }, { a: 60, sym: '⚹', c: '#2c6fb0' }, { a: 90, sym: '□', c: '#c0392b' }, { a: 120, sym: '△', c: '#2c6fb0' }, { a: 180, sym: '☍', c: '#c0392b' }];
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    openModal('Космограмма', `
+      <div style="display:flex;gap:14px;align-items:flex-end;margin-bottom:10px">
+        <label>Дата/время (UTC)<br><input id="cg-date" type="datetime-local" style="${inp}"></label>
+        <span style="color:#8b93a7">гео · знаки зодиака</span>
+      </div>
+      <div id="cg-body" style="display:flex;gap:18px;flex-wrap:wrap"></div>`);
+    const dEl = document.getElementById('cg-date');
+    dEl.value = new Date(ts).toISOString().slice(0, 16);
+    const R = 150, cx = 170, cy = 170, rPlanet = 118, rSign = 138;
+    const P = (ang, r) => [cx + r * Math.cos((90 - ang) * Math.PI / 180), cy - r * Math.sin((90 - ang) * Math.PI / 180)];
+    const render = () => {
+      const t = dEl.value ? new Date(dEl.value + ':00Z').getTime() : ts;
+      const pos = {}; bodies.forEach((b) => { pos[b] = window.LunAstro.bodyInfo(b, t, 'geo').lon; });
+      let svg = `<svg width="${cx * 2}" height="${cy * 2}" style="flex:0 0 auto">`;
+      svg += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="#0b0e14" stroke="#232b3a"/>`;
+      for (let s = 0; s < 12; s++) {
+        const a = s * 30, [x1, y1] = P(a, R), mid = P(a + 15, rSign);
+        svg += `<line x1="${cx}" y1="${cy}" x2="${x1.toFixed(1)}" y2="${y1.toFixed(1)}" stroke="#1c2432"/>`;
+        svg += `<text x="${mid[0].toFixed(1)}" y="${mid[1].toFixed(1)}" fill="${SIGNS[s].color}" font-size="13" text-anchor="middle" dominant-baseline="middle">${SIGNS[s].glyph}</text>`;
+      }
+      // аспектные линии
+      for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
+        let d = Math.abs(pos[bodies[i]] - pos[bodies[j]]) % 360; if (d > 180) d = 360 - d;
+        const A = ASP.find((x) => Math.abs(d - x.a) <= 5); if (!A || A.a === 0) continue;
+        const p1 = P(pos[bodies[i]], rPlanet - 10), p2 = P(pos[bodies[j]], rPlanet - 10);
+        svg += `<line x1="${p1[0].toFixed(1)}" y1="${p1[1].toFixed(1)}" x2="${p2[0].toFixed(1)}" y2="${p2[1].toFixed(1)}" stroke="${A.c}" stroke-width="1" opacity="0.5"/>`;
+      }
+      bodies.forEach((b) => { const m = AG.planets[b], pt = P(pos[b], rPlanet); svg += `<text x="${pt[0].toFixed(1)}" y="${pt[1].toFixed(1)}" fill="${m.c}" font-size="14" text-anchor="middle" dominant-baseline="middle">${m.g}</text>`; });
+      svg += `</svg>`;
+      // таблица позиций
+      let tbl = '<table style="border-collapse:collapse;font-size:12px">';
+      bodies.forEach((b) => { const lon = pos[b], si = Math.floor(lon / 30) % 12, m = AG.planets[b];
+        tbl += `<tr><td style="padding:2px 10px 2px 0;color:${m.c}">${m.g} ${b}</td><td style="padding:2px 8px 2px 0">${SIGNS[si].glyph} ${SIGNS[si].name}</td><td style="padding:2px 0;color:#8b93a7">${(lon - si * 30).toFixed(1)}°</td></tr>`; });
+      tbl += '</table>';
+      document.getElementById('cg-body').innerHTML = svg + '<div>' + tbl + '</div>';
+    };
+    dEl.onchange = render; render();
+  }
 
   // редрав активных астро-индикаторов после смены планет/фрейма/масштаба
   function refreshAstroGann() {
@@ -730,8 +782,21 @@
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
         if (on) createRetroPane(); else removeRetroPane();
       }, false, 'Панель периодов попятного движения планет');
+      [['PlanetFan', '🌬 Веер долготы', 'Веер от пивота: цена движется со скоростью долготы планет'],
+       ['PlanetSq9', '⊞ Sq9 в градусах планет', 'Уровни, где угол колеса Квадрата-9 равен долготе планеты'],
+       ['Eclipses', '⊘ Затмения', 'Вертикали солнечных (☉) и лунных (☾) затмений']].forEach(([name, label, tip]) =>
+        mkBtn(gannWrap, label, (b) => {
+          const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+          if (on) { state.chart.createIndicator({ name, paneId: 'candle_pane' }, true); state.candleInds[name] = true; }
+          else removeCandInd(name);
+        }, false, tip));
+      mkBtn(gannWrap, '📊 Барометр Bradley (панель)', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (on) createBradleyPane(); else removeBradleyPane();
+      }, false, 'Сидерограф: взвешенная сумма аспектов, экстремумы = даты разворота');
+      mkBtn(gannWrap, '🜨 Космограмма…', () => { closeMenus(); cosmogramModal(); }, false, 'Колесо зодиака с планетами и аспектами на дату');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
-      gnote.textContent = 'Box, Квадрат на графике, сквоузинг, Bradley и веер долготы — следующие этапы';
+      gnote.textContent = 'Box, Квадрат на графике и сквоузинг цены/времени — следующий этап';
       gannWrap.appendChild(gnote);
     }
 

@@ -84,5 +84,24 @@
     return null;
   }
 
-  window.LunAstro = { bodyInfo, moonInfo, zoneOf, nextAspect };
+  /* Затмения (солнечные/лунные) в интервале [fromTs, toTs]. Использует
+   * встроенный поиск astronomy-engine. Возвращает [{ ts, kind, sub }]. */
+  function eclipsesBetween(fromTs, toTs) {
+    const out = [];
+    const peakMs = (e) => (e && e.peak && e.peak.date ? e.peak.date.getTime() : NaN);
+    try {
+      let e = A.SearchLunarEclipse(new Date(fromTs)), guard = 0;
+      while (e && guard++ < 400) { const t = peakMs(e); if (!(t <= toTs)) break; if (t >= fromTs) out.push({ ts: t, kind: 'lunar', sub: e.kind }); e = A.NextLunarEclipse(e.peak); }
+    } catch (er) { /* нет данных — пропускаем */ }
+    try {
+      let s = A.SearchGlobalSolarEclipse(new Date(fromTs)), guard = 0;
+      while (s && guard++ < 400) { const t = peakMs(s); if (!(t <= toTs)) break; if (t >= fromTs) out.push({ ts: t, kind: 'solar', sub: s.kind }); s = A.NextGlobalSolarEclipse(s.peak); }
+    } catch (er) { /* нет данных — пропускаем */ }
+    return out.sort((a, b) => a.ts - b.ts);
+  }
+
+  // «сырая» долгота на момент (для расчётов без объекта bodyInfo)
+  const lonOf = (body, tsMillis, frame) => longitude(body, new Date(tsMillis), frame || 'geo');
+
+  window.LunAstro = { bodyInfo, moonInfo, zoneOf, nextAspect, eclipsesBetween, lonOf };
 })();

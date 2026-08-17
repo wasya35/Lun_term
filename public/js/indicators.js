@@ -890,4 +890,143 @@
       return true;
     },
   });
+
+  /* ============ Астро-Ганн: барометр Bradley (сидерограф) ============
+   * Взвешенная сумма аспектов между планетами: мягкие (60/120) — плюс, жёсткие
+   * (90/180) — минус, соединение — плюс; вес = сумма потенциалов пары × близость
+   * к точному аспекту. Экстремумы кривой — потенциальные даты разворота. Это
+   * композит «в стиле Bradley», а не проприетарная формула CRB. */
+  kc.registerIndicator({
+    name: 'BradleyStrip', shortName: 'Bradley', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const list = chart.getDataList(); if (list.length < 3 || !window.LunAstro) return true;
+      const B = window.LUN.ASTROGANN.bradley, range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      const SIGNED = [{ a: 0, s: 1 }, { a: 60, s: 1 }, { a: 90, s: -1 }, { a: 120, s: 1 }, { a: 180, s: -1 }];
+      const val = (ts) => {
+        const lon = {}; B.planets.forEach((p) => { lon[p] = window.LunAstro.bodyInfo(p, ts, 'geo').lon; });
+        let sum = 0;
+        for (let i = 0; i < B.planets.length; i++) for (let j = i + 1; j < B.planets.length; j++) {
+          const a = B.planets[i], b = B.planets[j]; let d = Math.abs(lon[a] - lon[b]) % 360; if (d > 180) d = 360 - d;
+          for (const A of SIGNED) { const off = Math.abs(d - A.a); if (off <= B.orb) { sum += A.s * ((B.pot[a] || 1) + (B.pot[b] || 1)) * (1 - off / B.orb); break; } }
+        }
+        return sum;
+      };
+      const vals = []; let mx = 1e-9;
+      for (let i = from; i < to; i++) { const v = val(list[i].timestamp); vals[i] = v; if (Math.abs(v) > mx) mx = Math.abs(v); }
+      const H = bounding.height, mid = H / 2, W = bounding.width;
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+      ctx.strokeStyle = '#e0c040'; ctx.lineWidth = 1.4; ctx.beginPath(); let started = false;
+      for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9; if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
+      ctx.stroke();
+      for (let i = from + 1; i < to - 1; i++) {
+        if ((vals[i] - vals[i - 1]) * (vals[i + 1] - vals[i]) < 0) {
+          const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9;
+          ctx.fillStyle = (vals[i] > vals[i - 1]) ? '#ef5350' : '#26a69a';
+          ctx.beginPath(); ctx.arc(x, y, 2, 0, 6.283); ctx.fill();
+        }
+      }
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText('Bradley (сидерограф, гео)', 4, 2);
+      return true;
+    },
+  });
+
+  /* ============ Астро-Ганн: веер долготы (Price & Longitude Angles) ============
+   * Из пивота (свежий видимый экстремум) веер линий: цена движется со скоростью
+   * долготы планеты — price = P0 ± scale·Δlon(накопл.). Ретро планеты дают изгиб. */
+  kc.registerIndicator({
+    name: 'PlanetFan', shortName: 'Веер долготы', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis }) => {
+      const AG = window.LUN.ASTROGANN, list = chart.getDataList(); if (list.length < 3 || !window.LunAstro) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      let hi = -Infinity, lo = Infinity, hiI = from, loI = from;
+      for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; if (b.high > hi) { hi = b.high; hiI = i; } if (b.low < lo) { lo = b.low; loI = i; } }
+      if (!(hi > lo)) return true;
+      const pivotI = Math.max(hiI, loI), P0 = list[pivotI].close, W = bounding.width;
+      const scaleF = AG.pricePerDeg ? AG.pricePerDeg : (hi - lo) / 90;
+      (AG.fanPlanets || []).forEach((p) => {
+        const meta = AGmeta(p);
+        // накопленная (развёрнутая) долгота от пивота
+        const acc = []; let prev = window.LunAstro.bodyInfo(p, list[pivotI].timestamp, AG.frame).lon, a = 0; acc[pivotI] = 0;
+        for (let i = pivotI + 1; i < to; i++) { const cur = window.LunAstro.bodyInfo(p, list[i].timestamp, AG.frame).lon; let d = cur - prev; if (d > 180) d -= 360; else if (d < -180) d += 360; a += d; acc[i] = a; prev = cur; }
+        [1, -1].forEach((dir) => {
+          ctx.strokeStyle = meta.c; ctx.globalAlpha = dir > 0 ? 0.8 : 0.4; ctx.lineWidth = 1; ctx.beginPath(); let started = false, lx = 0, ly = 0;
+          for (let i = pivotI; i < to; i++) {
+            const price = P0 + dir * scaleF * acc[i];
+            if (price < lo || price > hi) { if (started) { ctx.stroke(); ctx.beginPath(); started = false; } continue; }
+            const x = xAxis.convertToPixel(i), y = yAxis.convertToPixel(price);
+            if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); lx = x; ly = y;
+          }
+          ctx.stroke(); ctx.globalAlpha = 1;
+          if (started && dir > 0) { ctx.fillStyle = meta.c; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillText(meta.g, Math.min(lx + 3, W - 12), ly); }
+        });
+      });
+      const px = xAxis.convertToPixel(pivotI), py = yAxis.convertToPixel(P0);
+      ctx.fillStyle = '#e0d060'; ctx.beginPath(); ctx.arc(px, py, 3, 0, 6.283); ctx.fill();
+      return true;
+    },
+  });
+
+  /* ============ Астро-Ганн: Sq9 в градусах планет ============
+   * Горизонтали на ценах, где угол колеса Квадрата-9 равен долготе планеты:
+   * √price·180 = долгота + 360·оборот  →  price = ((L+360r)/180)². */
+  kc.registerIndicator({
+    name: 'PlanetSq9', shortName: 'Sq9 планет', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, yAxis }) => {
+      const AG = window.LUN.ASTROGANN, list = chart.getDataList(); if (!list.length || !window.LunAstro) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      let hi = -Infinity, lo = Infinity;
+      for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low; }
+      if (!(hi > lo)) return true;
+      const pad = (hi - lo) * 0.1; hi += pad; lo = Math.max(0, lo - pad);
+      const prec = hi < 10 ? 4 : (hi < 1000 ? 2 : 1), W = bounding.width, H = bounding.height, ts = list[to - 1].timestamp;
+      (AG.sq9Planets || []).forEach((p) => {
+        const meta = AGmeta(p), L = window.LunAstro.bodyInfo(p, ts, AG.frame).lon;
+        const rMin = Math.floor((180 * Math.sqrt(Math.max(0, lo)) - L) / 360) - 1;
+        const rMax = Math.ceil((180 * Math.sqrt(hi) - L) / 360) + 1;
+        for (let r = rMin; r <= rMax; r++) {
+          const s = (L + 360 * r) / 180; if (s <= 0) continue; const price = s * s;
+          if (price < lo || price > hi) continue;
+          const y = yAxis.convertToPixel(price); if (y < 0 || y > H) continue;
+          ctx.strokeStyle = meta.c; ctx.globalAlpha = 0.6; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+          ctx.fillStyle = meta.c; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+          ctx.fillText(meta.g + ' ' + price.toFixed(prec), 4, y - 1);
+        }
+      });
+      return true;
+    },
+  });
+
+  /* ============ Астро-Ганн: затмения (вертикали) ============ */
+  kc.registerIndicator({
+    name: 'Eclipses', shortName: 'Затмения', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const list = chart.getDataList(); if (list.length < 2 || !window.LunAstro || !window.LunAstro.eclipsesBetween) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      const t0 = list[from].timestamp, t1 = list[to - 1].timestamp; if (!(t1 > t0)) return true;
+      const ecl = window.LunAstro.eclipsesBetween(t0, t1); if (!ecl.length) return true;
+      const H = bounding.height, W = bounding.width;
+      const idxOf = (ts) => { let a = from, b = to - 1; while (a < b) { const m = (a + b) >> 1; if (list[m].timestamp < ts) a = m + 1; else b = m; } return a; };
+      ecl.forEach((e) => {
+        const x = xAxis.convertToPixel(idxOf(e.ts)); if (x < -2 || x > W + 2) return;
+        const solar = e.kind === 'solar', col = solar ? '#f0c040' : '#cfd6e6';
+        ctx.strokeStyle = col; ctx.globalAlpha = 0.7; ctx.lineWidth = 1.2; ctx.setLineDash([5, 3]);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+        ctx.fillStyle = col; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+        ctx.fillText((solar ? '☉' : '☾') + '⊘', x + 2, 2);
+      });
+      return true;
+    },
+  });
 })();

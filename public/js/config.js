@@ -189,6 +189,11 @@ LUN.ASTROGANN = {
   linePlanets:    ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
   ingressPlanets: ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
   retroPlanets:   ['Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
+  fanPlanets:     ['Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
+  sq9Planets:     ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
+  // Bradley-стиль (сидерограф): набор тел, орб и потенциалы (медленные = сильнее)
+  bradley: { planets: ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto'], orb: 6,
+             pot: { Sun: 6, Mercury: 1, Venus: 1, Mars: 2, Jupiter: 4, Saturn: 5, Uranus: 7, Neptune: 8, Pluto: 9 } },
   planets: {
     Sun:    { g: '☉', c: '#f0c040' }, Moon:    { g: '☾', c: '#cfd6e6' },
     Mercury:{ g: '☿', c: '#9aa7ff' }, Venus:   { g: '♀', c: '#7ad3a0' },
