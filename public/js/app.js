@@ -338,6 +338,27 @@
 
   /* ---------- инструменты Ганна ---------- */
   function removeCandInd(name) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {} delete state.candleInds[name]; }
+  // запустить рисование оверлея (первый клик = пивот/угол, второй = охват)
+  function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); state.chart.createOverlay(Object.assign({ name, extendData }, ev)); }
+  // масштаб 1×1 (цена на бар) для сквоузинга: авто / ручной
+  function scaleModal() {
+    const cfg = window.LUN.GANNTOOLS.scale || (window.LUN.GANNTOOLS.scale = {});
+    let autoHint = '';
+    try { const l = state.chart.getDataList(); const r = state.chart.getVisibleRange(); const f = Math.max(0, r.from), t = Math.min(l.length, Math.ceil(r.to)); let hi = -Infinity, lo = Infinity; for (let i = f; i < t; i++) { if (l[i].high > hi) hi = l[i].high; if (l[i].low < lo) lo = l[i].low; } if (hi > lo) autoHint = ((hi - lo) / Math.max(1, t - f)).toFixed(3); } catch (e) {}
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    openModal('Масштаб 1×1 (цена на бар)', `
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+        <label>Цена на 1 бар (пусто = авто)<br><input id="sc-val" type="number" step="any" value="${cfg.unitPerBar != null ? cfg.unitPerBar : ''}" placeholder="авто ≈ ${autoHint}" style="${inp};width:180px"></label>
+        <button id="sc-apply" style="${btn};border-color:#26a69a">Применить</button>
+      </div>
+      <p style="color:#8b93a7;margin:10px 0 0">Линия 1×1 — баланс цены и времени по Ганну. «Авто» берёт диапазон/бары видимого окна (≈ ${autoHint}). Впишите точное значение для классического масштаба (напр. 1 пункт = 1 бар).</p>`);
+    document.getElementById('sc-apply').onclick = () => {
+      const v = document.getElementById('sc-val').value.trim();
+      cfg.unitPerBar = v === '' ? null : (+v || null);
+      if (state.candleInds.GannSquaring) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'GannSquaring' }); state.chart.createIndicator({ name: 'GannSquaring', paneId: 'candle_pane' }, true); } catch (e) {} }
+    };
+  }
 
   // Уровни квадрата Ганна. √-спираль: полный оборот (360°) = +2 к √цены.
   // base: '9'→8 делений (крест 45°), 'hex'→6 (60°), '360'→24 (15°),
@@ -799,6 +820,16 @@
     const gannWrap = document.getElementById('gann');
     if (gannWrap) {
       const gsub = (t) => { const h = document.createElement('div'); h.className = 'menu-sub'; h.textContent = t; gannWrap.appendChild(h); };
+      gsub('Геометрия (2 клика: пивот → охват)');
+      mkBtn(gannWrap, '▱ Gann Box', () => startOverlay('lun_gannbox'), false, 'Рамка время×цена с делениями и диагоналями (1×1)');
+      mkBtn(gannWrap, '⊞ Квадрат Ганна (8×8)', () => startOverlay('lun_gannsquare', { divisions: 8 }), false, 'Квадрат-сетка с крестом и диагоналями');
+      mkBtn(gannWrap, '⊞ Квадрат 144 (12×12)', () => startOverlay('lun_gannsquare', { divisions: 12 }), false, 'Квадрат 144: сетка 12×12');
+      mkBtn(gannWrap, '⟋ Сквоузинг 1×1 (панель)', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (on) { state.chart.createIndicator({ name: 'GannSquaring', paneId: 'candle_pane' }, true); state.candleInds.GannSquaring = true; }
+        else removeCandInd('GannSquaring');
+      }, false, 'Линии 1×1 от пивота + отметки сквоузинга цены/времени');
+      mkBtn(gannWrap, '⚖ Масштаб 1×1…', () => { closeMenus(); scaleModal(); }, false, 'Цена на 1 бар: авто или вручную');
       gsub('Квадраты');
       mkBtn(gannWrap, '⊞ Калькулятор квадратов…', () => { closeMenus(); gannSquareModal(); }, false, 'Квадрат 9 / шестиугольник / круг 360° / натуральные — уровни поддержки и сопротивления');
       mkBtn(gannWrap, '✕ убрать уровни квадрата', () => { closeMenus(); removeCandInd('GannSquareLevels'); }, false, 'Убрать нанесённые уровни квадрата');
@@ -837,7 +868,7 @@
       }, false, 'Сидерограф: взвешенная сумма аспектов, экстремумы = даты разворота');
       mkBtn(gannWrap, '🜨 Космограмма…', () => { closeMenus(); cosmogramModal(); }, false, 'Колесо зодиака с планетами и аспектами на дату');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
-      gnote.textContent = 'Box, Квадрат на графике и сквоузинг цены/времени — следующий этап';
+      gnote.textContent = 'Инструменты Ганна: геометрия · квадраты · циклы · астро-Ганн';
       gannWrap.appendChild(gnote);
     }
 

@@ -192,6 +192,56 @@
     },
   });
 
+  /* --- Gann Box (2 точки — противоположные углы) ---
+   * Рамка время×цена с делениями (доли из LUN.GANNTOOLS.box) по обеим осям и
+   * двумя диагоналями (1×1 «баланс» бокса). Классический ганновский бокс. */
+  kc.registerOverlay({
+    name: 'lun_gannbox',
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    createPointFigures: ({ coordinates }) => {
+      if (coordinates.length < 2) return [];
+      const [a, b] = coordinates;
+      const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+      const W = x1 - x0, H = y1 - y0;
+      const L = (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.levels) || [0, 0.25, 0.5, 0.75, 1];
+      const col = 'rgba(240,192,64,0.45)', mid = 'rgba(240,192,64,0.85)', diag = 'rgba(58,160,255,0.75)';
+      const figs = [{ type: 'rect', attrs: { x: x0, y: y0, width: W, height: H }, styles: { style: 'stroke', color: 'transparent', borderColor: mid, borderSize: 1.2 } }];
+      L.forEach((f) => { const y = y0 + H * f; figs.push({ type: 'line', attrs: { coordinates: [{ x: x0, y }, { x: x1, y }] }, styles: { color: Math.abs(f - 0.5) < 0.02 ? mid : col, size: 1 } }); });
+      L.forEach((f) => { const x = x0 + W * f; figs.push({ type: 'line', attrs: { coordinates: [{ x, y: y0 }, { x, y: y1 }] }, styles: { color: Math.abs(f - 0.5) < 0.02 ? mid : col, size: 1 } }); });
+      figs.push({ type: 'line', attrs: { coordinates: [{ x: x0, y: y1 }, { x: x1, y: y0 }] }, styles: { color: diag, size: 1.2 } });
+      figs.push({ type: 'line', attrs: { coordinates: [{ x: x0, y: y0 }, { x: x1, y: y1 }] }, styles: { color: diag, size: 1.2 } });
+      return figs;
+    },
+  });
+
+  /* --- Квадрат Ганна на графике (2 точки — рамка; сетка N×N) ---
+   * extendData.divisions: 8 — «квадрат», 12 — «квадрат 144». Сетка + средний
+   * крест (кардинали) + обе диагонали. */
+  kc.registerOverlay({
+    name: 'lun_gannsquare',
+    totalStep: 3,
+    needDefaultPointFigure: true,
+    createPointFigures: ({ coordinates, overlay }) => {
+      if (coordinates.length < 2) return [];
+      const [a, b] = coordinates;
+      const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+      const W = x1 - x0, H = y1 - y0;
+      const N = (overlay.extendData && overlay.extendData.divisions) || 8;
+      const grid = 'rgba(240,192,64,0.25)', cross = 'rgba(240,192,64,0.85)', diag = 'rgba(58,160,255,0.7)';
+      const figs = [{ type: 'rect', attrs: { x: x0, y: y0, width: W, height: H }, styles: { style: 'stroke', color: 'transparent', borderColor: 'rgba(240,192,64,0.6)', borderSize: 1.2 } }];
+      for (let k = 1; k < N; k++) {
+        const x = x0 + W * k / N, y = y0 + H * k / N, m = (k === N / 2);
+        figs.push({ type: 'line', attrs: { coordinates: [{ x, y: y0 }, { x, y: y1 }] }, styles: { color: m ? cross : grid, size: m ? 1.4 : 1 } });
+        figs.push({ type: 'line', attrs: { coordinates: [{ x: x0, y }, { x: x1, y }] }, styles: { color: m ? cross : grid, size: m ? 1.4 : 1 } });
+      }
+      figs.push({ type: 'line', attrs: { coordinates: [{ x: x0, y: y1 }, { x: x1, y: y0 }] }, styles: { color: diag, size: 1.2 } });
+      figs.push({ type: 'line', attrs: { coordinates: [{ x: x0, y: y0 }, { x: x1, y: y1 }] }, styles: { color: diag, size: 1.2 } });
+      figs.push({ type: 'text', attrs: { x: x0 + 3, y: y0 + 2, text: '□' + N, baseline: 'top' }, ignoreEvent: true, styles: { color: '#e0c040', size: 11 } });
+      return figs;
+    },
+  });
+
   /* --- текстовая метка --- */
   kc.registerOverlay({
     name: 'lun_text',

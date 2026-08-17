@@ -1029,4 +1029,41 @@
       return true;
     },
   });
+
+  /* ============ Ганн: сквоузинг цены и времени (1×1) ============
+   * Из пивота (свежий видимый экстремум) линии 1×1 вверх/вниз с наклоном
+   * unitPerBar (цена на бар; ручной из LUN.GANNTOOLS.scale или авто = диапазон/
+   * бары). Точки, где свеча касается линии 1×1 — «сквоузинг» (цена прошла
+   * столько же, сколько время). */
+  kc.registerIndicator({
+    name: 'GannSquaring', shortName: 'Сквоузинг', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis }) => {
+      const list = chart.getDataList(); if (list.length < 5) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      let hi = -Infinity, lo = Infinity, hiI = from, loI = from;
+      for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; if (b.high > hi) { hi = b.high; hiI = i; } if (b.low < lo) { lo = b.low; loI = i; } }
+      if (!(hi > lo)) return true;
+      const pivotI = Math.max(hiI, loI), P0 = list[pivotI].close;
+      const cfg = window.LUN.GANNTOOLS.scale || {};
+      const scale = cfg.unitPerBar || ((hi - lo) / Math.max(1, to - from));
+      [1, -1].forEach((dir) => {
+        ctx.strokeStyle = dir > 0 ? '#26a69a' : '#ef5350'; ctx.globalAlpha = 0.8; ctx.lineWidth = 1.2; ctx.beginPath(); let started = false;
+        for (let i = pivotI; i < to; i++) { const price = P0 + dir * scale * (i - pivotI), y = yAxis.convertToPixel(price), x = xAxis.convertToPixel(i); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
+        ctx.stroke(); ctx.globalAlpha = 1;
+      });
+      for (let i = pivotI + 1; i < to; i++) {
+        const up = P0 + scale * (i - pivotI), dn = P0 - scale * (i - pivotI), b = list[i];
+        const hitUp = b.low <= up && b.high >= up, hitDn = b.low <= dn && b.high >= dn;
+        if (hitUp || hitDn) { const x = xAxis.convertToPixel(i), y = yAxis.convertToPixel(hitUp ? up : dn); ctx.fillStyle = '#f0c040'; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, 6.283); ctx.fill(); }
+      }
+      const px = xAxis.convertToPixel(pivotI), py = yAxis.convertToPixel(P0);
+      ctx.fillStyle = '#e0d060'; ctx.beginPath(); ctx.arc(px, py, 3, 0, 6.283); ctx.fill();
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.fillText('1×1: ' + (scale < 10 ? scale.toFixed(3) : scale.toFixed(1)) + ' /бар' + (cfg.unitPerBar ? ' (ручн.)' : ' (авто)'), 4, 2);
+      return true;
+    },
+  });
 })();
