@@ -36,12 +36,24 @@
     fetchCandles: async (symbol, tf) => {
       const iv = bybitTf[tf.id] || '60';
       const sym = symbol.symbol || symbol.ticker;
-      const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${encodeURIComponent(sym)}&interval=${iv}&limit=1000`;
-      const j = await J(url);
-      const list = (j && j.result && j.result.list) || [];
-      // [start, open, high, low, close, volume, turnover] — новые первыми
-      const bars = list.map((r) => ({ timestamp: +r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));
-      return N(bars);
+      const base = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${encodeURIComponent(sym)}&interval=${iv}&limit=1000`;
+      const page = async (end) => {
+        const j = await J(base + (end ? '&end=' + end : ''));
+        const list = (j && j.result && j.result.list) || [];
+        // [start, open, high, low, close, volume, turnover] — новые первыми
+        return list.map((r) => ({ timestamp: +r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));
+      };
+      if (!window.LunHist || !window.LunHist.active()) return N(await page(null));
+      // период задан — тянем назад курсором end, пока не покроем fromMs
+      const bd = window.LunHist.bounds(365); const out = []; let end = bd.tillMs, loops = 0;
+      while (loops++ < 40) {
+        const bars = await page(end); if (!bars.length) break;
+        out.push(...bars);
+        const oldest = Math.min.apply(null, bars.map((b) => b.timestamp));
+        if (oldest <= bd.fromMs) break;
+        end = oldest - 1;
+      }
+      return N(out.filter((b) => b.timestamp >= bd.fromMs));
     },
   });
 
@@ -52,10 +64,21 @@
     fetchCandles: async (symbol, tf) => {
       const iv = binTf[tf.id] || '1h';
       const sym = symbol.symbol || symbol.ticker;
-      const url = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(sym)}&interval=${iv}&limit=1000`;
-      const j = await J(url);   // [[openTime,o,h,l,c,v,...], ...]
-      const bars = (j || []).map((r) => ({ timestamp: +r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));
-      return N(bars);
+      const base = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(sym)}&interval=${iv}&limit=1000`;
+      const page = async (endTime) => {
+        const j = await J(base + (endTime ? '&endTime=' + endTime : ''));   // [[openTime,o,h,l,c,v,...], ...]
+        return (j || []).map((r) => ({ timestamp: +r[0], open: +r[1], high: +r[2], low: +r[3], close: +r[4], volume: +r[5] }));
+      };
+      if (!window.LunHist || !window.LunHist.active()) return N(await page(null));
+      const bd = window.LunHist.bounds(365); const out = []; let endTime = bd.tillMs, loops = 0;
+      while (loops++ < 40) {
+        const bars = await page(endTime); if (!bars.length) break;
+        out.push(...bars);
+        const oldest = Math.min.apply(null, bars.map((b) => b.timestamp));
+        if (oldest <= bd.fromMs) break;
+        endTime = oldest - 1;
+      }
+      return N(out.filter((b) => b.timestamp >= bd.fromMs));
     },
   });
 })();

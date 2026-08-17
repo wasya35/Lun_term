@@ -26,7 +26,12 @@
     },
     fetchCandles: async (symbol, tf) => {
       const m = map[tf.id] || map.D1, sym = symbol.symbol || symbol.ticker;
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${m.i}&range=${m.r}`;
+      let span;
+      if (window.LunHist && window.LunHist.active()) {
+        const bd = window.LunHist.bounds(3650);
+        span = `period1=${Math.floor(bd.fromMs / 1000)}&period2=${Math.floor(bd.tillMs / 1000)}`;
+      } else { span = `range=${m.r}`; }
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=${m.i}&${span}`;
       const j = await J(url);
       const res = j && j.chart && j.chart.result && j.chart.result[0];
       if (!res || !res.timestamp) return [];

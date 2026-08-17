@@ -548,6 +548,28 @@
     if (slot.arbBundle) setTimeout(() => buildArb(slot, slot.arbBundle), 1000);
   }
 
+  function reloadAllSlots() { slots.forEach((s) => load(s)); }
+  // модалка выбора диапазона дат «от–до»
+  function historyModal(onApply) {
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    const today = new Date().toISOString().slice(0, 10);
+    const yearAgo = new Date(Date.now() - 366 * 86400000).toISOString().slice(0, 10);
+    openModal('Период графика — от и до', `
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">
+        <label>От<br><input id="hm-from" type="date" value="${yearAgo}" max="${today}" style="${inp}"></label>
+        <label>До<br><input id="hm-till" type="date" value="${today}" max="${today}" style="${inp}"></label>
+        <button id="hm-apply" style="${btn};border-color:#26a69a">Загрузить</button>
+      </div>
+      <p style="color:#8b93a7;margin:10px 0 0">Диапазон применяется ко всем окнам. Для глубокой истории используйте D1/H1 — внутридневные M5/M15 у MOEX ограничены доступной 1-минутной историей.</p>`);
+    document.getElementById('hm-apply').onclick = () => {
+      const f = document.getElementById('hm-from').value, t = document.getElementById('hm-till').value;
+      if (!f || !t || f >= t) { alert('Проверьте даты: «от» должно быть раньше «до».'); return; }
+      onApply(f, t);
+      const bg = document.querySelector('.lun-modal-bg'); if (bg) bg.remove();
+    };
+  }
+
   /* ---------- инструменты рисования ---------- */
   const DRAW_TOOLS = [
     { id: 'horizontalStraightLine', label: 'Уровень',       key: 't' },
@@ -706,6 +728,25 @@
       b.dataset.sync = 'tf:' + tf.id;
       regHotkey(String(i + 1), () => b.click());   // 1..4 → ТФ
     });
+
+    // ---- меню «🗓 Период» (глубина истории для исследований) ----
+    const histWrap = document.getElementById('history');
+    if (histWrap) {
+      const clearHist = () => [...histWrap.querySelectorAll('button')].forEach((x) => x.classList.remove('active'));
+      const setHist = (h, btn) => { window.LUN_HISTORY = h; clearHist(); if (btn) btn.classList.add('active'); reloadAllSlots(); };
+      const PRESETS = [['Авто (по умолчанию)', null], ['3 месяца', { days: 92 }], ['6 месяцев', { days: 183 }],
+        ['1 год', { days: 366 }], ['3 года', { days: 1096 }], ['5 лет', { days: 1827 }], ['Максимум', { days: 4000 }]];
+      PRESETS.forEach(([label, h], i) => { const b = mkBtn(histWrap, label, (bb) => setHist(h, bb), i === 0,
+        'Глубина загружаемой истории графика'); });
+      mkBtn(histWrap, '📅 От–до…', () => { closeMenus(); historyModal((from, till, btnLabel) => {
+        window.LUN_HISTORY = { from, till }; clearHist();
+        [...histWrap.querySelectorAll('button')].forEach((x) => { if (x.textContent === '📅 От–до…') x.classList.add('active'); });
+        reloadAllSlots();
+      }); }, false, 'Задать точный диапазон дат');
+      const hnote = document.createElement('div'); hnote.className = 'menu-note';
+      hnote.textContent = 'Глубоко: D1/H1 (годы). M5/M15 у MOEX ограничены доступной 1-мин историей.';
+      histWrap.appendChild(hnote);
+    }
 
     const indWrap = document.getElementById('indicators');
     ['SMA', 'EMA', 'VWAP'].forEach((k) => { const b = mkBtn(indWrap, k, (b) => {

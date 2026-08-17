@@ -15,9 +15,12 @@
   const fmtDate = (d) => d.toISOString().slice(0, 10);
 
   function rangeFor(tf) {
-    const till = new Date();
-    const backDays = tf.type === 'day' ? 500 : (tf.type === 'hour' ? 45 : 3);
-    return { from: fmtDate(new Date(till.getTime() - backDays * 86400000)), till: fmtDate(till) };
+    // дефолтная глубина (если период не задан через меню) — расширена для
+    // исследований: дни ~4 года, часы ~13 мес, минуты ~20 дней.
+    const defDays = tf.type === 'day' ? 1500 : (tf.type === 'hour' ? 400 : 20);
+    const b = window.LunHist ? window.LunHist.bounds(defDays)
+      : { fromMs: Date.now() - defDays * 86400000, tillMs: Date.now() };
+    return { from: fmtDate(new Date(b.fromMs)), till: fmtDate(new Date(b.tillMs)) };
   }
 
   /* --- прокси (Node /api/... или PHP api.php?fn=...) --- */
@@ -83,13 +86,32 @@
     const { from, till } = rangeFor(tf);
     const agg = (tf.iss === 5 || tf.iss === 15);
     const eng = symbol.engine || 'futures', mkt = symbol.market || 'forts';
-    const fetchC = (secid, iv) => window.LunISS.fetchCandlesFrom(eng, mkt, secid, iv, from, till);
+    // больше страниц при заданном периоде: агрегация из 1-мин — до ~150 страниц
+    // (≈75к минуток), нативные интервалы — до 100.
+    const fetchC = (secid, iv, mp) => window.LunISS.fetchCandlesFrom(eng, mkt, secid, iv, from, till, mp);
+
+    // 0) НЕПРЕРЫВНЫЙ ФЬЮЧЕРС для глубокой истории: одиночный контракт живёт
+    // ~6–9 мес, поэтому при запросе периода > ~200 дней склеиваем квартальные
+    // контракты (H/M/U/Z) с back-adjust. Даёт годы истории для исследований.
+    const bd = window.LunHist ? window.LunHist.bounds(0) : null;
+    const deep = window.LUN_HISTORY && bd && (bd.tillMs - bd.fromMs) > 200 * 86400000;
+    if (deep && mkt === 'forts' && symbol.ticker && symbol.ticker.length > 2) {
+      try {
+        const prefix = symbol.ticker.slice(0, -2);
+        const years = Math.min(12, Math.max(1, Math.ceil((bd.tillMs - bd.fromMs) / (365 * 86400000))));
+        const cf = tf.iss === 5 ? { iss: 1, agg: 5, maxPages: 150 }
+          : (tf.iss === 15 ? { iss: 1, agg: 15, maxPages: 150 } : { iss: tf.iss || 24, agg: 0, maxPages: 100 });
+        const cont = await window.LunISS.fetchContinuousFutures(prefix, years, cf);
+        const trimmed = (cont || []).filter((b) => b.timestamp >= bd.fromMs);
+        if (trimmed.length) { window.LUN_DATA_SOURCE = 'MOEX ISS · непрерывный ' + prefix + ' (' + years + 'г, склейка)'; window.LUN_DATA_ERROR = ''; return trimmed; }
+      } catch (e) { /* не вышло — падаем на одиночный контракт ниже */ }
+    }
 
     // 1) прямой ISS из браузера
     try {
       let bars = agg
-        ? window.LunISS.aggregate(await fetchC(symbol.ticker, 1), tf.iss)
-        : await fetchC(symbol.ticker, tf.iss);
+        ? window.LunISS.aggregate(await fetchC(symbol.ticker, 1, 150), tf.iss)
+        : await fetchC(symbol.ticker, tf.iss, 100);
       if (bars && bars.length) {
         const gw = window.LUN_ISS_GATEWAY;
         window.LUN_DATA_SOURCE = 'MOEX ISS' + (gw && gw !== 'прямой' ? ` (шлюз: ${gw})` : ' (прямо)');

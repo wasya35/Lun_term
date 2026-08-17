@@ -34,6 +34,25 @@
     throw lastErr || new Error('нет доступа к ' + url);
   };
 
+  /* Глубина истории графика. window.LUN_HISTORY:
+   *   null            — авто (дефолтная глубина по ТФ)
+   *   { days: N }      — последние N дней
+   *   { from, till }   — явный диапазон 'YYYY-MM-DD'
+   * bounds(defDays) — границы в ms; провайдеры и data.js читают отсюда. */
+  window.LUN_HISTORY = null;
+  window.LunHist = {
+    bounds(defDays) {
+      const H = window.LUN_HISTORY, till = Date.now();
+      if (H && H.from && H.till) {
+        const f = Date.parse(H.from + 'T00:00:00Z'), t = Date.parse(H.till + 'T23:59:59Z');
+        if (f && t && t > f) return { fromMs: f, tillMs: t };
+      }
+      const days = (H && H.days) ? H.days : defDays;
+      return { fromMs: till - days * 86400000, tillMs: till };
+    },
+    active() { return !!window.LUN_HISTORY; },
+  };
+
   // нормализация: сортировка по времени + удаление дублей по timestamp
   window.LunNormBars = function (bars) {
     bars.sort((a, b) => a.timestamp - b.timestamp);
