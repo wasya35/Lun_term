@@ -188,7 +188,16 @@
   async function fetchFUTOI(code, from, till) {
     const url = `https://iss.moex.com/iss/analyticalproducts/futoi/securities/${encodeURIComponent(code)}.json?iss.meta=off&from=${from}&till=${till}`;
     const pages = await getAllPages(url, 'futoi');
-    const out = []; for (const j of pages) for (const o of rowsToObjects(j.futoi)) out.push(o);
+    const out = [];
+    for (const j of pages) {
+      // имя таблицы может отличаться — берём любую с колонкой clgroup
+      for (const key of Object.keys(j)) {
+        const t = j[key];
+        if (t && t.columns && t.data && t.columns.some((c) => String(c).toLowerCase() === 'clgroup')) {
+          for (const o of rowsToObjects(t)) out.push(o);
+        }
+      }
+    }
     return out;
   }
 

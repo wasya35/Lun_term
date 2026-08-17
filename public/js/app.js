@@ -588,8 +588,12 @@
     // Экраны — сетка графиков
     const layWrap = document.getElementById('layouts');
     Object.keys(LAYOUTS).forEach((k) => mkBtn(layWrap, LAYOUTS[k].label, (b) => {
-      closeMenus(); [...layWrap.children].forEach((x) => x.classList.remove('active')); b.classList.add('active'); setLayout(k);
+      closeMenus(); [...layWrap.querySelectorAll('[data-lay]')].forEach((x) => x.classList.remove('active')); b.classList.add('active'); setLayout(k);
     }, k === '1', LAYOUTS[k].label).dataset.lay = k);
+    const syncBtn = mkBtn(layWrap, '🔗 Синхр. кроссхейр', (b) => {
+      syncCross = !b.classList.contains('active'); b.classList.toggle('active', syncCross); if (!syncCross) hideSync();
+    }, true, 'Курсор в одном окне рисует перекрестье по тому же времени во всех (и по цене — где инструмент тот же)');
+    syncBtn.style.marginTop = '4px';
   }
 
   /* ---------- мультичарт: сетка независимых слотов ---------- */
@@ -602,6 +606,36 @@
   };
   function highlightActive() {
     slots.forEach((s, i) => { if (s.cellEl) s.cellEl.classList.toggle('cell-active', i === activeIdx && slots.length > 1); });
+  }
+
+  /* ---------- синхронизация кроссхейра между ячейками ---------- */
+  let syncCross = true;                 // синхронизировать перекрестье
+  let syncRaf = null;
+  const idxForTs = (list, ts) => { let lo = 0, hi = list.length - 1, idx = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) { idx = m; lo = m + 1; } else hi = m - 1; } return idx; };
+  function hideSync() { slots.forEach((s) => { if (s.lines) { s.lines.v.style.display = 'none'; s.lines.h.style.display = 'none'; } }); }
+  function doSync(src, clientX, clientY) {
+    if (!syncCross || slots.length < 2) { hideSync(); return; }
+    let coord; try { const r = src.cellEl.getBoundingClientRect(); coord = src.chart.convertFromPixel({ x: clientX - r.left, y: clientY - r.top }, { paneId: 'candle_pane' }); } catch (e) { return; }
+    if (!coord) return;
+    const srcList = src.chart.getDataList();
+    const ts = coord.timestamp != null ? coord.timestamp : (srcList[coord.dataIndex] && srcList[coord.dataIndex].timestamp);
+    const val = coord.value;
+    if (ts == null) return;
+    slots.forEach((s) => {
+      if (!s.lines) return;
+      const list = s.chart.getDataList(); const idx = idxForTs(list, ts);
+      let px = null; if (idx >= 0) { try { px = s.chart.convertToPixel({ dataIndex: idx, value: val }, { paneId: 'candle_pane' }); } catch (e) {} }
+      if (px && isFinite(px.x)) { s.lines.v.style.left = px.x + 'px'; s.lines.v.style.display = 'block'; } else s.lines.v.style.display = 'none';
+      if (px && isFinite(px.y) && s.instrument.id === src.instrument.id) { s.lines.h.style.top = px.y + 'px'; s.lines.h.style.display = 'block'; } else s.lines.h.style.display = 'none';
+    });
+  }
+  function wireSync(slot) {
+    const cell = slot.cellEl;
+    const v = document.createElement('div'); v.className = 'sync-vline';
+    const h = document.createElement('div'); h.className = 'sync-hline';
+    cell.appendChild(v); cell.appendChild(h); slot.lines = { v, h };
+    cell.addEventListener('mousemove', (ev) => { if (syncRaf) cancelAnimationFrame(syncRaf); syncRaf = requestAnimationFrame(() => doSync(slot, ev.clientX, ev.clientY)); });
+    cell.addEventListener('mouseleave', hideSync);
   }
   function slotHasSync(key) {
     const p = key.split(':'), t = p[0], arg = p[1];
@@ -651,6 +685,7 @@
       slot.chart = kc.init(cell, { styles: THEME });
       cell.addEventListener('mousedown', () => activateSlot(i));
       slots.push(slot);
+      if (L.cells > 1) wireSync(slot);
     }
     activeIdx = 0; state = slots[0]; window.LUN_CHART = state.chart;
     slots.forEach((s) => { state = s; buildPanes(); });   // buildPanes синхронно, по активному state
