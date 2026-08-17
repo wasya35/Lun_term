@@ -76,7 +76,7 @@
       signPane: null, signPanes: {}, volumePane: null, aspectPanes: {}, allAspectPane: null,
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
       overlayIds: {}, candleInds: {}, selectedOverlayId: null, forecastOn: false, paneWish: {},
-      compareInstrument: null, comparePane: false,
+      compareInstrument: null, comparePane: false, oiPane: null,
     };
   }
   let slots = [];
@@ -263,6 +263,42 @@
     slot.comparePane = true;
   }
   async function addCompare(instr) { if (!instr) return; state.compareInstrument = instr; await refreshCompare(state); }
+
+  /* ---------- открытый интерес + физики/юрики (FUTOI, MOEX) ---------- */
+  async function rebuildOI(slot) {
+    slot = slot || state; const ins = slot.instrument;
+    if ((ins.provider || 'moex') !== 'moex') { alert('Открытый интерес — только для фьючерсов MOEX.'); return false; }
+    const ticker = await window.LunData.resolveTicker(ins);
+    const code = ticker.replace(/[FGHJKMNQUVXZ]\d$/, '');   // SiU6 -> Si, GDU6 -> GD
+    const till = new Date(), from = new Date(till.getTime() - 400 * 86400000), fmt = (d) => d.toISOString().slice(0, 10);
+    const byDate = {}; let latest = null, split = false;
+    try {
+      const rows = await window.LunISS.fetchFUTOI(code, fmt(from), fmt(till));
+      const perDate = {};
+      for (const r of rows) {
+        const d = r.tradedate || r.TRADEDATE; if (!d) continue;
+        const g = String(r.clgroup || r.CLGROUP || '').toUpperCase();
+        const L = +(r.pos_long != null ? r.pos_long : r.POS_LONG) || 0, S = +(r.pos_short != null ? r.pos_short : r.POS_SHORT) || 0;
+        (perDate[d] = perDate[d] || {})[g] = { L, S };
+      }
+      Object.keys(perDate).sort().forEach((d) => {
+        const o = perDate[d], fiz = o.FIZ || { L: 0, S: 0 }, yur = o.YUR || { L: 0, S: 0 };
+        const rec = { fizNet: fiz.L - fiz.S, yurNet: yur.L - yur.S, oi: fiz.L + yur.L };
+        byDate[d] = rec; latest = Object.assign({ date: d }, rec);
+      });
+      split = !!latest;
+    } catch (e) { /* ниже фолбэк */ }
+    if (!split) {
+      try { const rows = await window.LunISS.fetchOIHistory(ticker, fmt(from), fmt(till)); rows.forEach((r) => { byDate[r.date] = { oi: r.oi }; latest = { date: r.date, oi: r.oi }; }); } catch (e) {}
+    }
+    if (!Object.keys(byDate).length) { alert('ОИ не получен для ' + code + ' (проверь строку данных / коды).'); return false; }
+    const paneId = 'pane_oi';
+    try { slot.chart.removeIndicator({ paneId }); } catch (e) {}
+    slot.chart.createIndicator({ name: 'OpenInterest', paneId, shortName: 'ОИ ' + code + (split ? ' физ/юр' : ''), extendData: { byDate, latest, split } }, false);
+    slot.oiPane = paneId; wishPane(paneId, { height: 84, order: 92 });
+    return true;
+  }
+  function removeOI(slot) { slot = slot || state; if (slot.oiPane) { try { slot.chart.removeIndicator({ paneId: slot.oiPane }); } catch (e) {} slot.oiPane = null; } }
   function removeCompare() {
     if (state.comparePane) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'Compare' }); } catch (e) {} state.comparePane = false; }
     state.compareInstrument = null;
@@ -301,6 +337,8 @@
     if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);
     // обновить наложение 2-го графика под новый ТФ/инструмент
     if (slot.compareInstrument) setTimeout(() => refreshCompare(slot), 800);
+    // обновить ОИ под новый инструмент
+    if (slot.oiPane) setTimeout(() => rebuildOI(slot), 900);
   }
 
   /* ---------- инструменты рисования ---------- */
@@ -480,6 +518,13 @@
     }, false, 'Марковский режим: лента BEAR/SIDE/BULL + сигнал + матрица переходов (M)');
     mkBtnRef.dataset.sync = 'markov';
     regHotkey('m', () => mkBtnRef.click());
+    // открытый интерес + позиции физлиц/юрлиц (FUTOI, MOEX, дневной)
+    const oiBtn = mkBtn(indWrap, 'ОИ физ/юр', (b) => {
+      const on = !b.classList.contains('active');
+      if (on) rebuildOI(state).then((ok) => b.classList.toggle('active', ok !== false));
+      else { b.classList.remove('active'); removeOI(state); }
+    }, false, 'Открытый интерес и чистые позиции физлиц/юрлиц (FUTOI, только фьючерсы MOEX, дневной)');
+    oiBtn.dataset.sync = 'oi';
     // узлы Луны (0°/15°) и сильные бары на цене — для поиска «сильный бар в узле»
     [['MoonNodes', 'Узлы ☾', 'Ингрессии (0°) и середины (15°) знаков Луны на цене'],
      ['StrongBars', 'Сильбары', 'Сила: всплеск объёма ≥2× среднего · силища (двойной знак): объём держится'],
@@ -574,6 +619,7 @@
       case 'allasp': return !!state.allAspectPane;
       case 'uranus': return !!state.uranusPane;
       case 'forecast': return !!state.forecastOn;
+      case 'oi': return !!state.oiPane;
     }
     return false;
   }

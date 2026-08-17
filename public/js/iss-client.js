@@ -182,5 +182,24 @@
     return stitchContracts(contracts);
   }
 
-  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront };
+  // FUTOI — открытый интерес по физлицам/юрлицам (аналитический продукт ISS).
+  // code — код актива фьючерса (Si, GD, Eu, BR, CR ...). Возвращает строки по
+  // датам/времени с колонками clgroup (FIZ/YUR), pos_long, pos_short.
+  async function fetchFUTOI(code, from, till) {
+    const url = `https://iss.moex.com/iss/analyticalproducts/futoi/securities/${encodeURIComponent(code)}.json?iss.meta=off&from=${from}&till=${till}`;
+    const pages = await getAllPages(url, 'futoi');
+    const out = []; for (const j of pages) for (const o of rowsToObjects(j.futoi)) out.push(o);
+    return out;
+  }
+
+  // Дневная история открытого интереса по конкретному контракту (OPENPOSITION).
+  async function fetchOIHistory(secid, from, till) {
+    const url = `https://iss.moex.com/iss/history/engines/futures/markets/forts/securities/${encodeURIComponent(secid)}.json`
+      + `?iss.meta=off&from=${from}&till=${till}&history.columns=TRADEDATE,OPENPOSITION`;
+    const pages = await getAllPages(url, 'history');
+    const out = []; for (const j of pages) for (const o of rowsToObjects(j.history)) { if (o.OPENPOSITION != null && o.TRADEDATE) out.push({ date: o.TRADEDATE, oi: +o.OPENPOSITION }); }
+    return out;
+  }
+
+  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchOIHistory };
 })();

@@ -632,4 +632,43 @@
       return true;
     },
   });
+
+  /* ============ Открытый интерес + физики/юрики (FUTOI) ============
+   * Дневной ряд: byDate['YYYY-MM-DD'] = { fizNet, yurNet, oi }. При split —
+   * чистые позиции физлиц (синяя) и юрлиц (оранжевая) от нуля; иначе — линия
+   * общего ОИ (нормировка по видимому диапазону). Дата бара — по МСК. */
+  kc.registerIndicator({
+    name: 'OpenInterest',
+    shortName: 'ОИ',
+    series: 'normal',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {}, bd = ed.byDate; if (!bd) return true;
+      const H = bounding.height, mid = H / 2, list = chart.getDataList(), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.realTo != null ? range.realTo : range.to));
+      const dOf = (ts) => new Date(ts + MSK_OFFSET).toISOString().slice(0, 10);
+      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      if (ed.split) {
+        const pts = []; let amax = 1;
+        for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r) continue; pts.push([i, r.fizNet, r.yurNet]); amax = Math.max(amax, Math.abs(r.fizNet), Math.abs(r.yurNet)); }
+        ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(bounding.width, mid); ctx.stroke();
+        const yOf = (v) => mid - (v / amax) * (H * 0.42);
+        const line = (idx, color) => { ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath(); pts.forEach((p, k) => { const x = xAxis.convertToPixel(p[0]), y = yOf(p[idx]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); };
+        if (pts.length >= 2) { line(2, '#e0a030'); line(1, '#3aa0ff'); }
+        const L = ed.latest || {};
+        ctx.fillStyle = '#3aa0ff'; ctx.fillText('физ net ' + ((L.fizNet >= 0 ? '+' : '') + (L.fizNet || 0)), 6, 3);
+        ctx.fillStyle = '#e0a030'; ctx.fillText('юр net ' + ((L.yurNet >= 0 ? '+' : '') + (L.yurNet || 0)), 130, 3);
+        ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ ' + (L.oi || 0), 250, 3);
+      } else {
+        const pts = []; let mn = Infinity, mx = -Infinity;
+        for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r || r.oi == null) continue; pts.push([i, r.oi]); mn = Math.min(mn, r.oi); mx = Math.max(mx, r.oi); }
+        if (pts.length < 2 || !(mx > mn)) return true;
+        const yOf = (v) => H * 0.9 - ((v - mn) / (mx - mn)) * H * 0.8;
+        ctx.strokeStyle = '#6bd3a0'; ctx.lineWidth = 1.4; ctx.beginPath(); pts.forEach((p, k) => { const x = xAxis.convertToPixel(p[0]), y = yOf(p[1]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke();
+        ctx.fillStyle = '#6bd3a0'; ctx.fillText('Открытый интерес', 6, 3);
+      }
+      return true;
+    },
+  });
 })();
