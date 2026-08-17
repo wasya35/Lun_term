@@ -65,7 +65,9 @@
     // данные тянет iss-client через LunData.fetchFor, поэтому prov может быть null.
     const prov = window.LunProviders && window.LunProviders.get(provId);
     const ins = slot.instrument, tf = slot.tf;
-    const push = (bar) => { try { slot.chart.updateData(bar); } catch (e) {} };
+    // KLineChart v10: свечу отдаём в колбэк subscribeBar (loader.pushBar),
+    // он делает _addData(bar,"update") — обновляет последнюю или добавляет новую.
+    const push = (bar) => { try { if (slot.loader && slot.loader.pushBar) slot.loader.pushBar(bar); } catch (e) {} };
     // REST-обновление последних баров (опрос и дозагрузка после фона). Один
     // источник на всех: LunData.fetchFor (умеет и MOEX, и провайдеры реестра).
     let symbolObj = { provider: provId, symbol: ins.symbol, ticker: ins.ticker, engine: ins.engine, market: ins.market };

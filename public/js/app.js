@@ -71,7 +71,7 @@
   // всегда указывает на АКТИВНЫЙ слот, поэтому весь тулбар работает как раньше.
   function makeSlot(i) {
     return {
-      slotId: i, chart: null, cellEl: null,
+      slotId: i, chart: null, cellEl: null, loader: null,
       instrument: window.LUN.INSTRUMENTS[0], tf: DEFAULT_TF,
       signPane: null, signPanes: {}, volumePane: null, aspectPanes: {}, allAspectPane: null,
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
@@ -362,7 +362,8 @@
       engine: ins.engine || 'futures', market: ins.market || 'forts', type: ins.type || 'futures',
     });
     c.setPeriod({ span: tf.span, type: tf.type });
-    c.setDataLoader(window.LunData.makeDataLoader());
+    slot.loader = window.LunData.makeDataLoader();   // держим ссылку — через неё поток толкает свечи
+    c.setDataLoader(slot.loader);
     if (slot === state) document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
     // подключить/переподключить поток после подгрузки истории
     if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);

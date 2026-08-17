@@ -134,7 +134,11 @@
   }
 
   function makeDataLoader() {
-    return {
+    // KLineChart v10: реалтайм идёт НЕ через chart.updateData (такого метода в
+    // этой сборке нет), а через колбэк subscribeBar. Ловим его в loader.pushBar —
+    // stream.js толкает туда новые/обновлённые свечи (_addData(bar,"update")).
+    const loader = {
+      pushBar: null,
       getBars: async ({ type, symbol, period, callback }) => {
         if (type !== 'init') { callback([], false); return; }   // прототип: без подгрузки истории
         const tf = window.LUN.TIMEFRAMES.find((t) => t.span === period.span && t.type === period.type) || { iss: 60 };
@@ -144,7 +148,10 @@
         else console.warn('[data] демо-режим:', window.LUN_DATA_ERROR);
         window.dispatchEvent(new CustomEvent('lun:datasource'));
       },
+      subscribeBar: ({ callback }) => { loader.pushBar = callback; },
+      unsubscribeBar: () => { loader.pushBar = null; },
     };
+    return loader;
   }
 
   // Свечи произвольного инструмента (для наложения 2-го графика). Не трогает
