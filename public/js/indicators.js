@@ -703,4 +703,92 @@
       return true;
     },
   });
+
+  /* ============ Ганн: ретрейсменты (доли диапазона видимого окна) ============
+   * Горизонтали на 1/8·1/3·1/2 и т.д. между минимумом и максимумом видимых
+   * баров. Авто-диапазон (без клика): при прокрутке пересчитывается. 0/50/100 —
+   * жирные, остальные пунктиром. */
+  kc.registerIndicator({
+    name: 'GannRetr', shortName: 'Ганн-ретр.', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, yAxis }) => {
+      const list = chart.getDataList(); if (!list.length) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      let hi = -Infinity, lo = Infinity, prec = 1;
+      for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low; }
+      if (!(hi > lo)) return true;
+      prec = hi < 10 ? 4 : (hi < 1000 ? 2 : 1);
+      const cfg = (window.LUN.GANNTOOLS && window.LUN.GANNTOOLS.retr) || { levels: [12.5, 25, 37.5, 50, 62.5, 75, 87.5] };
+      const W = bounding.width;
+      const drawLvl = (pct, price, strong) => {
+        const y = yAxis.convertToPixel(price); if (y < 0 || y > bounding.height) return;
+        ctx.strokeStyle = strong ? 'rgba(224,208,96,0.55)' : 'rgba(120,150,200,0.28)';
+        ctx.lineWidth = 1; ctx.setLineDash(strong ? [] : [4, 3]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = strong ? '#e0d060' : '#8aa0c8'; ctx.font = '10px system-ui, sans-serif';
+        ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+        ctx.fillText(pct + '%  ' + price.toFixed(prec), 4, y - 1);
+      };
+      drawLvl(0, lo, true); drawLvl(100, hi, true);
+      cfg.levels.forEach((p) => drawLvl(p, lo + (hi - lo) * p / 100, Math.abs(p - 50) < 0.01));
+      return true;
+    },
+  });
+
+  /* ============ Ганн: уровни квадрата (из калькулятора) ============
+   * Рисует горизонтали по уровням из extendData.levels (считает app.js).
+   * Кардинальные углы (0/90/180/270) — красные сплошные, диагонали — синие
+   * пунктиром. Уровни вне видимой области пропускаются. */
+  kc.registerIndicator({
+    name: 'GannSquareLevels', shortName: 'Квадрат Ганна', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, yAxis, indicator }) => {
+      const ed = indicator.extendData || {}, lv = ed.levels; if (!lv || !lv.length) return true;
+      const prec = ed.prec != null ? ed.prec : 1, W = bounding.width, H = bounding.height;
+      if (ed.anchor != null) {
+        const y = yAxis.convertToPixel(ed.anchor);
+        if (y >= 0 && y <= H) { ctx.strokeStyle = 'rgba(224,208,96,0.85)'; ctx.setLineDash([2, 2]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]); }
+      }
+      lv.forEach((L) => {
+        const y = yAxis.convertToPixel(L.price); if (y < 0 || y > H) return;
+        const card = (L.deg % 90 === 0);
+        ctx.strokeStyle = card ? 'rgba(239,83,80,0.55)' : 'rgba(58,160,255,0.40)';
+        ctx.lineWidth = card ? 1.2 : 1; ctx.setLineDash(card ? [] : [5, 3]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = card ? '#ef8a88' : '#7fb2ff'; ctx.font = '10px system-ui, sans-serif';
+        ctx.textBaseline = 'bottom'; ctx.textAlign = 'right';
+        ctx.fillText((L.tag || (L.deg + '°')) + '  ' + L.price.toFixed(prec), W - 4, y - 1);
+      });
+      return true;
+    },
+  });
+
+  /* ============ Ганн: мастер-циклы времени (вертикали от пивота) ============
+   * Пивот = более свежий из видимых экстремумов (макс/мин). Вправо от него —
+   * вертикали через N баров (30·45·60·90·120·144·180·270·360). Циклы за пределы
+   * данных появляются по мере прокрутки/офсета вправо. */
+  kc.registerIndicator({
+    name: 'GannCycles', shortName: 'Мастер-циклы', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const list = chart.getDataList(); if (list.length < 5) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      let hiI = from, loI = from;
+      for (let i = from; i < to; i++) { if (list[i].high > list[hiI].high) hiI = i; if (list[i].low < list[loI].low) loI = i; }
+      const pivotI = Math.max(hiI, loI);
+      const nums = (window.LUN.GANNTOOLS && window.LUN.GANNTOOLS.cycles && window.LUN.GANNTOOLS.cycles.nums) || [30, 60, 90, 144, 180, 360];
+      const H = bounding.height, W = bounding.width;
+      const drawV = (i, color, dash, label) => {
+        const x = xAxis.convertToPixel(i); if (x < -2 || x > W + 2) return;
+        ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash(dash);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]);
+        if (label) { ctx.fillStyle = color; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText(label, x + 2, 2); }
+      };
+      drawV(pivotI, 'rgba(224,208,96,0.85)', [], 'пивот');
+      nums.forEach((n) => drawV(pivotI + n, 'rgba(58,160,255,0.42)', [4, 3], '+' + n));
+      return true;
+    },
+  });
 })();

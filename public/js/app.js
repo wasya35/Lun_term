@@ -335,6 +335,86 @@
     state.compareInstrument = null;
   }
 
+  /* ---------- инструменты Ганна ---------- */
+  function removeCandInd(name) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {} delete state.candleInds[name]; }
+
+  // Уровни квадрата Ганна. √-спираль: полный оборот (360°) = +2 к √цены.
+  // base: '9'→8 делений (крест 45°), 'hex'→6 (60°), '360'→24 (15°),
+  // 'natural'→квадраты натуральных чисел n² и серединные точки n²+n.
+  function gannSquareLevels(price, base, turns) {
+    price = +price; turns = Math.max(1, Math.min(8, +turns || 3));
+    if (!(price > 0)) return [];
+    const out = [];
+    if (base === 'natural') {
+      const n = Math.round(Math.sqrt(price));
+      for (let j = -turns; j <= turns; j++) {
+        const m = n + j; if (m <= 0) continue;
+        out.push({ price: m * m, deg: 0, tag: m + '²' });
+        out.push({ price: m * m + m, deg: 45, tag: m + '²+' + m });
+      }
+      return out.sort((a, b) => a.price - b.price);
+    }
+    const divs = base === 'hex' ? 6 : (base === '360' ? 24 : 8);
+    const stepDeg = 360 / divs, root = Math.sqrt(price), dRoot = 2 / divs;
+    for (let k = -turns * divs; k <= turns * divs; k++) {
+      if (k === 0) continue;
+      const r = root + k * dRoot; if (r <= 0) continue;
+      out.push({ price: r * r, deg: ((k * stepDeg) % 360 + 360) % 360, k });
+    }
+    return out.sort((a, b) => a.price - b.price);
+  }
+  function applyGannSquare(levels, anchor, prec) {
+    try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'GannSquareLevels' }); } catch (e) {}
+    state.chart.createIndicator({ name: 'GannSquareLevels', paneId: 'candle_pane', extendData: { levels, anchor, prec } }, true);
+    state.candleInds['GannSquareLevels'] = true;
+  }
+  function gannSquareModal() {
+    let last = 0; try { const l = state.chart.getDataList(); last = l.length ? l[l.length - 1].close : 0; } catch (e) {}
+    const prec = state.instrument.pricePrecision != null ? state.instrument.pricePrecision : 1;
+    const S = window.LUN.GANNTOOLS.square || { base: '9', turns: 3 };
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    const opt = (v, t) => `<option value="${v}"${v === S.base ? ' selected' : ''}>${t}</option>`;
+    openModal('Калькулятор квадратов Ганна', `
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
+        <label>Цена (пивот)<br><input id="gsq-price" type="number" step="any" value="${last}" style="${inp};width:130px"></label>
+        <label>База<br><select id="gsq-base" style="${inp}">
+          ${opt('9', 'Квадрат 9 · крест 45°')}${opt('hex', 'Шестиугольник · 60°')}${opt('360', 'Круг 360° · 15°')}${opt('natural', 'Натуральные квадраты')}
+        </select></label>
+        <label>Оборотов (колец)<br><input id="gsq-turns" type="number" min="1" max="8" value="${S.turns}" style="${inp};width:80px"></label>
+        <button id="gsq-calc" style="${btn}">Рассчитать</button>
+      </div>
+      <div id="gsq-out"></div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button id="gsq-apply" style="${btn};border-color:#26a69a">Нанести на график</button>
+        <button id="gsq-clear" style="${btn};border-color:#8b93a7">Убрать уровни</button>
+      </div>
+      <p style="color:#8b93a7;margin:10px 0 0">Кардинальные углы (0/90/180/270°) — сильнейшие поддержки/сопротивления. Квадрат 144, Box и сквоузинг (нужен масштаб цена/бар) — следующим этапом.</p>`);
+    const $ = (id) => document.getElementById(id);
+    let levels = [];
+    const recalc = () => {
+      const price = +$('gsq-price').value, base = $('gsq-base').value, turns = +$('gsq-turns').value;
+      window.LUN.GANNTOOLS.square = { base, turns };
+      levels = gannSquareLevels(price, base, turns);
+      if (!levels.length) { $('gsq-out').innerHTML = '<p style="color:#e0a030">Введите положительную цену.</p>'; return; }
+      const rows = levels.map((L) => {
+        const dist = (L.price - price) / price * 100, up = L.price >= price;
+        return `<tr><td style="padding:2px 10px 2px 0;font-variant-numeric:tabular-nums">${L.price.toFixed(prec)}</td>`
+          + `<td style="padding:2px 10px 2px 0;color:#8b93a7">${L.tag || (L.deg + '°')}</td>`
+          + `<td style="padding:2px 10px 2px 0;color:${up ? '#ef5350' : '#26a69a'}">${up ? 'сопр.' : 'подд.'}</td>`
+          + `<td style="padding:2px 0;color:#8b93a7">${dist > 0 ? '+' : ''}${dist.toFixed(2)}%</td></tr>`;
+      }).join('');
+      $('gsq-out').innerHTML = `<div style="max-height:330px;overflow:auto"><table style="border-collapse:collapse;font-size:12px">`
+        + `<thead><tr style="color:#8b93a7;text-align:left"><th style="padding-right:10px">Уровень</th><th style="padding-right:10px">Угол</th><th style="padding-right:10px">Тип</th><th>Δ</th></tr></thead>`
+        + `<tbody>${rows}</tbody></table></div>`;
+    };
+    $('gsq-calc').onclick = recalc;
+    $('gsq-base').onchange = recalc; $('gsq-turns').onchange = recalc; $('gsq-price').onchange = recalc;
+    $('gsq-apply').onclick = () => { if (!levels.length) recalc(); if (levels.length) applyGannSquare(levels, +$('gsq-price').value, prec); };
+    $('gsq-clear').onclick = () => removeCandInd('GannSquareLevels');
+    recalc();
+  }
+
   /* ---------- ценовые индикаторы (тумблеры) ---------- */
   function toggleOverlay(kind, on) {
     const c = state.chart, IND = window.LUN.INDICATORS;
@@ -580,6 +660,26 @@
     buildAspectButtons();
 
     buildCycleButtons();
+
+    // ---- меню «📐 Ганн» ----
+    const gannWrap = document.getElementById('gann');
+    if (gannWrap) {
+      const gsub = (t) => { const h = document.createElement('div'); h.className = 'menu-sub'; h.textContent = t; gannWrap.appendChild(h); };
+      gsub('Квадраты');
+      mkBtn(gannWrap, '⊞ Калькулятор квадратов…', () => { closeMenus(); gannSquareModal(); }, false, 'Квадрат 9 / шестиугольник / круг 360° / натуральные — уровни поддержки и сопротивления');
+      mkBtn(gannWrap, '✕ убрать уровни квадрата', () => { closeMenus(); removeCandInd('GannSquareLevels'); }, false, 'Убрать нанесённые уровни квадрата');
+      gsub('Уровни и циклы');
+      [['GannRetr', '📏 Ганн-ретрейсменты', 'Горизонтали 1/8·1/3·1/2 диапазона видимого окна'],
+       ['GannCycles', '⏲ Мастер-циклы времени', 'Вертикали 30·45·60·90·120·144·180·270·360 баров от последнего экстремума']].forEach(([name, label, tip]) =>
+        mkBtn(gannWrap, label, (b) => {
+          const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+          if (on) { state.chart.createIndicator({ name, paneId: 'candle_pane' }, true); state.candleInds[name] = true; }
+          else removeCandInd(name);
+        }, false, tip));
+      const gnote = document.createElement('div'); gnote.className = 'menu-note';
+      gnote.textContent = 'Box, Квадрат на графике, сквоузинг и Астро-Ганн — следующие этапы';
+      gannWrap.appendChild(gnote);
+    }
 
     const drawWrap = document.getElementById('drawtools');
     DRAW_TOOLS.forEach((t) => {
