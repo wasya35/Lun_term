@@ -76,6 +76,7 @@
       signPane: null, signPanes: {}, volumePane: null, aspectPanes: {}, allAspectPane: null,
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
       overlayIds: {}, candleInds: {}, selectedOverlayId: null, forecastOn: false, paneWish: {},
+      compareInstrument: null, comparePane: false,
     };
   }
   let slots = [];
@@ -251,6 +252,22 @@
     createVolumePane();
   }
 
+  /* ---------- наложение 2-го инструмента линией ---------- */
+  async function refreshCompare(slot) {
+    slot = slot || state; const instr = slot.compareInstrument; if (!instr || !window.LunData.fetchFor) return;
+    let bars = null; try { bars = await window.LunData.fetchFor(instr, slot.tf); } catch (e) {}
+    if (!bars || !bars.length) return;
+    const cb = bars.map((b) => ({ timestamp: b.timestamp, close: b.close }));
+    try { slot.chart.removeIndicator({ paneId: 'candle_pane', name: 'Compare' }); } catch (e) {}
+    slot.chart.createIndicator({ name: 'Compare', paneId: 'candle_pane', extendData: { bars: cb, label: instr.title || instr.ticker || instr.id, color: '#e07bd0' } }, true);
+    slot.comparePane = true;
+  }
+  async function addCompare(instr) { if (!instr) return; state.compareInstrument = instr; await refreshCompare(state); }
+  function removeCompare() {
+    if (state.comparePane) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'Compare' }); } catch (e) {} state.comparePane = false; }
+    state.compareInstrument = null;
+  }
+
   /* ---------- ценовые индикаторы (тумблеры) ---------- */
   function toggleOverlay(kind, on) {
     const c = state.chart, IND = window.LUN.INDICATORS;
@@ -282,6 +299,8 @@
     if (slot === state) document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
     // подключить/переподключить поток после подгрузки истории
     if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);
+    // обновить наложение 2-го графика под новый ТФ/инструмент
+    if (slot.compareInstrument) setTimeout(() => refreshCompare(slot), 800);
   }
 
   /* ---------- инструменты рисования ---------- */
@@ -426,6 +445,9 @@
       [...insWrap.children].forEach((x) => x.classList.remove('active'));
     }); }, false, 'Поиск любой акции или фьючерса MOEX');
     findBtn.classList.add('find-btn');
+    // 2-й график линией поверх активного: выбор через окно инструментов
+    mkBtn(insWrap, '➕ 2-й график (линией)', () => { closeMenus(); window.LunInstruments.open((instr) => addCompare(instr)); }, false, 'Наложить второй инструмент линией на активный график');
+    mkBtn(insWrap, '✕ убрать 2-й график', () => { closeMenus(); removeCompare(); }, false, 'Убрать наложение');
 
     const tfWrap = document.getElementById('timeframes');
     window.LUN.TIMEFRAMES.forEach((tf, i) => {

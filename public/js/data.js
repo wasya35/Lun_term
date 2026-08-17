@@ -147,5 +147,16 @@
     };
   }
 
-  window.LunData = { makeDataLoader, resolveTicker };
+  // Свечи произвольного инструмента (для наложения 2-го графика). Не трогает
+  // строку статуса основного источника.
+  async function fetchFor(instrument, tf) {
+    const src = window.LUN_DATA_SOURCE, err = window.LUN_DATA_ERROR;
+    const ticker = await resolveTicker(instrument);
+    const symbol = Object.assign({}, instrument, { ticker, symbol: instrument.symbol || ticker, provider: instrument.provider || 'moex', engine: instrument.engine, market: instrument.market });
+    const bars = await loadCandles(symbol, tf);
+    window.LUN_DATA_SOURCE = src; window.LUN_DATA_ERROR = err;
+    return bars;
+  }
+
+  window.LunData = { makeDataLoader, resolveTicker, fetchFor };
 })();

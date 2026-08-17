@@ -603,4 +603,33 @@
       return true;
     },
   });
+
+  /* ============ Наложение 2-го инструмента линией ============
+   * Второй инструмент рисуется линией поверх цены, нормируясь в высоту панели
+   * по видимому диапазону (сравниваем ФОРМУ движения, а не абсолют). Данные —
+   * в extendData.bars ([{timestamp,close}], возр.). */
+  kc.registerIndicator({
+    name: 'Compare',
+    shortName: 'Сравнение',
+    series: 'price',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {}; const cb = ed.bars;
+      if (!cb || cb.length < 2) return true;
+      const H = bounding.height, list = chart.getDataList(), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.realTo != null ? range.realTo : range.to));
+      const closeAt = (ts) => { let lo = 0, hi = cb.length - 1, res = null; while (lo <= hi) { const m = (lo + hi) >> 1; if (cb[m].timestamp <= ts) { res = cb[m]; lo = m + 1; } else hi = m - 1; } return res ? res.close : null; };
+      let mn = Infinity, mx = -Infinity; const pts = [];
+      for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const c = closeAt(bar.timestamp); if (c == null) continue; pts.push([i, c]); if (c < mn) mn = c; if (c > mx) mx = c; }
+      if (pts.length < 2 || !(mx > mn)) return true;
+      const yOf = (c) => H * 0.92 - ((c - mn) / (mx - mn)) * H * 0.84;
+      ctx.strokeStyle = ed.color || '#e07bd0'; ctx.lineWidth = 1.4; ctx.beginPath();
+      pts.forEach(([i, c], k) => { const x = xAxis.convertToPixel(i), y = yOf(c); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+      ctx.stroke();
+      ctx.fillStyle = ed.color || '#e07bd0'; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.fillText((ed.label || 'сравнение') + ' · линия (норм.)', 6, 4);
+      return true;
+    },
+  });
 })();
