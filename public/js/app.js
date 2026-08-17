@@ -77,6 +77,7 @@
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
       overlayIds: {}, candleInds: {}, selectedOverlayId: null, forecastOn: false, paneWish: {},
       compareInstrument: null, comparePane: false, oiPane: null, arbPane: null, arbBundle: null,
+      retroPane: null,
     };
   }
   let slots = [];
@@ -415,6 +416,46 @@
     recalc();
   }
 
+  /* --- Астро-Ганн: панель ретроградностей + настройка планетарных линий --- */
+  function createRetroPane() {
+    state.retroPane = 'pane_retro';
+    state.chart.createIndicator({ name: 'RetroStrip', paneId: state.retroPane }, false);
+    wishPane(state.retroPane, { height: 84, order: 40 });
+  }
+  function removeRetroPane() { if (state.retroPane) { try { state.chart.removeIndicator({ paneId: state.retroPane }); } catch (e) {} state.retroPane = null; } }
+
+  // редрав активных астро-индикаторов после смены планет/фрейма/масштаба
+  function refreshAstroGann() {
+    ['PlanetLines', 'PlanetIngress'].forEach((n) => { if (state.candleInds[n]) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: n }); state.chart.createIndicator({ name: n, paneId: 'candle_pane' }, true); } catch (e) {} } });
+    if (state.retroPane) { try { state.chart.removeIndicator({ paneId: state.retroPane }); state.chart.createIndicator({ name: 'RetroStrip', paneId: state.retroPane }, false); } catch (e) {} }
+  }
+  function astroGannModal() {
+    const AG = window.LUN.ASTROGANN;
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    const order = ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto'];
+    const checks = order.map((p) => { const m = AG.planets[p]; const on = AG.linePlanets.indexOf(p) >= 0;
+      return `<label style="display:inline-flex;align-items:center;gap:4px;margin:0 10px 6px 0;color:${m.c}"><input type="checkbox" data-p="${p}"${on ? ' checked' : ''}> ${m.g} ${p}</label>`; }).join('');
+    openModal('Астро-Ганн — планетарные линии', `
+      <div style="margin-bottom:10px">Планеты для линий:<br>${checks}</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+        <label>Система<br><select id="ag-frame" style="${inp}">
+          <option value="geo"${AG.frame === 'geo' ? ' selected' : ''}>Геоцентр (зодиак)</option>
+          <option value="helio"${AG.frame === 'helio' ? ' selected' : ''}>Гелиоцентр</option></select></label>
+        <label>Цена на 1° (пусто = авто)<br><input id="ag-scale" type="number" step="any" value="${AG.pricePerDeg != null ? AG.pricePerDeg : ''}" placeholder="авто" style="${inp};width:130px"></label>
+        <button id="ag-apply" style="${btn};border-color:#26a69a">Применить</button>
+      </div>
+      <p style="color:#8b93a7;margin:10px 0 0">Долгота планеты переводится в цену. «Авто» разворачивает полный круг (360°) на видимый диапазон — линия всегда на экране. Задай цену на 1° для классического масштаба Ганна. Система (гео/гелио) действует и на ингрессии/ретро.</p>`);
+    document.getElementById('ag-apply').onclick = () => {
+      const chosen = order.filter((p) => { const el = document.querySelector('input[data-p="' + p + '"]'); return el && el.checked; });
+      if (chosen.length) AG.linePlanets = chosen;
+      AG.frame = document.getElementById('ag-frame').value;
+      const sc = document.getElementById('ag-scale').value.trim();
+      AG.pricePerDeg = sc === '' ? null : (+sc || null);
+      refreshAstroGann();
+    };
+  }
+
   /* ---------- ценовые индикаторы (тумблеры) ---------- */
   function toggleOverlay(kind, on) {
     const c = state.chart, IND = window.LUN.INDICATORS;
@@ -676,8 +717,21 @@
           if (on) { state.chart.createIndicator({ name, paneId: 'candle_pane' }, true); state.candleInds[name] = true; }
           else removeCandInd(name);
         }, false, tip));
+      gsub('Астро-Ганн');
+      mkBtn(gannWrap, '🪐 Настроить планетарные линии…', () => { closeMenus(); astroGannModal(); }, false, 'Планеты, гео/гелио, масштаб цена/градус');
+      [['PlanetLines', '🪐 Планетарные линии → цена', 'Долгота планеты как ценовой уровень (ползёт во времени)'],
+       ['PlanetIngress', '♈ Ингрессии планет', 'Вертикали при входе планеты в новый знак (каждые 30°)']].forEach(([name, label, tip]) =>
+        mkBtn(gannWrap, label, (b) => {
+          const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+          if (on) { state.chart.createIndicator({ name, paneId: 'candle_pane' }, true); state.candleInds[name] = true; }
+          else removeCandInd(name);
+        }, false, tip));
+      mkBtn(gannWrap, '℞ Ретроградности (панель)', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (on) createRetroPane(); else removeRetroPane();
+      }, false, 'Панель периодов попятного движения планет');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
-      gnote.textContent = 'Box, Квадрат на графике, сквоузинг и Астро-Ганн — следующие этапы';
+      gnote.textContent = 'Box, Квадрат на графике, сквоузинг, Bradley и веер долготы — следующие этапы';
       gannWrap.appendChild(gnote);
     }
 

@@ -791,4 +791,103 @@
       return true;
     },
   });
+
+  /* ============ Астро-Ганн: планетарные линии → цена ============
+   * Долгота планеты (0..360°) переводится в цену: price = lon·scale + m·(360·scale).
+   * scale берётся из LUN.ASTROGANN.pricePerDeg, либо авто — так, что полный оборот
+   * (360°) укладывается в видимый ценовой диапазон (линия всегда на экране).
+   * Линия «ползёт» вместе с планетой; рисуем гармоники m-1..m+1 вокруг центра. */
+  const AGmeta = (p) => (window.LUN.ASTROGANN.planets[p] || { g: '?', c: '#8aa0c8' });
+  kc.registerIndicator({
+    name: 'PlanetLines', shortName: 'Планетарные линии', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis }) => {
+      const AG = window.LUN.ASTROGANN, list = chart.getDataList(); if (!list.length || !window.LunAstro) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      let hi = -Infinity, lo = Infinity;
+      for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low; }
+      if (!(hi > lo)) return true;
+      const pad = (hi - lo) * 0.08; hi += pad; lo -= pad;
+      const spacing = AG.pricePerDeg ? AG.pricePerDeg * 360 : (hi - lo);
+      if (!(spacing > 0)) return true;
+      const scaleP = spacing / 360, mid = (lo + hi) / 2, W = bounding.width;
+      (AG.linePlanets || []).forEach((p) => {
+        const meta = AGmeta(p), lons = [];
+        for (let i = from; i < to; i++) lons[i] = window.LunAstro.bodyInfo(p, list[i].timestamp, AG.frame).lon;
+        const midI = (from + to) >> 1, baseMid = lons[midI] * scaleP;
+        const mCenter = Math.round((mid - baseMid) / spacing);
+        for (let m = mCenter - 1; m <= mCenter + 1; m++) {
+          ctx.strokeStyle = meta.c; ctx.globalAlpha = 0.75; ctx.lineWidth = 1;
+          ctx.beginPath(); let started = false, lastX = 0, lastY = 0;
+          for (let i = from; i < to; i++) {
+            const price = lons[i] * scaleP + m * spacing;
+            if (price < lo || price > hi) { if (started) { ctx.stroke(); ctx.beginPath(); started = false; } continue; }
+            const x = xAxis.convertToPixel(i), y = yAxis.convertToPixel(price);
+            if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+            lastX = x; lastY = y;
+          }
+          ctx.stroke(); ctx.globalAlpha = 1;
+          if (started) { ctx.fillStyle = meta.c; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillText(meta.g, Math.min(lastX + 3, W - 12), lastY); }
+        }
+      });
+      return true;
+    },
+  });
+
+  /* ============ Астро-Ганн: ингрессии планет (вход в знак) ============
+   * Вертикаль, когда планета пересекает границу знака (каждые 30°). Подпись —
+   * глиф планеты + глиф нового знака. */
+  kc.registerIndicator({
+    name: 'PlanetIngress', shortName: 'Ингрессии', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const AG = window.LUN.ASTROGANN, list = chart.getDataList(); if (list.length < 2 || !window.LunAstro) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(1, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      const H = bounding.height, W = bounding.width, SIGNS = window.LUN.SIGNS;
+      (AG.ingressPlanets || []).forEach((p) => {
+        const meta = AGmeta(p);
+        for (let i = from; i < to; i++) {
+          const s0 = window.LunAstro.bodyInfo(p, list[i - 1].timestamp, AG.frame).signIndex;
+          const s1 = window.LunAstro.bodyInfo(p, list[i].timestamp, AG.frame).signIndex;
+          if (s0 === s1) continue;
+          const x = xAxis.convertToPixel(i); if (x < -2 || x > W + 2) continue;
+          ctx.strokeStyle = meta.c; ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+          ctx.fillStyle = meta.c; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+          ctx.fillText(meta.g + (SIGNS[s1] ? SIGNS[s1].glyph : ''), x + 2, 2);
+        }
+      });
+      return true;
+    },
+  });
+
+  /* ============ Астро-Ганн: ретроградности (панель, строка на планету) ============
+   * Красный сегмент = планета движется попятно (долгота убывает бар-к-бару).
+   * Ретро-периоды Ганн считал точками разворота настроения рынка. */
+  kc.registerIndicator({
+    name: 'RetroStrip', shortName: 'Ретроградности', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const AG = window.LUN.ASTROGANN, list = chart.getDataList(); if (list.length < 3 || !window.LunAstro) return true;
+      const range = chart.getVisibleRange(), bs = chart.getBarSpace();
+      const from = Math.max(1, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      const ps = AG.retroPlanets || [], H = bounding.height, W = bounding.width, rowH = H / Math.max(1, ps.length);
+      ps.forEach((p, ri) => {
+        const meta = AGmeta(p), y0 = ri * rowH;
+        for (let i = from; i < to; i++) {
+          let d = window.LunAstro.bodyInfo(p, list[i].timestamp, AG.frame).lon - window.LunAstro.bodyInfo(p, list[i - 1].timestamp, AG.frame).lon;
+          if (d > 180) d -= 360; else if (d < -180) d += 360;
+          const x = xAxis.convertToPixel(i);
+          ctx.fillStyle = d < 0 ? 'rgba(239,83,80,0.85)' : 'rgba(90,100,120,0.16)';
+          ctx.fillRect(x - bs.halfBar, y0 + 2, bs.halfBar * 2 + 0.6, rowH - 4);
+        }
+        ctx.fillStyle = meta.c; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+        ctx.fillText(meta.g + ' ' + p, 4, y0 + rowH / 2);
+      });
+      return true;
+    },
+  });
 })();

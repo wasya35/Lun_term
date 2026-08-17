@@ -177,6 +177,27 @@ LUN.GANNTOOLS = {
   cycles: { nums: [30, 45, 60, 90, 120, 144, 180, 270, 360] },
 };
 
+/* Астро-Ганн (двигатель эфемерид уже стоит — astro.js).
+ *  frame        — 'geo' (зодиак с Земли) | 'helio'.
+ *  pricePerDeg  — цена на 1° долготы для «планетарных линий». null = авто:
+ *                 один оборот (360°) разворачивается на весь видимый диапазон.
+ *  linePlanets / ingressPlanets / retroPlanets — какие тела показывать.
+ *  planets      — глиф и цвет для отрисовки. */
+LUN.ASTROGANN = {
+  frame: 'geo',
+  pricePerDeg: null,
+  linePlanets:    ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
+  ingressPlanets: ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
+  retroPlanets:   ['Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'],
+  planets: {
+    Sun:    { g: '☉', c: '#f0c040' }, Moon:    { g: '☾', c: '#cfd6e6' },
+    Mercury:{ g: '☿', c: '#9aa7ff' }, Venus:   { g: '♀', c: '#7ad3a0' },
+    Mars:   { g: '♂', c: '#ef6b6b' }, Jupiter: { g: '♃', c: '#e0a030' },
+    Saturn: { g: '♄', c: '#b0803a' }, Uranus:  { g: '♅', c: '#59c3d0' },
+    Neptune:{ g: '♆', c: '#6b8bd0' }, Pluto:   { g: '♇', c: '#a06bd0' },
+  },
+};
+
 /* --- 5. Индикаторы --------------------------------------------------------- */
 LUN.INDICATORS = {
   sma:  { periods: [20, 50], colors: ['#e0a030', '#e06040'] },
