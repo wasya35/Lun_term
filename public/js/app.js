@@ -76,7 +76,7 @@
       signPane: null, signPanes: {}, volumePane: null, aspectPanes: {}, allAspectPane: null,
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
       overlayIds: {}, candleInds: {}, selectedOverlayId: null, forecastOn: false, paneWish: {},
-      compareInstrument: null, comparePane: false, oiPane: null,
+      compareInstrument: null, comparePane: false, oiPane: null, arbPane: null, arbBundle: null,
     };
   }
   let slots = [];
@@ -299,6 +299,37 @@
     return true;
   }
   function removeOI(slot) { slot = slot || state; if (slot.oiPane) { try { slot.chart.removeIndicator({ paneId: slot.oiPane }); } catch (e) {} slot.oiPane = null; } }
+
+  /* ---------- арбитражная связка: синтетика + спред + z-score ---------- */
+  async function buildArb(slot, bundle) {
+    slot = slot || state; if (!bundle) return false;
+    const keys = Object.keys(bundle.legs), data = {};
+    for (const k of keys) { try { data[k] = await window.LunData.fetchFor(bundle.legs[k], slot.tf); } catch (e) { data[k] = null; } }
+    if (keys.some((k) => !data[k] || !data[k].length)) { alert('Арбитраж «' + bundle.title + '»: не все ноги загрузились (проверь коды/данные).'); return false; }
+    const maps = {}; keys.forEach((k) => { const m = new Map(); data[k].forEach((b) => m.set(b.timestamp, b.close)); maps[k] = m; });
+    const series = [];
+    for (const b of data[keys[0]]) {
+      const ts = b.timestamp, cl = {}; let ok = true;
+      for (const k of keys) { const v = maps[k].get(ts); if (v == null || !(v > 0)) { ok = false; break; } cl[k] = v; }
+      if (!ok) continue;
+      let spread;
+      if (bundle.formula === 'triangle') spread = cl.C - (cl.A / cl.B) * (bundle.scale || 1);
+      else if (bundle.formula === 'ratio') spread = (cl.A / cl.B) * (bundle.scale || 1);
+      else if (bundle.formula === 'diff') spread = cl.A - cl.B;
+      else spread = cl.A;
+      series.push({ ts, spread });
+    }
+    if (series.length < 20) { alert('Арбитраж: мало общих точек по времени.'); return false; }
+    const vals = series.map((s) => s.spread), mean = vals.reduce((a, x) => a + x, 0) / vals.length;
+    const std = Math.sqrt(vals.reduce((a, x) => a + (x - mean) * (x - mean), 0) / vals.length) || 1e-9;
+    const byTs = {}; series.forEach((s) => { byTs[s.ts] = s.spread; });
+    const paneId = 'pane_arb';
+    try { slot.chart.removeIndicator({ paneId }); } catch (e) {}
+    slot.chart.createIndicator({ name: 'ArbSpread', paneId, shortName: bundle.title, extendData: { byTs, mean, std, title: bundle.title, formula: bundle.formula, last: series[series.length - 1].spread } }, false);
+    slot.arbPane = paneId; slot.arbBundle = bundle; wishPane(paneId, { height: 92, order: 93 });
+    return true;
+  }
+  function removeArb(slot) { slot = slot || state; if (slot.arbPane) { try { slot.chart.removeIndicator({ paneId: slot.arbPane }); } catch (e) {} slot.arbPane = null; slot.arbBundle = null; } }
   function removeCompare() {
     if (state.comparePane) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'Compare' }); } catch (e) {} state.comparePane = false; }
     state.compareInstrument = null;
@@ -339,6 +370,8 @@
     if (slot.compareInstrument) setTimeout(() => refreshCompare(slot), 800);
     // обновить ОИ под новый инструмент
     if (slot.oiPane) setTimeout(() => rebuildOI(slot), 900);
+    // пересчитать арбитражный спред под новый ТФ
+    if (slot.arbBundle) setTimeout(() => buildArb(slot, slot.arbBundle), 1000);
   }
 
   /* ---------- инструменты рисования ---------- */
@@ -486,6 +519,9 @@
     // 2-й график линией поверх активного: выбор через окно инструментов
     mkBtn(insWrap, '➕ 2-й график (линией)', () => { closeMenus(); window.LunInstruments.open((instr) => addCompare(instr)); }, false, 'Наложить второй инструмент линией на активный график');
     mkBtn(insWrap, '✕ убрать 2-й график', () => { closeMenus(); removeCompare(); }, false, 'Убрать наложение');
+    // арбитражные связки (синтетика + спред + z-score)
+    (window.LUN.ARB || []).forEach((bundle) => mkBtn(insWrap, '⚖ ' + bundle.title, () => { closeMenus(); buildArb(state, bundle); }, false, 'Арбитражная связка: синтетика, спред и z-score (на ТФ активного графика)'));
+    if ((window.LUN.ARB || []).length) mkBtn(insWrap, '✕ убрать спред', () => { closeMenus(); removeArb(state); }, false, 'Убрать панель спреда');
 
     const tfWrap = document.getElementById('timeframes');
     window.LUN.TIMEFRAMES.forEach((tf, i) => {

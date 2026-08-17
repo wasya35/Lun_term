@@ -671,4 +671,36 @@
       return true;
     },
   });
+
+  /* ============ Арбитражный спред + z-score ============
+   * byTs[ts] = значение спреда; mean/std — по всей серии; линия спреда +
+   * среднее (пунктир) + полосы ±2σ; текущий z и метка расхождения. */
+  kc.registerIndicator({
+    name: 'ArbSpread',
+    shortName: 'Спред',
+    series: 'normal',
+    figures: [],
+    calc: (dataList) => dataList.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {}, bt = ed.byTs; if (!bt) return true;
+      const H = bounding.height, list = chart.getDataList(), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      const pts = []; let mn = Infinity, mx = -Infinity;
+      for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; const v = bt[b.timestamp]; if (v == null) continue; pts.push([i, v]); mn = Math.min(mn, v); mx = Math.max(mx, v); }
+      const mean = ed.mean, up = mean + 2 * ed.std, dn = mean - 2 * ed.std;
+      mn = Math.min(mn, dn); mx = Math.max(mx, up);
+      if (pts.length < 2 || !(mx > mn)) return true;
+      const yOf = (v) => H * 0.9 - ((v - mn) / (mx - mn)) * H * 0.8;
+      const band = (v, color, dash) => { ctx.strokeStyle = color; ctx.setLineDash(dash); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, yOf(v)); ctx.lineTo(bounding.width, yOf(v)); ctx.stroke(); ctx.setLineDash([]); };
+      band(mean, '#6b7280', [4, 3]); band(up, '#ef5350', [3, 3]); band(dn, '#26a69a', [3, 3]);
+      ctx.strokeStyle = '#e0d060'; ctx.lineWidth = 1.4; ctx.beginPath();
+      pts.forEach((p, k) => { const x = xAxis.convertToPixel(p[0]), y = yOf(p[1]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); });
+      ctx.stroke();
+      const z = ed.std ? (ed.last - mean) / ed.std : 0;
+      ctx.fillStyle = '#cdd3df'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      const val = Math.abs(ed.last) < 10 ? ed.last.toFixed(4) : ed.last.toFixed(1);
+      ctx.fillText(ed.title + '  спред ' + val + '  z=' + z.toFixed(2) + (Math.abs(z) > 2 ? '  ⚠ расхождение' : ''), 6, 3);
+      return true;
+    },
+  });
 })();

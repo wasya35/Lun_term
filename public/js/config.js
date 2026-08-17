@@ -228,5 +228,22 @@ LUN.SESSIONS = [
   { name: 'Нью-Йорк', from: 13, to: 22, color: '#3a9d5d' },
 ];
 
+/* --- Арбитражные связки (синтетика + спред + z-score) ----------------------
+ * formula:
+ *   'triangle' — синтетика A/B×scale, спред = C − синтетика (расхождение = арб);
+ *   'ratio'    — синтетический курс A/B×scale (нет эталона, просто синтетика);
+ *   'diff'     — A − B.
+ * legs: инструменты как в INSTRUMENTS (provider/assetCode/ticker). Считается по
+ * текущему ТФ активного графика, выравнивание по времени. z=|спред−среднее|/σ. */
+LUN.ARB = [
+  { id: 'eurusd', title: 'EUR/USD: Eu/Si ↔ ED', formula: 'triangle', scale: 1,
+    legs: { A: { provider: 'moex', assetCode: 'Eu', ticker: 'EuU6', pricePrecision: 0 },
+            B: { provider: 'moex', assetCode: 'Si', ticker: 'SiU6', pricePrecision: 0 },
+            C: { provider: 'moex', assetCode: 'ED', ticker: 'EDU6', pricePrecision: 4 } } },
+  { id: 'usdcnh', title: 'USD/CNH синт.: Si/CNY', formula: 'ratio', scale: 1,
+    legs: { A: { provider: 'moex', assetCode: 'Si', ticker: 'SiU6' },
+            B: { provider: 'moex', assetCode: 'CNY', ticker: 'CRU6' } } },
+];
+
 /* Высоты панелей (px) */
 LUN.PANE_HEIGHTS = { moonSign: 42, cycle: 26, volume: 90 };
