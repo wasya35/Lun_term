@@ -28,17 +28,28 @@
     return items;
   }
 
-  async function fetchNews(keywords) {
-    const feeds = (window.LUN.NEWS && window.LUN.NEWS.feeds) || [];
+  // тон заголовка по словарю (RU+EN): + позитив / − негатив
+  const POS = ['рост', 'выросл', 'вырос', 'подорожал', 'укреп', 'рекорд', 'прибыл', 'ралли', 'растут', 'восстанов', 'подъём', 'gain', 'surge', 'rally', 'jump', 'soar', 'beat', 'profit', 'rise', 'rises', 'bull', 'record', 'high'];
+  const NEG = ['паден', 'упал', 'обвал', 'снизил', 'снижен', 'кризис', 'санкц', 'убыт', 'дефолт', 'распрод', 'обвалил', 'просад', 'drop', 'fall', 'plunge', 'loss', 'crash', 'cut', 'warn', 'slump', 'bear', 'sell-off', 'recession', 'default', 'tumble'];
+  function scoreTitle(t) { const s = ' ' + t.toLowerCase() + ' '; let sc = 0; for (const w of POS) if (s.indexOf(w) >= 0) sc++; for (const w of NEG) if (s.indexOf(w) >= 0) sc--; return sc; }
+
+  async function fetchNews(opts) {
+    opts = opts || {};
+    const feeds = (opts.feeds && opts.feeds.length) ? opts.feeds : ((window.LUN.NEWS && window.LUN.NEWS.feeds) || []);
     const chunks = await Promise.all(feeds.map((f) => fetchFeed(f).catch(() => [])));
     const all = chunks.reduce((a, x) => a.concat(x), []);
-    const kw = (keywords && keywords.length) ? keywords.map((k) => k.toLowerCase()) : null;
+    const kw = (opts.keywords && opts.keywords.length) ? opts.keywords.map((k) => k.toLowerCase()) : null;
     let items = kw ? all.filter((it) => { const t = it.title.toLowerCase(); return kw.some((k) => t.indexOf(k) >= 0); }) : all.slice();
     const seen = new Set();
     items = items.filter((it) => { const k = it.title.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+    items.forEach((it) => { const sc = scoreTitle(it.title); it.score = sc; it.sent = sc > 0 ? 1 : (sc < 0 ? -1 : 0); });
     items.sort((a, b) => b.ts - a.ts);
-    return { items: items.slice(0, 40), total: all.length, matched: items.length };
+    items = items.slice(0, 40);
+    let pos = 0, neg = 0, neu = 0;
+    items.forEach((it) => { if (it.sent > 0) pos++; else if (it.sent < 0) neg++; else neu++; });
+    const net = (pos + neg) ? (pos - neg) / (pos + neg) : 0;
+    return { items, total: all.length, matched: items.length, mood: { pos, neg, neu, net } };
   }
 
-  window.LunNews = { fetch: fetchNews };
+  window.LunNews = { fetch: fetchNews, scoreTitle };
 })();

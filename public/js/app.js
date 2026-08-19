@@ -667,8 +667,8 @@
     if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);
     // авто-коннектор: включить поток нужного рынка для активного графика
     if (slot === state) setTimeout(applyAutoConnect, 750);
-    // новости: обновить под новый инструмент, если колонка открыта
-    if (slot === state && newsOpen) setTimeout(() => loadNews(), 400);
+    // новости: обновить список/метку настроения под новый инструмент
+    if (slot === state && (newsOpen || newsMoodEnabled)) setTimeout(() => loadNews(), 400);
     // обновить наложение 2-го графика под новый ТФ/инструмент
     if (slot.compareInstrument) setTimeout(() => refreshCompare(slot), 800);
     // обновить ОИ под новый инструмент
@@ -833,29 +833,53 @@
     p.querySelector('#nw-refresh').onclick = () => loadNews(true);
     newsEl = p; return p;
   }
-  function toggleNews(on) { ensureNews(); newsOpen = on; newsEl.style.transform = on ? 'translateX(0)' : 'translateX(100%)'; if (on) loadNews(); }
+  let newsMoodEnabled = false;
+  function toggleNews(on) { ensureNews(); newsOpen = on; if (on) newsMoodEnabled = true; newsEl.style.transform = on ? 'translateX(0)' : 'translateX(100%)'; if (on) loadNews(); }
   function newsKeywords() {
     const ins = state.instrument, K = (window.LUN.NEWS && window.LUN.NEWS.keywords) || {};
     if (K[ins.id]) return K[ins.id];
     const words = (ins.title || ins.symbol || '').toLowerCase().split(/[^a-zа-яё0-9]+/).filter((w) => w.length > 2);
     return words.length ? words : (window.LUN.NEWS && window.LUN.NEWS.default) || [];
   }
+  function newsFeeds() {
+    const N = window.LUN.NEWS || {}, ins = state.instrument, prov = ins.provider || 'moex';
+    const feeds = (N.feeds || []).slice();
+    if (prov === 'yahoo' && (ins.symbol || ins.ticker)) feeds.push({ name: 'Yahoo', url: 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=' + encodeURIComponent(ins.symbol || ins.ticker) + '&region=US&lang=en-US' });
+    if (prov === 'bybit' || prov === 'binance') (N.cryptoEnFeeds || []).forEach((f) => feeds.push(f));
+    return feeds;
+  }
+  function newsMoodBadge() {
+    let el = document.getElementById('news-mood');
+    if (!el) { const bar = document.querySelector('.statusbar'); if (!bar) return null; el = document.createElement('span'); el.id = 'news-mood'; el.style.cssText = 'cursor:pointer;font-weight:600'; el.title = 'Настроение СМИ по инструменту (клик — открыть новости)'; el.onclick = () => toggleNews(!newsOpen); const anchor = document.getElementById('stream-status'); bar.insertBefore(el, anchor || null); }
+    return el;
+  }
+  function updateNewsMood(res, insTitle) {
+    const el = newsMoodBadge(); if (!el) return;
+    if (!res || !res.items.length) { el.style.display = 'none'; return; }
+    const m = res.mood, net = Math.round(m.net * 100), col = m.net > 0.1 ? '#26a69a' : (m.net < -0.1 ? '#ef5350' : '#8b93a7');
+    el.style.display = ''; el.style.color = col;
+    el.textContent = '📰 ' + (insTitle || '') + ': ' + (net > 0 ? '▲+' : (net < 0 ? '▼' : '•')) + Math.abs(net) + '% (' + m.pos + '/' + m.neg + ')';
+  }
+  const SENT_TAG = (s) => s > 0 ? '<span style="color:#26a69a">▲</span>' : (s < 0 ? '<span style="color:#ef5350">▼</span>' : '<span style="color:#6b7280">•</span>');
   async function loadNews(force) {
-    if (!newsEl || !window.LunNews) return;
-    const ins = state.instrument, list = newsEl.querySelector('#nw-list'), rid = ++newsReqId;
-    newsEl.querySelector('#nw-title').textContent = 'Новости · ' + (ins.title || ins.id);
-    if (force) window.LunNews.__bust = Date.now();
-    list.innerHTML = '<div style="color:#8b93a7;padding:8px 4px">Загрузка…</div>';
-    let res = null; try { res = await window.LunNews.fetch(newsKeywords()); } catch (e) {}
+    if (!window.LunNews) return;
+    const ins = state.instrument, rid = ++newsReqId, list = newsEl && newsEl.querySelector('#nw-list');
+    if (newsEl) newsEl.querySelector('#nw-title').textContent = 'Новости · ' + (ins.title || ins.id);
+    if (newsOpen && list) list.innerHTML = '<div style="color:#8b93a7;padding:8px 4px">Загрузка…</div>';
+    let res = null; try { res = await window.LunNews.fetch({ keywords: newsKeywords(), feeds: newsFeeds() }); } catch (e) {}
     if (rid !== newsReqId) return;
+    updateNewsMood(res, ins.title || ins.id);
+    if (!newsOpen || !list) return;
     if (!res || !res.items.length) {
       list.innerHTML = '<div style="color:#8b93a7;padding:8px 4px">' + (res ? 'По инструменту ничего не нашлось (просмотрено ' + res.total + ' новостей). Обновите позже.' : 'Источники новостей недоступны из этого окружения.') + '</div>';
       return;
     }
-    list.innerHTML = res.items.map((it) => {
+    const m = res.mood, net = Math.round(m.net * 100), mcol = m.net > 0.1 ? '#26a69a' : (m.net < -0.1 ? '#ef5350' : '#8b93a7');
+    const moodHtml = `<div style="padding:6px 4px 8px;margin-bottom:4px;border-bottom:1px solid #232b3a;color:${mcol};font-size:12px">Настроение СМИ: ▲${m.pos} ▼${m.neg} • ${m.neu} · нетто <b>${net > 0 ? '+' : ''}${net}%</b></div>`;
+    list.innerHTML = moodHtml + res.items.map((it) => {
       const t = it.ts ? new Date(it.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
       return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="display:block;padding:7px 4px;border-bottom:1px solid #1a2130;color:#d7deea;text-decoration:none;font-size:12px;line-height:1.35">`
-        + `<div>${escapeHtml(it.title)}</div><div style="color:#6b7280;font-size:11px;margin-top:2px">${escapeHtml(it.source)} · ${t}</div></a>`;
+        + `<div>${SENT_TAG(it.sent)} ${escapeHtml(it.title)}</div><div style="color:#6b7280;font-size:11px;margin-top:2px">${escapeHtml(it.source)} · ${t}</div></a>`;
     }).join('');
   }
 

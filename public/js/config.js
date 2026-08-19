@@ -263,6 +263,11 @@ LUN.NEWS = {
     SOL:  ['solana', 'крипт'],
   },
   default: ['экономик', 'рынок', 'ставк', 'инфляц', 'фрс', 'цб ', 'нефт', 'рубл'],
+  // англоязычные ленты для крипты; для акций США добавляется Yahoo по тикеру
+  cryptoEnFeeds: [
+    { name: 'CoinDesk', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
+    { name: 'Cointelegraph', url: 'https://cointelegraph.com/rss' },
+  ],
 };
 
 /* --- Марковские режимы -------------------------------------------------------
