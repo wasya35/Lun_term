@@ -29,38 +29,44 @@
   });
 
   /* --- линия Ганна (2 точки) ---
-   * LUN.GANN.unitPerBar: число — «угол» (цена за бар) задан вручную; null —
-   *   наклон берётся по двум точкам.
-   * LUN.GANN.extendRight: true — луч до края; false — отрезок между точками. */
+   * LUN.GANN.unitPerBar: число > 0 — ТОЧНЫЙ угол (цена за бар). Тогда луч идёт
+   *   от т1 (т1 закреплена!) с этим наклоном, а т2 задаёт лишь направление
+   *   вверх/вниз. Пусто/0 — наклон берётся по двум точкам (т1→т2).
+   * LUN.GANN.extendRight: true — луч до края; false — отрезок. */
   kc.registerOverlay({
     name: 'lun_gann',
     totalStep: 3,
     needDefaultPointFigure: true,
-    createPointFigures: ({ coordinates, bounding, overlay, chart }) => {
+    createPointFigures: ({ coordinates, bounding, overlay, chart, xAxis, yAxis }) => {
       if (coordinates.length < 2) return [];
-      const [p0, p1] = coordinates;                       // т1 = база (опора), т2 = задаёт направление
+      const [p0, p1] = coordinates;                       // т1 = база (опора), т2 = направление
       const G = window.LUN.GANN || {};
       const style = { color: '#e08a2a', size: 1.4 };
-      const dx = p1.x - p0.x, dy = p1.y - p0.y;
-      // луч ИЗ т1 ЧЕРЕЗ т2 до края (extendRight) либо отрезок т1..т2. Тянешь т2 —
-      // луч поворачивается вокруг т1 (угол = направление т1→т2), не параллельно.
-      const segA = { x: p0.x, y: p0.y };
-      let segB;
-      if (G.extendRight && dx !== 0) {
-        const edgeX = dx > 0 ? bounding.width : 0;
-        segB = { x: edgeX, y: p0.y + dy * ((edgeX - p0.x) / dx) };
-      } else {
-        segB = { x: p1.x, y: p1.y };
-      }
-      // живой «угол»: цена за бар (по т1→т2) + градусы луча (как в MT4/5)
       const barPx = chart.getBarSpace().bar || 6;
       const pts = overlay.points || [];
       const v0 = pts[0] ? pts[0].value : null, v1 = pts[1] ? pts[1].value : null;
-      const barsBetween = Math.abs(dx) / barPx || 1;
-      const pricePerBar = (v0 != null && v1 != null) ? (v1 - v0) / barsBetween : 0;
+      const fixed = (typeof G.unitPerBar === 'number' && G.unitPerBar > 0 && v0 != null && yAxis);
+      const segA = { x: p0.x, y: p0.y };
+      let segB, pricePerBar;
+      if (fixed) {
+        // точный угол от т1: направление (вверх/вниз) — по т2; величина — из настроек
+        const dir = (v1 != null && v1 < v0) ? -1 : 1;
+        const dyPerBar = yAxis.convertToPixel(v0 + dir * G.unitPerBar) - yAxis.convertToPixel(v0);
+        const endX = (G.extendRight !== false) ? (p1.x >= p0.x ? bounding.width : 0) : p1.x;
+        const barsToEnd = (endX - p0.x) / barPx;
+        segB = { x: endX, y: p0.y + dyPerBar * barsToEnd };
+        pricePerBar = dir * G.unitPerBar;
+      } else {
+        // наклон по двум точкам: тянешь т2 — луч поворачивается вокруг т1
+        const dx = p1.x - p0.x, dy = p1.y - p0.y;
+        if (G.extendRight !== false && dx !== 0) { const edgeX = dx > 0 ? bounding.width : 0; segB = { x: edgeX, y: p0.y + dy * ((edgeX - p0.x) / dx) }; }
+        else segB = { x: p1.x, y: p1.y };
+        const barsBetween = Math.abs(dx) / barPx || 1;
+        pricePerBar = (v0 != null && v1 != null) ? (v1 - v0) / barsBetween : 0;
+      }
       const deg = Math.atan2(-(segB.y - segA.y), (segB.x - segA.x)) * 180 / Math.PI;
       const app = Math.abs(pricePerBar);
-      const label = `${app < 10 ? app.toFixed(2) : app.toFixed(0)}/бар · ${deg.toFixed(1)}°`;
+      const label = `${app < 10 ? app.toFixed(2) : app.toFixed(0)}/бар · ${deg.toFixed(1)}°` + (fixed ? ' ⚲' : '');
       return [
         { type: 'line', attrs: { coordinates: [segA, segB] }, styles: style },
         { type: 'text', attrs: { x: p1.x + 6, y: p1.y - 6, text: label, baseline: 'bottom' }, ignoreEvent: true, styles: { color: '#e08a2a', size: 11 } },
