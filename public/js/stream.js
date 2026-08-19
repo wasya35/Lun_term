@@ -116,10 +116,11 @@
     }
   }
   function isOn(provId) { const c = PROV2CONN[provId]; return !!(c && enabled[c]); }
+  const connFor = (provId) => PROV2CONN[provId];
   const onStatus = (fn) => { statusCb = fn; setStatus('поток: выкл', '#6b7280'); };
 
   // возврат вкладки из фона — разовая дозагрузка (закрыть дыру)
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') subs.forEach((s) => s.refresh && s.refresh()); });
 
-  window.LunStream = { attach, detach, detachAll, setConnector, isOn, onStatus, enabled };
+  window.LunStream = { attach, detach, detachAll, setConnector, isOn, onStatus, connFor, enabled };
 })();

@@ -83,6 +83,17 @@
   let slots = [];
   let activeIdx = 0;
   let state = makeSlot(0);   // переустанавливается при активации ячейки
+  let autoConnect = false;           // авто-коннектор: поток под рынок инструмента
+  const connBtns = {};               // кнопки коннекторов по имени
+  let autoConnBtn = null;
+  function applyAutoConnect() {
+    if (!autoConnect || !window.LunStream) return;
+    const conn = window.LunStream.connFor(state.instrument.provider || 'moex');
+    if (!conn) return;
+    if (window.LunStream.enabled && window.LunStream.enabled[conn]) return;   // уже включён
+    window.LunStream.setConnector(conn, true, slots);
+    const b = connBtns[conn]; if (b) b.classList.add('active');
+  }
 
   const THEME = {
     grid: { horizontal: { color: '#1c2230' }, vertical: { color: '#1c2230' } },
@@ -360,6 +371,42 @@
     };
   }
 
+  // Timing Solutions-стиль: какие астро-события реально совпадают с разворотами
+  function astroFitModal() {
+    let bars = []; try { bars = state.chart.getDataList() || []; } catch (e) {}
+    if (bars.length < 60 || !window.LunTS) { alert('Мало истории для анализа. Поставьте период больше (D1, 1–3 года) в меню «🗓 Период».'); return; }
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    openModal('Астро-фит — что реально работает на инструменте', `
+      <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
+        <label>Орб (дней)<br><input id="af-orb" type="number" min="1" max="10" value="3" style="${inp};width:80px"></label>
+        <label>Свинг ±баров<br><input id="af-k" type="number" min="2" max="10" value="3" style="${inp};width:80px"></label>
+        <button id="af-run" style="${btn}">Пересчитать</button>
+      </div>
+      <div id="af-out" style="color:#8b93a7">Считаю…</div>`);
+    const vcol = { 'значимо': '#26a69a', 'слабо': '#e0a030', 'шум': '#8b93a7', 'мало данных': '#8b93a7' };
+    const run = () => {
+      const orbDays = +document.getElementById('af-orb').value || 3, k = +document.getElementById('af-k').value || 3;
+      const R = window.LunTS.computeAstroFit(bars, { orbDays, pivotK: k });
+      const rows = R.features.map((f) => `<tr>`
+        + `<td style="padding:2px 10px 2px 0">${f.name}</td>`
+        + `<td style="padding:2px 10px 2px 0;color:#8b93a7">${f.count}</td>`
+        + `<td style="padding:2px 10px 2px 0">${f.hits}/${R.pivots}</td>`
+        + `<td style="padding:2px 10px 2px 0">${(f.hitRate * 100).toFixed(0)}%</td>`
+        + `<td style="padding:2px 10px 2px 0;color:#8b93a7">${(f.coverage * 100).toFixed(0)}%</td>`
+        + `<td style="padding:2px 10px 2px 0"><b>${f.lift.toFixed(2)}×</b></td>`
+        + `<td style="padding:2px 10px 2px 0">${f.z.toFixed(1)}</td>`
+        + `<td style="padding:2px 0;color:${vcol[f.verdict]}">${f.verdict}</td></tr>`).join('');
+      const fromS = new Date(R.from).toISOString().slice(0, 10), tillS = new Date(R.till).toISOString().slice(0, 10);
+      document.getElementById('af-out').innerHTML = `<p style="margin:0 0 8px">${fromS} … ${tillS} · разворотов: <b style="color:#d7deea">${R.pivots}</b> · орб ±${R.orbDays}д. <b>lift>1</b> и <b>z≥2</b> = событие реально притягивает развороты этого инструмента.</p>`
+        + `<div style="max-height:360px;overflow:auto"><table style="border-collapse:collapse;font-size:12px">`
+        + `<thead><tr style="color:#8b93a7;text-align:left"><th style="padding-right:10px">Астро-событие</th><th style="padding-right:10px">шт</th><th style="padding-right:10px">попад.</th><th style="padding-right:10px">hit%</th><th style="padding-right:10px">охват</th><th style="padding-right:10px">lift</th><th style="padding-right:10px">z</th><th>вердикт</th></tr></thead>`
+        + `<tbody>${rows}</tbody></table></div>`;
+    };
+    document.getElementById('af-run').onclick = run;
+    setTimeout(run, 30);
+  }
+
   // Уровни квадрата Ганна. √-спираль: полный оборот (360°) = +2 к √цены.
   // base: '9'→8 делений (крест 45°), 'hex'→6 (60°), '360'→24 (15°),
   // 'natural'→квадраты натуральных чисел n² и серединные точки n²+n.
@@ -561,6 +608,8 @@
     if (slot === state) document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
     // подключить/переподключить поток после подгрузки истории
     if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);
+    // авто-коннектор: включить поток нужного рынка для активного графика
+    if (slot === state) setTimeout(applyAutoConnect, 750);
     // обновить наложение 2-го графика под новый ТФ/инструмент
     if (slot.compareInstrument) setTimeout(() => refreshCompare(slot), 800);
     // обновить ОИ под новый инструмент
@@ -867,6 +916,8 @@
         if (on) createBradleyPane(); else removeBradleyPane();
       }, false, 'Сидерограф: взвешенная сумма аспектов, экстремумы = даты разворота');
       mkBtn(gannWrap, '🜨 Космограмма…', () => { closeMenus(); cosmogramModal(); }, false, 'Колесо зодиака с планетами и аспектами на дату');
+      gsub('Timing Solutions');
+      mkBtn(gannWrap, '🎯 Астро-фит: что работает…', () => { closeMenus(); astroFitModal(); }, false, 'Ранжирование астро-событий по совпадению с разворотами ЭТОГО инструмента (нужна история — D1, 1–3 года)');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
       gnote.textContent = 'Инструменты Ганна: геометрия · квадраты · циклы · астро-Ганн';
       gannWrap.appendChild(gnote);
@@ -905,11 +956,17 @@
     [['crypto', 'Крипто · Bybit realtime', 'Настоящий поток (WebSocket): последняя свеча тикает вживую'],
      ['us', 'Америка · Yahoo (опрос)', 'Псевдо-реалтайм: опрос ~каждые 15–30с (без ключа Finnhub)'],
      ['moex', 'MOEX · псевдо (~15м)', 'ISS без потока: опрос; истинный realtime у биржи платный']].forEach(([name, label, tip]) => {
-      mkBtn(conWrap, label, (b) => {
+      connBtns[name] = mkBtn(conWrap, label, (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
         if (window.LunStream) window.LunStream.setConnector(name, on, slots);
       }, false, tip);
     });
+    // авто-коннектор: при выборе инструмента сам включает поток нужного рынка
+    autoConnBtn = mkBtn(conWrap, '🤖 Авто-коннектор', (b) => {
+      autoConnect = !b.classList.contains('active'); b.classList.toggle('active', autoConnect);
+      if (autoConnect) applyAutoConnect();
+    }, false, 'Автоматически включать реалтайм-поток под рынок открытого инструмента');
+    autoConnBtn.style.marginTop = '4px';
     const stub = mkBtn(conWrap, '➕ Свой коннектор (Finam/MOEX API)', () => alert('Свой коннектор (Finam Trade / MOEX API с ключами) — задел на будущее. Здесь появится подключение брокерского потока и торговли.'), false, 'Задел на будущее');
     stub.style.opacity = '0.6';
 
