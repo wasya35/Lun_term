@@ -53,6 +53,17 @@
     active() { return !!window.LUN_HISTORY; },
   };
 
+  // как LunFetchJSON, но возвращает текст (для RSS/XML новостей)
+  window.LunFetchText = async function (url, opts) {
+    const gws = (window.LUN && window.LUN.ISS_GATEWAYS) || [{ wrap: (u) => u }];
+    let lastErr;
+    for (const g of gws) {
+      try { const res = await fetch(g.wrap(url), opts); if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; } return await res.text(); }
+      catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('нет доступа к ' + url);
+  };
+
   // нормализация: сортировка по времени + удаление дублей по timestamp
   window.LunNormBars = function (bars) {
     bars.sort((a, b) => a.timestamp - b.timestamp);

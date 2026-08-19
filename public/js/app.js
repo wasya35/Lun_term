@@ -667,6 +667,8 @@
     if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);
     // авто-коннектор: включить поток нужного рынка для активного графика
     if (slot === state) setTimeout(applyAutoConnect, 750);
+    // новости: обновить под новый инструмент, если колонка открыта
+    if (slot === state && newsOpen) setTimeout(() => loadNews(), 400);
     // обновить наложение 2-го графика под новый ТФ/инструмент
     if (slot.compareInstrument) setTimeout(() => refreshCompare(slot), 800);
     // обновить ОИ под новый инструмент
@@ -810,6 +812,51 @@
     ed.style = { color, size, dash, fill, fillColor: hexToRgba(color, 0.14) };
     ov.extendData = ed; ov.lock = lock;
     try { state.chart.overrideOverlay({ id, extendData: ed, lock }); } catch (e) {}
+  }
+
+  /* ---------- новости по инструменту (правая колонка) ---------- */
+  let newsOpen = false, newsEl = null, newsReqId = 0;
+  const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function ensureNews() {
+    if (newsEl) return newsEl;
+    const p = document.createElement('div');
+    p.id = 'lun-news';
+    p.style.cssText = 'position:fixed;top:0;right:0;height:100%;width:340px;max-width:86vw;background:#0f1420;border-left:1px solid #232b3a;box-shadow:-8px 0 24px rgba(0,0,0,.45);z-index:60;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease';
+    p.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #232b3a">
+        <b id="nw-title" style="flex:1;font-size:13px">Новости</b>
+        <span id="nw-refresh" title="Обновить" style="cursor:pointer;color:#8b93a7;font-size:15px">⟳</span>
+        <span id="nw-close" style="cursor:pointer;color:#8b93a7;font-size:18px">×</span></div>
+      <div id="nw-list" style="flex:1;overflow:auto;padding:6px 10px"></div>
+      <div style="padding:7px 10px;border-top:1px solid #232b3a;color:#6b7280;font-size:11px">СМИ часто ведут толпу не туда — читайте как контр-сигнал, а не руководство.</div>`;
+    document.body.appendChild(p);
+    p.querySelector('#nw-close').onclick = () => toggleNews(false);
+    p.querySelector('#nw-refresh').onclick = () => loadNews(true);
+    newsEl = p; return p;
+  }
+  function toggleNews(on) { ensureNews(); newsOpen = on; newsEl.style.transform = on ? 'translateX(0)' : 'translateX(100%)'; if (on) loadNews(); }
+  function newsKeywords() {
+    const ins = state.instrument, K = (window.LUN.NEWS && window.LUN.NEWS.keywords) || {};
+    if (K[ins.id]) return K[ins.id];
+    const words = (ins.title || ins.symbol || '').toLowerCase().split(/[^a-zа-яё0-9]+/).filter((w) => w.length > 2);
+    return words.length ? words : (window.LUN.NEWS && window.LUN.NEWS.default) || [];
+  }
+  async function loadNews(force) {
+    if (!newsEl || !window.LunNews) return;
+    const ins = state.instrument, list = newsEl.querySelector('#nw-list'), rid = ++newsReqId;
+    newsEl.querySelector('#nw-title').textContent = 'Новости · ' + (ins.title || ins.id);
+    if (force) window.LunNews.__bust = Date.now();
+    list.innerHTML = '<div style="color:#8b93a7;padding:8px 4px">Загрузка…</div>';
+    let res = null; try { res = await window.LunNews.fetch(newsKeywords()); } catch (e) {}
+    if (rid !== newsReqId) return;
+    if (!res || !res.items.length) {
+      list.innerHTML = '<div style="color:#8b93a7;padding:8px 4px">' + (res ? 'По инструменту ничего не нашлось (просмотрено ' + res.total + ' новостей). Обновите позже.' : 'Источники новостей недоступны из этого окружения.') + '</div>';
+      return;
+    }
+    list.innerHTML = res.items.map((it) => {
+      const t = it.ts ? new Date(it.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+      return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="display:block;padding:7px 4px;border-bottom:1px solid #1a2130;color:#d7deea;text-decoration:none;font-size:12px;line-height:1.35">`
+        + `<div>${escapeHtml(it.title)}</div><div style="color:#6b7280;font-size:11px;margin-top:2px">${escapeHtml(it.source)} · ${t}</div></a>`;
+    }).join('');
   }
 
   function startDraw(toolId) {
@@ -1058,6 +1105,7 @@
       window.LunBacktest.run({ engine: ins.engine || 'futures', market: ins.market || 'forts', ticker, title: (ins.title || ins.id) + ' · ' + ticker });
     }, false, 'Сверка лунных зон и аспектов с историей текущего инструмента (B)');
     regHotkey('b', () => btBtn.click());
+    mkBtn(setWrap, '📰 Новости по инструменту', () => { closeMenus(); toggleNews(!newsOpen); }, false, 'Правая колонка новостей по текущему инструменту (СМИ как контр-индикатор)');
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
 
