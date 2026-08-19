@@ -1066,4 +1066,47 @@
       return true;
     },
   });
+
+  /* ============ Timing Solutions: прогнозная линия из циклов ============
+   * Сумма доминирующих синусоид цены + тренд, продлённая вправо на projBars.
+   * Тяжёлый расчёт кэшируется по длине/времени данных. */
+  let projCache = null, projKey = '';
+  kc.registerIndicator({
+    name: 'CycleProjection', shortName: 'Прогноз циклов', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis }) => {
+      const list = chart.getDataList(); if (list.length < 40 || !window.LunTS) return true;
+      const key = list.length + ':' + list[list.length - 1].timestamp;
+      if (projKey !== key) { projCache = window.LunTS.cycleProjection(list, { k: (window.LUN.TS && window.LUN.TS.cycleK) || 4, projBars: (window.LUN.TS && window.LUN.TS.projBars) || 120 }); projKey = key; }
+      const pr = projCache; if (!pr) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(pr.n + pr.projBars, Math.ceil(range.realTo != null ? range.realTo : range.to));
+      ctx.strokeStyle = '#c77dff'; ctx.lineWidth = 1.4; ctx.beginPath(); let started = false;
+      for (let i = from; i < to; i++) { const y = yAxis.convertToPixel(pr.recon(i)), x = xAxis.convertToPixel(i); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
+      ctx.stroke();
+      const xNow = xAxis.convertToPixel(pr.n - 1);
+      ctx.strokeStyle = 'rgba(199,125,255,0.4)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(xNow, 0); ctx.lineTo(xNow, bounding.height); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = '#c77dff'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.fillText('прогноз циклов: ' + pr.top.map((t) => t.period).join('·') + ' бар', xNow + 3, 2);
+      return true;
+    },
+  });
+
+  /* ============ Timing Solutions: метки выбранного астро-события ============ */
+  kc.registerIndicator({
+    name: 'AstroEventMarks', shortName: 'Астро-метки', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const M = window.LUN_ASTRO_MARKS; if (!M || !M.events || !M.events.length) return true;
+      const list = chart.getDataList(); if (list.length < 2) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      const H = bounding.height, W = bounding.width, t0 = list[from].timestamp, t1 = list[to - 1].timestamp;
+      const idxOf = (ts) => { let a = 0, b = list.length - 1; while (a < b) { const m = (a + b) >> 1; if (list[m].timestamp < ts) a = m + 1; else b = m; } return a; };
+      M.events.forEach((ts) => { if (ts < t0 || ts > t1) return; const x = xAxis.convertToPixel(idxOf(ts)); if (x < -2 || x > W + 2) return; ctx.strokeStyle = 'rgba(199,125,255,0.6)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]); });
+      ctx.fillStyle = '#c77dff'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText('◆ ' + (M.name || 'событие'), 4, 2);
+      return true;
+    },
+  });
 })();

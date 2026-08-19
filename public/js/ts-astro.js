@@ -96,11 +96,55 @@
       const z = n > 0 ? (hits - n * p) / Math.sqrt(n * p * (1 - p)) : 0;
       const enough = n >= 20 && ev.length >= 4;
       const verdict = !enough ? 'мало данных' : (z >= 2 ? 'значимо' : (z >= 1 ? 'слабо' : 'шум'));
-      return { name, count: ev.length, hits, hitRate, coverage: p, lift, z, verdict, enough };
+      return { name, count: ev.length, hits, hitRate, coverage: p, lift, z, verdict, enough, events: ev };
     });
     feats.sort((a, b) => (b.enough - a.enough) || (b.z - a.z));
     return { pivots: n, from: t0, till: t1, orbDays, features: feats };
   }
 
-  window.LunTS = { computeAstroFit, detectPivots };
+  /* --- Прогнозная линия из доминирующих циклов (спектр цены) ---
+   * Линейный детренд → периодограмма (наименьшие квадраты по cos/sin для каждого
+   * периода P) → топ-K непохожих периодов → сумма синусоид + тренд, продлённая
+   * вперёд на projBars. Честно: это модель прошлого ритма, не гарантия. */
+  function cycleProjection(bars, opts) {
+    opts = opts || {}; const K = opts.k || 4, projBars = opts.projBars || 120, n = bars.length;
+    if (n < 40) return null;
+    const x = bars.map((b) => b.close);
+    let sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (let i = 0; i < n; i++) { sx += i; sy += x[i]; sxx += i * i; sxy += i * x[i]; }
+    const den = n * sxx - sx * sx, m = den ? (n * sxy - sx * sy) / den : 0, c = (sy - m * sx) / n;
+    const resid = x.map((v, i) => v - (m * i + c));
+    const pmax = Math.floor(n / 2), comps = [];
+    for (let P = 6; P <= pmax; P++) {
+      const w = 2 * Math.PI / P; let a = 0, b = 0;
+      for (let i = 0; i < n; i++) { a += resid[i] * Math.cos(w * i); b += resid[i] * Math.sin(w * i); }
+      a = a * 2 / n; b = b * 2 / n; comps.push({ P, a, b, power: a * a + b * b });
+    }
+    comps.sort((u, v) => v.power - u.power);
+    const top = [];
+    for (const cp of comps) { if (top.length >= K) break; if (top.some((t) => Math.abs(t.P - cp.P) / cp.P < 0.12)) continue; top.push(cp); }
+    const recon = (i) => { let s = m * i + c; for (const cp of top) { const w = 2 * Math.PI / cp.P; s += cp.a * Math.cos(w * i) + cp.b * Math.sin(w * i); } return s; };
+    return { m, c, n, projBars, recon, top: top.map((t) => ({ period: t.P, amp: Math.sqrt(t.a * t.a + t.b * t.b), power: t.power })) };
+  }
+
+  /* --- Композит: среднее движение вперёд по астро-состоянию (сезонность) --- */
+  function lunarComposite(bars, opts) {
+    opts = opts || {}; const H = opts.horizon || 5, mode = opts.mode || 'phase', planet = opts.planet || 'Mercury';
+    const AS = window.LunAstro, SIGNS = window.LUN.SIGNS;
+    const PH = ['Новолуние', 'Растущий серп', 'I четверть', 'Растущая горбатая', 'Полнолуние', 'Убывающая горбатая', 'III четверть', 'Убывающий серп'];
+    const label = (ts) => {
+      if (mode === 'phase') { const e = ((AS.bodyInfo('Moon', ts, 'geo').lon - AS.bodyInfo('Sun', ts, 'geo').lon) % 360 + 360) % 360; return (Math.floor(e / 45)) + '·' + PH[Math.floor(e / 45)]; }
+      const body = mode === 'moonsign' ? 'Moon' : planet;
+      const si = AS.bodyInfo(body, ts, 'geo').signIndex; return (si < 10 ? '0' : '') + si + '·' + SIGNS[si].glyph + ' ' + SIGNS[si].name;
+    };
+    const groups = {};
+    for (let i = 0; i < bars.length - H; i++) {
+      const k = label(bars[i].timestamp), r = bars[Math.min(bars.length - 1, i + H)].close / bars[i].close - 1;
+      const g = groups[k] || (groups[k] = { sum: 0, cnt: 0, pos: 0 }); g.sum += r; g.cnt++; if (r > 0) g.pos++;
+    }
+    const rows = Object.keys(groups).sort().map((k) => { const g = groups[k]; return { key: k.split('·').slice(1).join('·'), avg: g.sum / g.cnt, cnt: g.cnt, winRate: g.pos / g.cnt }; });
+    return { horizon: H, mode, rows };
+  }
+
+  window.LunTS = { computeAstroFit, detectPivots, cycleProjection, lunarComposite };
 })();

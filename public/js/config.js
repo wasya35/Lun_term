@@ -181,6 +181,9 @@ LUN.GANNTOOLS = {
   box:    { levels: [0, 0.25, 0.3333, 0.5, 0.6667, 0.75, 1] },
 };
 
+/* Timing Solutions-модуль: прогнозная линия циклов + композит. */
+LUN.TS = { cycleK: 4, projBars: 120, compHorizon: 5 };
+
 /* Астро-Ганн (двигатель эфемерид уже стоит — astro.js).
  *  frame        — 'geo' (зодиак с Земли) | 'helio'.
  *  pricePerDeg  — цена на 1° долготы для «планетарных линий». null = авто:

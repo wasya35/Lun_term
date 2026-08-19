@@ -389,7 +389,9 @@
     const run = () => {
       const orbDays = +document.getElementById('af-orb').value || 3, k = +document.getElementById('af-k').value || 3;
       const R = window.LunTS.computeAstroFit(bars, { orbDays, pivotK: k });
-      const rows = R.features.map((f) => `<tr>`
+      lastFit = R;
+      const rows = R.features.map((f, idx) => `<tr>`
+        + `<td style="padding:2px 8px 2px 0"><span class="af-mark" data-i="${idx}" title="Показать на графике" style="cursor:pointer;color:#c77dff">📍</span></td>`
         + `<td style="padding:2px 10px 2px 0">${f.name}</td>`
         + `<td style="padding:2px 10px 2px 0;color:#8b93a7">${f.count}</td>`
         + `<td style="padding:2px 10px 2px 0">${f.hits}/${R.pivots}</td>`
@@ -399,12 +401,66 @@
         + `<td style="padding:2px 10px 2px 0">${f.z.toFixed(1)}</td>`
         + `<td style="padding:2px 0;color:${vcol[f.verdict]}">${f.verdict}</td></tr>`).join('');
       const fromS = new Date(R.from).toISOString().slice(0, 10), tillS = new Date(R.till).toISOString().slice(0, 10);
-      document.getElementById('af-out').innerHTML = `<p style="margin:0 0 8px">${fromS} … ${tillS} · разворотов: <b style="color:#d7deea">${R.pivots}</b> · орб ±${R.orbDays}д. <b>lift>1</b> и <b>z≥2</b> = событие реально притягивает развороты этого инструмента.</p>`
-        + `<div style="max-height:360px;overflow:auto"><table style="border-collapse:collapse;font-size:12px">`
-        + `<thead><tr style="color:#8b93a7;text-align:left"><th style="padding-right:10px">Астро-событие</th><th style="padding-right:10px">шт</th><th style="padding-right:10px">попад.</th><th style="padding-right:10px">hit%</th><th style="padding-right:10px">охват</th><th style="padding-right:10px">lift</th><th style="padding-right:10px">z</th><th>вердикт</th></tr></thead>`
+      document.getElementById('af-out').innerHTML = `<p style="margin:0 0 8px">${fromS} … ${tillS} · разворотов: <b style="color:#d7deea">${R.pivots}</b> · орб ±${R.orbDays}д. <b>lift>1</b> и <b>z≥2</b> = событие реально притягивает развороты. 📍 — вынести событие на график. <span id="af-clear" style="cursor:pointer;color:#8b93a7;text-decoration:underline">убрать метки</span></p>`
+        + `<div style="max-height:340px;overflow:auto"><table style="border-collapse:collapse;font-size:12px">`
+        + `<thead><tr style="color:#8b93a7;text-align:left"><th></th><th style="padding-right:10px">Астро-событие</th><th style="padding-right:10px">шт</th><th style="padding-right:10px">попад.</th><th style="padding-right:10px">hit%</th><th style="padding-right:10px">охват</th><th style="padding-right:10px">lift</th><th style="padding-right:10px">z</th><th>вердикт</th></tr></thead>`
         + `<tbody>${rows}</tbody></table></div>`;
+      [...document.querySelectorAll('.af-mark')].forEach((el) => { el.onclick = () => { const f = lastFit.features[+el.dataset.i]; showAstroMarks(f.name, f.events); }; });
+      const cl = document.getElementById('af-clear'); if (cl) cl.onclick = clearAstroMarks;
     };
     document.getElementById('af-run').onclick = run;
+    setTimeout(run, 30);
+  }
+  let lastFit = null;
+  function showAstroMarks(name, events) {
+    window.LUN_ASTRO_MARKS = { name, events };
+    if (!state.candleInds.AstroEventMarks) { try { state.chart.createIndicator({ name: 'AstroEventMarks', paneId: 'candle_pane' }, true); state.candleInds.AstroEventMarks = true; } catch (e) {} }
+    else { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'AstroEventMarks' }); state.chart.createIndicator({ name: 'AstroEventMarks', paneId: 'candle_pane' }, true); } catch (e) {} }
+  }
+  function clearAstroMarks() { window.LUN_ASTRO_MARKS = null; removeCandInd('AstroEventMarks'); }
+
+  // прогнозная линия из циклов: тумблер (двигает офсет вправо, чтобы влезла проекция)
+  function toggleProjection(on) {
+    if (on) {
+      try { const bar = state.chart.getBarSpace().bar || 6, proj = (window.LUN.TS && window.LUN.TS.projBars) || 120; state.chart.setOffsetRightDistance(Math.max(80, proj * bar)); } catch (e) {}
+      try { state.chart.createIndicator({ name: 'CycleProjection', paneId: 'candle_pane' }, true); state.candleInds.CycleProjection = true; } catch (e) {}
+    } else {
+      removeCandInd('CycleProjection');
+      if (!state.forecastOn) { try { state.chart.setOffsetRightDistance(80); } catch (e) {} }
+    }
+    try { state.chart.resize(); } catch (e) {}
+  }
+
+  // композит: среднее движение вперёд по астро-состоянию
+  function compositeModal() {
+    let bars = []; try { bars = state.chart.getDataList() || []; } catch (e) {}
+    if (bars.length < 60 || !window.LunTS) { alert('Мало истории. Поставьте период больше (D1, 1–3 года).'); return; }
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    const order = ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'];
+    openModal('Композит — среднее движение по астро-состоянию', `
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
+        <label>Группировка<br><select id="cm-mode" style="${inp}"><option value="phase">Фаза Луны</option><option value="moonsign">Знак Луны</option><option value="planet">Знак планеты</option></select></label>
+        <label>Планета<br><select id="cm-planet" style="${inp}">${order.map((p) => `<option value="${p}">${(window.LUN.ASTROGANN.planets[p] || {}).g || ''} ${p}</option>`).join('')}</select></label>
+        <label>Горизонт (баров)<br><input id="cm-h" type="number" min="1" max="60" value="${(window.LUN.TS && window.LUN.TS.compHorizon) || 5}" style="${inp};width:90px"></label>
+        <button id="cm-run" style="${btn}">Пересчитать</button>
+      </div>
+      <div id="cm-out" style="color:#8b93a7">…</div>`);
+    const run = () => {
+      const mode = document.getElementById('cm-mode').value, planet = document.getElementById('cm-planet').value, H = +document.getElementById('cm-h').value || 5;
+      const R = window.LunTS.lunarComposite(bars, { mode, planet, horizon: H });
+      const rows = R.rows.map((r) => {
+        const col = r.avg >= 0 ? '#26a69a' : '#ef5350';
+        return `<tr><td style="padding:2px 12px 2px 0">${r.key}</td>`
+          + `<td style="padding:2px 12px 2px 0;color:${col}"><b>${(r.avg * 100).toFixed(2)}%</b></td>`
+          + `<td style="padding:2px 12px 2px 0">${(r.winRate * 100).toFixed(0)}%</td>`
+          + `<td style="padding:2px 0;color:#8b93a7">${r.cnt}</td></tr>`;
+      }).join('');
+      document.getElementById('cm-out').innerHTML = `<p style="margin:0 0 8px">Среднее движение за ${R.horizon} баров вперёд по группам. Отсортировано по среднему. Малые группы (мало «шт») — осторожно.</p>`
+        + `<table style="border-collapse:collapse;font-size:12px"><thead><tr style="color:#8b93a7;text-align:left"><th style="padding-right:12px">Состояние</th><th style="padding-right:12px">ср. движ.</th><th style="padding-right:12px">%роста</th><th>шт</th></tr></thead><tbody>${rows}</tbody></table>`;
+    };
+    document.getElementById('cm-run').onclick = run;
+    document.getElementById('cm-mode').onchange = run; document.getElementById('cm-planet').onchange = run;
     setTimeout(run, 30);
   }
 
@@ -968,6 +1024,10 @@
       mkBtn(gannWrap, '🜨 Космограмма…', () => { closeMenus(); cosmogramModal(); }, false, 'Колесо зодиака с планетами и аспектами на дату');
       gsub('Timing Solutions');
       mkBtn(gannWrap, '🎯 Астро-фит: что работает…', () => { closeMenus(); astroFitModal(); }, false, 'Ранжирование астро-событий по совпадению с разворотами ЭТОГО инструмента (нужна история — D1, 1–3 года)');
+      mkBtn(gannWrap, '📈 Прогноз циклов (линия)', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleProjection(on);
+      }, false, 'Прогнозная линия из доминирующих циклов цены, продлённая вперёд');
+      mkBtn(gannWrap, '📊 Композит по астро-состоянию…', () => { closeMenus(); compositeModal(); }, false, 'Среднее движение вперёд по фазе Луны / знаку планеты (сезонность)');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
       gnote.textContent = 'Инструменты Ганна: геометрия · квадраты · циклы · астро-Ганн';
       gannWrap.appendChild(gnote);
