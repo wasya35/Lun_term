@@ -75,7 +75,7 @@
       instrument: window.LUN.INSTRUMENTS[0], tf: DEFAULT_TF,
       signPane: null, signPanes: {}, volumePane: null, aspectPanes: {}, allAspectPane: null,
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
-      overlayIds: {}, candleInds: {}, selectedOverlayId: null, forecastOn: false, paneWish: {},
+      overlayIds: {}, candleInds: {}, selectedOverlayId: null, selectedOverlay: null, forecastOn: false, paneWish: {},
       compareInstrument: null, comparePane: false, oiPane: null, arbPane: null, arbBundle: null,
       retroPane: null, bradleyPane: null,
     };
@@ -350,7 +350,8 @@
   /* ---------- инструменты Ганна ---------- */
   function removeCandInd(name) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {} delete state.candleInds[name]; }
   // запустить рисование оверлея (первый клик = пивот/угол, второй = охват)
-  function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); state.chart.createOverlay(Object.assign({ name, extendData }, ev)); }
+  const defOvStyle = () => Object.assign({}, window.LUN_OVERLAY_DEF_STYLE || { color: '#f0c040', size: 1.4, dash: 'solid', fill: false, fillColor: 'rgba(240,192,64,0.14)' });
+  function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); state.chart.createOverlay(Object.assign({ name, extendData: Object.assign({ style: defOvStyle() }, extendData) }, ev)); }
   // масштаб 1×1 (цена на бар) для сквоузинга: авто / ручной
   function scaleModal() {
     const cfg = window.LUN.GANNTOOLS.scale || (window.LUN.GANNTOOLS.scale = {});
@@ -658,10 +659,10 @@
   const clonePoints = (pts) => (pts || []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value }));
   const ovOf = (event) => event && (event.overlay || event.currentOverlay);
   function overlayEvents() {
-    const sel = (event) => { const ov = ovOf(event); if (ov) state.selectedOverlayId = ov.id; return false; };
+    const sel = (event) => { const ov = ovOf(event); if (ov) { state.selectedOverlayId = ov.id; state.selectedOverlay = ov; showStylePanel(ov); } return false; };
     return {
       onSelected: sel, onClick: sel,
-      onDeselected: () => { state.selectedOverlayId = null; return false; },
+      onDeselected: () => { state.selectedOverlayId = null; state.selectedOverlay = null; hideStylePanel(); return false; },
       onPressedMoveStart: (event) => {
         sel(event);
         const ov = ovOf(event);
@@ -679,11 +680,11 @@
     const id = state.selectedOverlayId;
     if (!id || typeof id !== 'string') return;
     try { state.chart.removeOverlay({ id }); } catch (e) {}
-    state.selectedOverlayId = null;
+    state.selectedOverlayId = null; state.selectedOverlay = null;
+    if (stylePanelEl) stylePanelEl.style.display = 'none';
   }
   function copySelected() {
-    if (!state.selectedOverlayId || !state.chart.getOverlayById) return false;
-    const ov = state.chart.getOverlayById(state.selectedOverlayId);
+    const ov = state.selectedOverlay || (state.chart.getOverlayById && state.chart.getOverlayById(state.selectedOverlayId));
     if (ov) { state.clipboardOverlay = { name: ov.name, points: clonePoints(ov.points), styles: ov.styles, extendData: ov.extendData }; return true; }
     return false;
   }
@@ -706,18 +707,67 @@
     try { const bs = c.getBarSpace().bar; if (c.setBarSpace) c.setBarSpace(Math.max(1, bs * (inn ? 1.15 : 0.87))); } catch (e) {}
   }
 
+  /* ---------- панель свойств выделенного объекта ---------- */
+  let stylePanelEl = null;
+  function hexToRgba(hex, a) { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); if (!m) return 'rgba(240,192,64,' + a + ')'; return 'rgba(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ',' + a + ')'; }
+  function ensureStylePanel() {
+    if (stylePanelEl) return stylePanelEl;
+    const p = document.createElement('div');
+    p.id = 'lun-style-panel';
+    p.style.cssText = 'position:fixed;top:96px;right:12px;z-index:45;width:214px;background:#121722;border:1px solid #232b3a;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:10px 12px;font-size:12px;color:#d7deea;display:none';
+    const row = 'display:flex;justify-content:space-between;align-items:center;margin:5px 0';
+    p.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b id="sp-name">Объект</b><span id="sp-close" style="cursor:pointer;color:#8b93a7;font-size:16px">×</span></div>
+      <label style="${row}">Цвет <input id="sp-color" type="color" style="width:44px;height:24px;background:none;border:1px solid #232b3a;border-radius:4px"></label>
+      <label style="${row}">Толщина <input id="sp-size" type="range" min="1" max="6" step="0.5" style="width:110px"></label>
+      <label style="${row}">Линия <select id="sp-dash" style="background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"><option value="solid">сплошная</option><option value="dashed">пунктир</option><option value="dotted">точки</option></select></label>
+      <label style="${row}">Заливка <input id="sp-fill" type="checkbox"></label>
+      <label style="${row}">🔒 Блокировка <input id="sp-lock" type="checkbox"></label>
+      <button id="sp-del" style="width:100%;margin-top:8px;background:#2a1720;color:#ef8a88;border:1px solid #5a2b33;border-radius:6px;padding:6px;cursor:pointer">Удалить (Del)</button>`;
+    document.body.appendChild(p);
+    p.querySelector('#sp-close').onclick = hideStylePanel;
+    p.querySelector('#sp-del').onclick = () => { deleteSelected(); hideStylePanel(); };
+    ['#sp-color', '#sp-size', '#sp-dash', '#sp-fill', '#sp-lock'].forEach((id) => { const el = p.querySelector(id); el.oninput = applySelStyle; el.onchange = applySelStyle; });
+    stylePanelEl = p; return p;
+  }
+  const OV_NAMES = { lun_rect: 'Прямоугольник', lun_gann: 'Линия Ганна', lun_arrow: 'Стрелка', lun_hray: 'Луч ⨯N', lun_vprofile: 'Профиль объёма', lun_gannbox: 'Gann Box', lun_gannsquare: 'Квадрат Ганна', lun_text: 'Текст', horizontalStraightLine: 'Уровень', segment: 'Трендовая' };
+  function showStylePanel(ov) {
+    const p = ensureStylePanel();
+    const ed = ov.extendData && typeof ov.extendData === 'object' ? ov.extendData : {};
+    const st = Object.assign(defOvStyle(), ed.style || {});
+    p.querySelector('#sp-name').textContent = OV_NAMES[ov.name] || 'Объект';
+    p.querySelector('#sp-color').value = /^#([0-9a-f]{6})$/i.test(st.color) ? st.color : '#f0c040';
+    p.querySelector('#sp-size').value = st.size || 1.4;
+    p.querySelector('#sp-dash').value = st.dash || 'solid';
+    p.querySelector('#sp-fill').checked = !!st.fill;
+    p.querySelector('#sp-lock').checked = !!ov.lock;
+    p.style.display = 'block';
+  }
+  function hideStylePanel() { if (stylePanelEl) stylePanelEl.style.display = 'none'; }
+  function applySelStyle() {
+    const id = state.selectedOverlayId, ov = state.selectedOverlay; if (!id || !ov || !stylePanelEl) return;
+    const color = stylePanelEl.querySelector('#sp-color').value;
+    const size = +stylePanelEl.querySelector('#sp-size').value;
+    const dash = stylePanelEl.querySelector('#sp-dash').value;
+    const fill = stylePanelEl.querySelector('#sp-fill').checked;
+    const lock = stylePanelEl.querySelector('#sp-lock').checked;
+    const ed = Object.assign({}, (ov.extendData && typeof ov.extendData === 'object') ? ov.extendData : {});
+    ed.style = { color, size, dash, fill, fillColor: hexToRgba(color, 0.14) };
+    ov.extendData = ed; ov.lock = lock;
+    try { state.chart.overrideOverlay({ id, extendData: ed, lock }); } catch (e) {}
+  }
+
   function startDraw(toolId) {
     closeMenus();
     const ev = overlayEvents();
     if (toolId === 'lun_text') {
       const t = window.prompt('Текст метки:', '');
       if (t === null) return;
-      state.chart.createOverlay(Object.assign({ name: 'lun_text', extendData: t }, ev));
+      state.chart.createOverlay(Object.assign({ name: 'lun_text', extendData: { text: t, style: defOvStyle() } }, ev));
     } else if (toolId === 'lun_hray') {
       const n = (window.LUN.HRAY && window.LUN.HRAY.maxCrossings) || 2;
-      state.chart.createOverlay(Object.assign({ name: 'lun_hray', extendData: { maxCrossings: n } }, ev));
+      state.chart.createOverlay(Object.assign({ name: 'lun_hray', extendData: { maxCrossings: n, style: defOvStyle() } }, ev));
     } else {
-      state.chart.createOverlay(Object.assign({ name: toolId }, ev));
+      state.chart.createOverlay(Object.assign({ name: toolId, extendData: { style: defOvStyle() } }, ev));
     }
   }
 
