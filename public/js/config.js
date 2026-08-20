@@ -286,20 +286,28 @@ LUN.NEWS = {
     { name: 'Финам',  url: 'https://www.finam.ru/analysis/conews/rsspoint/' },
     { name: 'Investing', url: 'https://ru.investing.com/rss/news.rss' },
   ],
-  // ключи описывают ИСХОДНЫЙ товар/актив фьючерса (доллар, нефть, золото…),
-  // а не только тикер — новости про базовый рынок так же релевантны.
+  // Ключи описывают ИСХОДНЫЙ ТОВАР/актив (нефть, золото, доллар…), а НЕ тикер
+  // фьюча: по SiU6/BRV6 прессы почти нет, а по нефти/золоту/доллару — вагон.
   keywords: {
-    Si:   ['доллар', 'рубл', 'usd/rub', 'usd ', 'валют', 'цб ', 'курс', 'бакс'],
-    CNY:  ['юан', 'рубл', 'кита', 'cny'],
-    GOLD: ['золот', 'драгмет', 'xau', 'gold'],
-    BR:   ['нефт', 'brent', 'опек', 'opec', 'oil', 'баррел'],
-    ED:   ['евро', 'eur', 'ецб', 'ecb'],
-    SILV: ['серебр', 'silver', 'xag'],
+    Si:   ['доллар', 'рубл', 'usd/rub', 'usd ', 'валют', 'цб ', 'курс', 'бакс', 'ключевая ставка', 'минфин'],
+    CNY:  ['юан', 'рубл', 'кита', 'cny', 'народный банк кита'],
+    GOLD: ['золот', 'драгмет', 'xau', 'gold', 'унци', 'слитк'],
+    BR:   ['нефт', 'brent', 'brent', 'urals', 'опек', 'opec', 'oil', 'баррел', 'wti', 'нефтян', 'котировк нефт'],
+    ED:   ['евро', 'eur', 'ецб', 'ecb', 'eur/usd'],
+    SILV: ['серебр', 'silver', 'xag', 'драгмет'],
     BTC:  ['биткоин', 'bitcoin', 'btc', 'крипт'],
     ETH:  ['эфир', 'ethereum', 'eth', 'крипт'],
     SOL:  ['solana', 'sol ', 'крипт'],
   },
-  default: ['экономик', 'рынок', 'ставк', 'инфляц', 'фрс', 'цб ', 'нефт', 'рубл'],
+  default: ['экономик', 'рынок', 'ставк', 'инфляц', 'фрс', 'цб ', 'нефт', 'рубл', 'золот'],
+  // Профильные ТОВАРНЫЕ ленты — добавляются к общим по инструменту (нефть/золото).
+  commodityFeeds: {
+    BR:   [{ name: 'OilPrice', url: 'https://oilprice.com/rss/main' }, { name: 'Investing-Нефть', url: 'https://ru.investing.com/rss/commodities_Crude%20Oil.rss' }],
+    GOLD: [{ name: 'Mining.com', url: 'https://www.mining.com/feed/' }, { name: 'Investing-Золото', url: 'https://ru.investing.com/rss/commodities_Gold.rss' }],
+    GD:   [{ name: 'Mining.com', url: 'https://www.mining.com/feed/' }, { name: 'Investing-Золото', url: 'https://ru.investing.com/rss/commodities_Gold.rss' }],
+    SILV: [{ name: 'Mining.com', url: 'https://www.mining.com/feed/' }],
+    Si:   [{ name: 'Investing-USD/RUB', url: 'https://ru.investing.com/rss/currencies_USD-RUB.rss' }],
+  },
   // ленты крипто-рынка (RU+EN); для акций США добавляется Yahoo по тикеру
   cryptoEnFeeds: [
     { name: 'РБК-Крипто', url: 'https://www.rbc.ru/crypto/rss' },

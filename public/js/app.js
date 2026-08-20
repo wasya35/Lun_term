@@ -983,6 +983,8 @@
   function newsFeeds() {
     const N = window.LUN.NEWS || {}, ins = state.instrument, prov = ins.provider || 'moex';
     const feeds = (N.feeds || []).slice();
+    // профильные товарные ленты по исходному товару (нефть/золото/доллар…)
+    if (N.commodityFeeds && N.commodityFeeds[ins.id]) N.commodityFeeds[ins.id].forEach((f) => feeds.push(f));
     if (prov === 'yahoo' && (ins.symbol || ins.ticker)) feeds.push({ name: 'Yahoo', url: 'https://feeds.finance.yahoo.com/rss/2.0/headline?s=' + encodeURIComponent(ins.symbol || ins.ticker) + '&region=US&lang=en-US' });
     if (prov === 'bybit' || prov === 'binance') (N.cryptoEnFeeds || []).forEach((f) => feeds.push(f));
     return feeds;
