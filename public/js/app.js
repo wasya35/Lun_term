@@ -440,6 +440,48 @@
   }
   function clearAstroMarks() { window.LUN_ASTRO_MARKS = null; removeCandInd('AstroEventMarks'); }
 
+  // исследование сигналов: выбираемый бэктест на загруженных данных
+  function researchModal() {
+    let bars = []; try { bars = state.chart.getDataList() || []; } catch (e) {}
+    if (bars.length < 60 || !window.LunResearch) { alert('Мало данных. Поставьте период больше (напр. D1, 1–3 года) в меню «🗓 Период».'); return; }
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    const groups = {}; window.LunResearch.SIGNALS.forEach((s) => { (groups[s.group] = groups[s.group] || []).push(s); });
+    const checksHtml = Object.keys(groups).map((g) => `<div style="margin:2px 0"><span style="color:#8b93a7;font-size:11px">${g}</span><br>`
+      + groups[g].map((s) => `<label style="display:inline-flex;align-items:center;gap:4px;margin:2px 12px 2px 0"><input type="checkbox" class="rs-sig" value="${s.key}" checked> ${s.name}</label>`).join('') + '</div>').join('');
+    openModal('🔬 Исследование сигналов (бэктест по выбору)', `
+      <div style="margin-bottom:8px">${checksHtml}</div>
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
+        <label>Горизонты (баров)<br><input id="rs-h" type="text" value="1, 3, 5, 10" style="${inp};width:150px"></label>
+        <button id="rs-run" style="${btn};border-color:#26a69a">Прогнать</button>
+        <span style="color:#8b93a7">данных: ${bars.length} баров · ${state.instrument.title || ''} · ${state.tf.title}</span>
+      </div>
+      <div id="rs-out" style="color:#8b93a7">…</div>`);
+    const run = () => {
+      const keys = [...document.querySelectorAll('.rs-sig')].filter((c) => c.checked).map((c) => c.value);
+      const H = document.getElementById('rs-h').value.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => n > 0);
+      const R = window.LunResearch.run(bars, keys, H.length ? H : [1, 3, 5, 10]);
+      const head = '<tr style="color:#8b93a7;text-align:left"><th style="padding-right:10px">Сигнал</th><th style="padding-right:10px">входов</th>'
+        + R.horizons.map((h) => `<th style="padding-right:10px" colspan="2">+${h}: win / ср% (t)</th>`).join('') + '</tr>';
+      const rows = R.rows.map((r) => {
+        let tds = `<td style="padding:2px 10px 2px 0">${r.name}</td><td style="padding:2px 10px 2px 0;color:#8b93a7">${r.count}</td>`;
+        R.horizons.forEach((h) => {
+          const s = r.perH[h];
+          if (!s || !s.n) { tds += '<td colspan="2" style="color:#6b7280">—</td>'; return; }
+          const sig = s.n >= 30 && Math.abs(s.t) >= 2;
+          const wcol = s.win > 0.55 ? '#26a69a' : (s.win < 0.45 ? '#ef5350' : '#d7deea');
+          tds += `<td style="padding:2px 4px 2px 0;color:${wcol}">${(s.win * 100).toFixed(0)}%</td>`
+            + `<td style="padding:2px 12px 2px 0;color:${s.avg >= 0 ? '#26a69a' : '#ef5350'}">${(s.avg * 100).toFixed(2)}%<span style="color:${sig ? '#e0c040' : '#6b7280'}"> (${s.t.toFixed(1)})</span></td>`;
+        });
+        return `<tr>${tds}</tr>`;
+      }).join('');
+      document.getElementById('rs-out').innerHTML = `<p style="margin:0 0 8px">Направленный вход по сигналу, доходность вперёд. <b>win>55%</b> и <b>|t|≥2</b> при входах ≥30 = есть перевес. Иначе — шум. Считается на текущем инструменте/ТФ/периоде.</p>`
+        + `<div style="max-height:340px;overflow:auto"><table style="border-collapse:collapse;font-size:12px"><thead>${head}</thead><tbody>${rows}</tbody></table></div>`;
+    };
+    document.getElementById('rs-run').onclick = run;
+    setTimeout(run, 30);
+  }
+
   // прогнозная линия из циклов: тумблер (двигает офсет вправо, чтобы влезла проекция)
   function toggleProjection(on) {
     if (on) {
@@ -1177,6 +1219,7 @@
       window.LunBacktest.run({ engine: ins.engine || 'futures', market: ins.market || 'forts', ticker, title: (ins.title || ins.id) + ' · ' + ticker });
     }, false, 'Сверка лунных зон и аспектов с историей текущего инструмента (B)');
     regHotkey('b', () => btBtn.click());
+    mkBtn(setWrap, '🔬 Исследование сигналов', () => { closeMenus(); researchModal(); }, false, 'Выбираемый бэктест: объём, EMA, пробой, RSI, лунные зоны — на текущих данных');
     mkBtn(setWrap, '📰 Новости по инструменту', () => { closeMenus(); toggleNews(!newsOpen); }, false, 'Правая колонка новостей по текущему инструменту (СМИ как контр-индикатор)');
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
