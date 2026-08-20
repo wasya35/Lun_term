@@ -664,6 +664,7 @@
         ctx.fillStyle = '#3aa0ff'; ctx.fillText('физ net ' + ((L.fizNet >= 0 ? '+' : '') + (L.fizNet || 0)), 6, 3);
         ctx.fillStyle = '#e0a030'; ctx.fillText('юр net ' + ((L.yurNet >= 0 ? '+' : '') + (L.yurNet || 0)), 130, 3);
         ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ ' + (L.oi || 0), 250, 3);
+        if (L.dOI != null) { ctx.fillStyle = L.dOI >= 0 ? '#26a69a' : '#ef5350'; ctx.fillText('ΔОИ ' + (L.dOI >= 0 ? '+' : '') + L.dOI, 340, 3); }
       } else {
         const pts = []; let mn = Infinity, mx = -Infinity;
         for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r || r.oi == null) continue; pts.push([i, r.oi]); mn = Math.min(mn, r.oi); mx = Math.max(mx, r.oi); }
@@ -671,7 +672,47 @@
         const yOf = (v) => H * 0.9 - ((v - mn) / (mx - mn)) * H * 0.8;
         ctx.strokeStyle = '#6bd3a0'; ctx.lineWidth = 1.4; ctx.beginPath(); pts.forEach((p, k) => { const x = xAxis.convertToPixel(p[0]), y = yOf(p[1]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke();
         ctx.fillStyle = '#6bd3a0'; ctx.fillText('Открытый интерес', 6, 3);
+        const L = ed.latest || {}; if (L.dOI != null) { ctx.fillStyle = L.dOI >= 0 ? '#26a69a' : '#ef5350'; ctx.fillText('ΔОИ ' + (L.dOI >= 0 ? '+' : '') + L.dOI, 140, 3); }
       }
+      return true;
+    },
+  });
+
+  /* ============ Экстремальные ΔОИ на цене (вертикальные метки) ============
+   * Читает window.LUN_OI_EXTREMES = { byDate: {d:{dOI}}, thresholds:[t1,t2,t3] }.
+   * Дни с |ΔОИ| ≥ порога — вертикаль на цене: приток ОИ (+) зелёным, отток (−)
+   * красным; яркость и толщина по уровню; на 2–3 уровне — подпись величины. */
+  const oiKfmt = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n);
+  kc.registerIndicator({
+    name: 'OIExtremes', shortName: 'ΔОИ-экстремумы', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const D = window.LUN_OI_EXTREMES; if (!D || !D.byDate || !D.thresholds) return true;
+      const list = chart.getDataList(); if (list.length < 2) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      const thr = D.thresholds, H = bounding.height, W = bounding.width;
+      const dOf = (ts) => new Date(ts + MSK_OFFSET).toISOString().slice(0, 10);
+      const ALPHA = [0, 0.28, 0.55, 0.9], WID = [0, 1, 1.6, 2.4];
+      let lastDate = null;
+      for (let i = from; i < to; i++) {
+        const bar = list[i]; if (!bar) continue; const date = dOf(bar.timestamp);
+        if (date === lastDate) continue; lastDate = date;
+        const rec = D.byDate[date]; if (!rec || rec.dOI == null) continue;
+        const ab = Math.abs(rec.dOI); const tier = ab >= thr[2] ? 3 : (ab >= thr[1] ? 2 : (ab >= thr[0] ? 1 : 0));
+        if (!tier) continue;
+        const up = rec.dOI > 0, x = xAxis.convertToPixel(i); if (x < -2 || x > W + 2) continue;
+        ctx.strokeStyle = (up ? 'rgba(38,166,154,' : 'rgba(239,83,80,') + ALPHA[tier] + ')';
+        ctx.lineWidth = WID[tier]; ctx.setLineDash(tier === 1 ? [3, 4] : []);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]);
+        if (tier >= 2) {
+          ctx.fillStyle = up ? '#26a69a' : '#ef5350'; ctx.font = (tier === 3 ? 'bold ' : '') + '10px system-ui, sans-serif';
+          ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+          ctx.fillText((up ? '+' : '−') + oiKfmt(ab) + (tier === 3 ? '!' : ''), x + 2, 2);
+        }
+      }
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+      ctx.fillText('ΔОИ: приток ▲ / отток ▼ (пороги ' + thr.map(oiKfmt).join('·') + ')', 6, H - 2);
       return true;
     },
   });

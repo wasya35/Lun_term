@@ -304,13 +304,34 @@
       try { const rows = await window.LunISS.fetchOIHistory(ticker, fmt(from), fmt(till)); rows.forEach((r) => { byDate[r.date] = { oi: r.oi }; latest = { date: r.date, oi: r.oi }; }); } catch (e) {}
     }
     if (!Object.keys(byDate).length) { alert('ОИ не получен для ' + code + ' (проверь строку данных / коды).'); return false; }
+    // ΔОИ день-к-дню + пороги экстремумов (по коду или авто по квантилям)
+    const sortedD = Object.keys(byDate).sort(); let prevOi = null;
+    sortedD.forEach((d) => { const oi = byDate[d].oi; if (oi != null && prevOi != null) byDate[d].dOI = oi - prevOi; if (oi != null) prevOi = oi; });
+    if (latest && byDate[latest.date]) latest.dOI = byDate[latest.date].dOI;
+    const T = window.LUN.OI_EXTREMES || {};
+    let thr = (T.thresholds && T.thresholds[code]) || null;
+    if (!thr) {
+      const arr = sortedD.map((d) => Math.abs(byDate[d].dOI || 0)).filter((x) => x > 0).sort((a, b) => a - b);
+      const q = (p) => arr.length ? arr[Math.min(arr.length - 1, Math.floor(p * arr.length))] : 0;
+      const pc = T.autoPct || [0.85, 0.95, 0.99]; thr = [q(pc[0]), q(pc[1]), q(pc[2])];
+    }
     const paneId = 'pane_oi';
     try { slot.chart.removeIndicator({ paneId }); } catch (e) {}
-    slot.chart.createIndicator({ name: 'OpenInterest', paneId, shortName: 'ОИ ' + code + (split ? ' физ/юр' : ''), extendData: { byDate, latest, split } }, false);
+    slot.chart.createIndicator({ name: 'OpenInterest', paneId, shortName: 'ОИ ' + code + (split ? ' физ/юр' : ''), extendData: { byDate, latest, split, thr } }, false);
     slot.oiPane = paneId; wishPane(paneId, { height: 84, order: 92 });
+    // метки экстремальных ΔОИ на цене
+    window.LUN_OI_EXTREMES = { byDate, thresholds: thr, code };
+    try { slot.chart.removeIndicator({ paneId: 'candle_pane', name: 'OIExtremes' }); } catch (e) {}
+    slot.chart.createIndicator({ name: 'OIExtremes', paneId: 'candle_pane' }, true);
+    slot.candleInds.OIExtremes = true;
     return true;
   }
-  function removeOI(slot) { slot = slot || state; if (slot.oiPane) { try { slot.chart.removeIndicator({ paneId: slot.oiPane }); } catch (e) {} slot.oiPane = null; } }
+  function removeOI(slot) {
+    slot = slot || state;
+    if (slot.oiPane) { try { slot.chart.removeIndicator({ paneId: slot.oiPane }); } catch (e) {} slot.oiPane = null; }
+    try { slot.chart.removeIndicator({ paneId: 'candle_pane', name: 'OIExtremes' }); } catch (e) {}
+    delete slot.candleInds.OIExtremes; window.LUN_OI_EXTREMES = null;
+  }
 
   /* ---------- арбитражная связка: синтетика + спред + z-score ---------- */
   async function buildArb(slot, bundle) {
