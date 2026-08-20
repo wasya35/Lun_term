@@ -47,6 +47,7 @@ function db() {
     $pdo->exec('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, grp TEXT NOT NULL DEFAULT "free", settings TEXT, created INTEGER)');
     @$pdo->exec('ALTER TABLE users ADD COLUMN tg_chat TEXT');   // привязка Telegram (может уже быть)
     @$pdo->exec('ALTER TABLE users ADD COLUMN tg_code TEXT');
+    @$pdo->exec('ALTER TABLE users ADD COLUMN workspace TEXT');  // рабочий стол (последнее состояние)
     $pdo->exec('CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, kind TEXT, title TEXT, instrument TEXT, provider TEXT, op TEXT, level REAL, fire_ts INTEGER, channel TEXT, rpt INTEGER DEFAULT 0, status TEXT DEFAULT "active", created INTEGER)');
   } catch (Exception $e) { out(['error' => 'Хранилище недоступно: ' . $e->getMessage() . ' (нужен PDO SQLite и запись в lun_data/)'], 500); }
   return $pdo;
@@ -102,6 +103,19 @@ if ($fn === 'save') {
 if ($fn === 'load') {
   $u = current_user(); if (!$u) out(['error' => 'Не авторизован'], 401);
   out(['settings' => $u['settings'] ? json_decode($u['settings'], true) : null]);
+}
+
+/* ---- рабочий стол (последнее состояние терминала) ---- */
+if ($fn === 'ws_save') {
+  $u = current_user(); if (!$u) out(['error' => 'Не авторизован'], 401);
+  $s = json_encode(body()['ws'] ?? null);
+  if (strlen($s) > 2000000) out(['error' => 'Слишком большой рабочий стол'], 413);
+  db()->prepare('UPDATE users SET workspace = ? WHERE id = ?')->execute([$s, $u['id']]);
+  out(['ok' => true]);
+}
+if ($fn === 'ws_load') {
+  $u = current_user(); if (!$u) out(['ws' => null]);
+  out(['ws' => $u['workspace'] ? json_decode($u['workspace'], true) : null]);
 }
 
 /* ---- Алерты ---- */

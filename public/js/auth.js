@@ -67,7 +67,7 @@
     m.querySelector('#au-go').onclick = async () => {
       const email = m.querySelector('#au-email').value.trim(), password = m.querySelector('#au-pass').value;
       const errEl = m.querySelector('#au-err'); errEl.textContent = '';
-      try { const r = await api(mode, { email, password }); user = r.user; csrf = r.csrf || csrf; render(); bg.remove(); }
+      try { const r = await api(mode, { email, password }); user = r.user; csrf = r.csrf || csrf; render(); bg.remove(); if (window.LUN_APPLY_WS) window.LUN_APPLY_WS(); }
       catch (e) { errEl.textContent = e.message; }
     };
   }
@@ -84,7 +84,7 @@
 
   async function init() {
     mountButton();
-    try { const r = await api('me'); user = r.user; csrf = r.csrf || ''; render(); } catch (e) { /* нет PHP — кнопка просто откроет форму, покажет ошибку */ }
+    try { const r = await api('me'); user = r.user; csrf = r.csrf || ''; render(); if (user && window.LUN_APPLY_WS) window.LUN_APPLY_WS(); } catch (e) { /* нет PHP — кнопка просто откроет форму, покажет ошибку */ }
   }
   window.LunAuth = { init, get user() { return user; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();

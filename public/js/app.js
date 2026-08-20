@@ -132,7 +132,7 @@
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
       overlayIds: {}, candleInds: {}, selectedOverlayId: null, selectedOverlay: null, forecastOn: false, paneWish: {},
       compareInstrument: null, comparePane: false, oiPane: null, arbPane: null, arbBundle: null,
-      retroPane: null, bradleyPane: null, basisPane: null,
+      retroPane: null, bradleyPane: null, basisPane: null, drawings: {},
     };
   }
   let slots = [];
@@ -184,6 +184,7 @@
     const styles = Object.assign({}, base, { candle: Object.assign({}, base.candle, { type: LOOK.candle }) });
     slots.forEach((s) => { try { s.chart.setStyles(styles); } catch (e) {} });
     try { localStorage.setItem('lun_look', JSON.stringify(LOOK)); } catch (e) {}
+    if (typeof scheduleWsSave === 'function') scheduleWsSave();
   }
   function setTheme(t) { LOOK.theme = t; applyChartLook(); }
   function setCandleType(c) { LOOK.candle = c; applyChartLook(); }
@@ -907,6 +908,7 @@
     if (slot.arbBundle) setTimeout(() => buildArb(slot, slot.arbBundle), 1000);
     // пересчитать базис к споту
     if (slot.basisPane) setTimeout(() => rebuildBasis(slot), 1100);
+    if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
   }
 
   function reloadAllSlots() { slots.forEach((s) => load(s)); }
@@ -948,10 +950,16 @@
   let ctrlDown = false;
   const clonePoints = (pts) => (pts || []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value }));
   const ovOf = (event) => event && (event.overlay || event.currentOverlay);
+  // учёт нарисованных объектов для сохранения рабочего стола
+  function recordOverlay(ov) { if (!ov || !ov.id) return; state.drawings[ov.id] = { name: ov.name, points: clonePoints(ov.points), extendData: ov.extendData, styles: ov.styles, lock: !!ov.lock }; scheduleWsSave(); }
+  function forgetOverlay(id) { if (id && state.drawings[id]) { delete state.drawings[id]; scheduleWsSave(); } }
   function overlayEvents() {
     const sel = (event) => { const ov = ovOf(event); if (ov) { state.selectedOverlayId = ov.id; state.selectedOverlay = ov; showStylePanel(ov); } return false; };
+    const rec = (event) => { const ov = ovOf(event); if (ov) recordOverlay(ov); return false; };
     return {
       onSelected: sel, onClick: sel,
+      onDrawEnd: rec, onPressedMoveEnd: rec,
+      onRemoved: (event) => { const ov = ovOf(event); if (ov) forgetOverlay(ov.id); return false; },
       onDeselected: () => { state.selectedOverlayId = null; state.selectedOverlay = null; hideStylePanel(); return false; },
       onPressedMoveStart: (event) => {
         sel(event);
@@ -970,6 +978,7 @@
     const id = state.selectedOverlayId;
     if (!id || typeof id !== 'string') return;
     try { state.chart.removeOverlay({ id }); } catch (e) {}
+    forgetOverlay(id);
     state.selectedOverlayId = null; state.selectedOverlay = null;
     if (stylePanelEl) stylePanelEl.style.display = 'none';
   }
@@ -1057,6 +1066,7 @@
     if (v === '' || !(+v > 0)) delete ed.gannAngle; else ed.gannAngle = +v;
     ov.extendData = ed;
     try { state.chart.overrideOverlay({ id, extendData: ed }); } catch (e) {}
+    recordOverlay(ov);
   }
   function hideStylePanel() { if (stylePanelEl) stylePanelEl.style.display = 'none'; }
   function applySelStyle() {
@@ -1070,6 +1080,7 @@
     ed.style = { color, size, dash, fill, fillColor: hexToRgba(color, 0.14) };
     ov.extendData = ed; ov.lock = lock;
     try { state.chart.overrideOverlay({ id, extendData: ed, lock }); } catch (e) {}
+    recordOverlay(ov);
   }
 
   /* ---------- новости по инструменту (правая колонка) ---------- */
@@ -1184,6 +1195,67 @@
     if (!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
     return j;
   }
+  /* ---------- рабочий стол: авто-сохранение/восстановление ---------- */
+  let applyingWs = false, wsTimer = null, wsApplied = false;
+  function scheduleWsSave() {
+    if (applyingWs || !window.LunAuth || !window.LunAuth.user) return;
+    clearTimeout(wsTimer);
+    wsTimer = setTimeout(() => { authApi('ws_save', { ws: captureWorkspace() }).catch(() => {}); }, 1500);
+  }
+  function captureWorkspace() {
+    const s = state;
+    return {
+      v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK,
+      inds: {
+        candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
+        volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
+        basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane,
+        signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
+        aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane,
+      },
+      drawings: Object.values(s.drawings || {}),
+    };
+  }
+  const IND_SKIP = { GannSquareLevels: 1, OIExtremes: 1, AstroEventMarks: 1, CycleProjection: 1, GannSquaring: 1, GannRetr: 1, GannCycles: 1 };
+  function applyWsIndicators(ind) {
+    if (!ind) return;
+    (ind.candle || []).forEach((n) => { if (IND_SKIP[n]) return; try { state.chart.createIndicator({ name: n, paneId: 'candle_pane' }, true); state.candleInds[n] = true; } catch (e) {} });
+    (ind.overlays || []).forEach((k) => { try { toggleOverlay(k, true); } catch (e) {} });
+    try { if (ind.volume && !state.volumePane) createVolumePane(); } catch (e) {}
+    try { if (ind.delta && !state.deltaPane) createDeltaPane(); } catch (e) {}
+    try { if (ind.markov && !state.markovPanes) createMarkov(); } catch (e) {}
+    try { if (ind.oi && !state.oiPane) rebuildOI(state); } catch (e) {}
+    try { if (ind.basis && !state.basisPane) rebuildBasis(state); } catch (e) {}
+    try { if (ind.retro && !state.retroPane) createRetroPane(); } catch (e) {}
+    try { if (ind.bradley && !state.bradleyPane) createBradleyPane(); } catch (e) {}
+    (ind.signs || []).forEach((b, i) => { if (state.signPanes[b]) return; try { if (b === 'Moon') toggleMoonSign(true); else createSignPane(b, 25 + i); } catch (e) {} });
+    (ind.cycles || []).forEach((id, i) => { const cy = window.LUN.CYCLES.find((c) => c.id === id); if (cy && !state.cyclePanes[id]) try { createCyclePane(cy, 11 + i); } catch (e) {} });
+    (ind.aspects || []).forEach((b, i) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === b); if (pl && !state.aspectPanes[b]) try { createSunAspect(pl, 15 + i); } catch (e) {} });
+    try { if (ind.allAspect && !state.allAspectPane) createAllAspect(); } catch (e) {}
+  }
+  function applyWsDrawings(list) {
+    (list || []).forEach((d) => { try { const id = state.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) state.drawings[oid] = d; } catch (e) {} });
+  }
+  async function applyWorkspace(ws) {
+    if (!ws || applyingWs) return;
+    applyingWs = true;
+    try {
+      if (ws.look) LOOK = Object.assign(LOOK, ws.look);
+      if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
+      if (ws.instrument) state.instrument = ws.instrument;
+      if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
+      await load(state);
+      applyChartLook();
+      setTimeout(() => { applyWsIndicators(ws.inds); applyWsDrawings(ws.drawings); syncToolbar(); applyingWs = false; }, 1000);
+    } catch (e) { applyingWs = false; }
+  }
+  // вызывается из auth.js при входе/восстановлении сессии
+  window.LUN_APPLY_WS = async function () {
+    if (wsApplied) return; wsApplied = true;
+    try { const r = await authApi('ws_load'); if (r && r.ws) applyWorkspace(r.ws); } catch (e) {}
+  };
+  window.LUN_SCHEDULE_WS = scheduleWsSave;
+
   function alertsModal() {
     if (!window.LunAuth || !window.LunAuth.user) { alert('Чтобы ставить алерты, войдите в аккаунт (кнопка 👤 справа).'); return; }
     const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
@@ -1732,6 +1804,7 @@
     setLayout('1');       // создаёт график(и), панели и загрузку
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
+    setInterval(() => scheduleWsSave(), 25000);   // страховочное авто-сохранение рабочего стола
     window.addEventListener('lun:datasource', () => {
       const el = document.getElementById('datasource');
       el.textContent = window.LUN_DATA_SOURCE || '';
