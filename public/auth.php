@@ -45,6 +45,9 @@ function db() {
     $pdo = new PDO('sqlite:' . $dir . '/users.db');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, grp TEXT NOT NULL DEFAULT "free", settings TEXT, created INTEGER)');
+    @$pdo->exec('ALTER TABLE users ADD COLUMN tg_chat TEXT');   // привязка Telegram (может уже быть)
+    @$pdo->exec('ALTER TABLE users ADD COLUMN tg_code TEXT');
+    $pdo->exec('CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, kind TEXT, title TEXT, instrument TEXT, provider TEXT, op TEXT, level REAL, fire_ts INTEGER, channel TEXT, rpt INTEGER DEFAULT 0, status TEXT DEFAULT "active", created INTEGER)');
   } catch (Exception $e) { out(['error' => 'Хранилище недоступно: ' . $e->getMessage() . ' (нужен PDO SQLite и запись в lun_data/)'], 500); }
   return $pdo;
 }
@@ -99,6 +102,34 @@ if ($fn === 'save') {
 if ($fn === 'load') {
   $u = current_user(); if (!$u) out(['error' => 'Не авторизован'], 401);
   out(['settings' => $u['settings'] ? json_decode($u['settings'], true) : null]);
+}
+
+/* ---- Алерты ---- */
+if ($fn === 'alert_add') {
+  $u = current_user(); if (!$u) out(['error' => 'Войдите, чтобы ставить алерты'], 401);
+  $b = body();
+  $kind = ($b['kind'] ?? '') === 'astro' ? 'astro' : 'price';
+  $st = db()->prepare('INSERT INTO alerts (user_id, kind, title, instrument, provider, op, level, fire_ts, channel, rpt, status, created) VALUES (?,?,?,?,?,?,?,?,?,?,"active",?)');
+  $st->execute([$u['id'], $kind, substr((string)($b['title'] ?? ''), 0, 200), (string)($b['instrument'] ?? ''), (string)($b['provider'] ?? 'moex'),
+    (($b['op'] ?? '') === '<=' ? '<=' : '>='), (float)($b['level'] ?? 0), (int)($b['fire_ts'] ?? 0),
+    (($b['channel'] ?? 'email') === 'telegram' ? 'telegram' : 'email'), !empty($b['rpt']) ? 1 : 0, time()]);
+  out(['ok' => true, 'id' => (int)db()->lastInsertId()]);
+}
+if ($fn === 'alert_list') {
+  $u = current_user(); if (!$u) out(['alerts' => [], 'tg' => false]);
+  $st = db()->prepare('SELECT * FROM alerts WHERE user_id = ? ORDER BY id DESC'); $st->execute([$u['id']]);
+  out(['alerts' => $st->fetchAll(PDO::FETCH_ASSOC), 'tg' => !empty($u['tg_chat'])]);
+}
+if ($fn === 'alert_del') {
+  $u = current_user(); if (!$u) out(['error' => 'Не авторизован'], 401);
+  db()->prepare('DELETE FROM alerts WHERE id = ? AND user_id = ?')->execute([(int)(body()['id'] ?? 0), $u['id']]);
+  out(['ok' => true]);
+}
+// код для привязки Telegram: пользователь отправляет /start <код> боту, cron ловит
+if ($fn === 'tg_code') {
+  $u = current_user(); if (!$u) out(['error' => 'Не авторизован'], 401);
+  $code = $u['tg_code']; if (!$code) { $code = strtoupper(bin2hex(random_bytes(3))); db()->prepare('UPDATE users SET tg_code = ? WHERE id = ?')->execute([$code, $u['id']]); }
+  out(['code' => $code, 'linked' => !empty($u['tg_chat'])]);
 }
 
 out(['error' => 'unknown fn'], 400);

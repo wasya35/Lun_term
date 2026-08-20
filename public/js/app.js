@@ -1177,6 +1177,66 @@
     }, 20);
   }
 
+  /* ---------- алерты ---------- */
+  async function authApi(fn, body) {
+    const res = await fetch('auth.php?fn=' + fn, { method: body ? 'POST' : 'GET', headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined, credentials: 'same-origin' });
+    let j = {}; try { j = await res.json(); } catch (e) {}
+    if (!res.ok) throw new Error(j.error || ('HTTP ' + res.status));
+    return j;
+  }
+  function alertsModal() {
+    if (!window.LunAuth || !window.LunAuth.user) { alert('Чтобы ставить алерты, войдите в аккаунт (кнопка 👤 справа).'); return; }
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    let last = 0; try { const l = state.chart.getDataList(); last = l.length ? l[l.length - 1].close : 0; } catch (e) {}
+    const now = Date.now();
+    let evs = []; try { evs = (window.LunTS && window.LunTS.upcomingEvents) ? window.LunTS.upcomingEvents(now, 120) : []; } catch (e) {}
+    const evOpts = evs.slice(0, 120).map((e, i) => `<option value="${i}">${new Date(e.ts).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })} · ${e.name}</option>`).join('');
+    openModal('🔔 Алерты', `
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px">
+        <label>Тип<br><select id="al-kind" style="${inp}"><option value="price">Ценовой уровень</option><option value="astro">Астро-событие</option></select></label>
+        <span id="al-price-box">
+          <label>Условие<br><select id="al-op" style="${inp}"><option value=">=">≥ (вверх)</option><option value="<=">≤ (вниз)</option></select></label>
+          <label>Уровень<br><input id="al-level" type="number" step="any" value="${last}" style="${inp};width:120px"></label>
+        </span>
+        <span id="al-astro-box" style="display:none"><label>Событие<br><select id="al-ev" style="${inp};max-width:260px">${evOpts}</select></label></span>
+        <label>Канал<br><select id="al-ch" style="${inp}"><option value="email">E-mail</option><option value="telegram">Telegram</option></select></label>
+        <label style="display:inline-flex;align-items:center;gap:5px"><input id="al-rpt" type="checkbox"> повторять</label>
+        <button id="al-add" style="${btn};border-color:#26a69a">Создать</button>
+      </div>
+      <div id="al-tg" style="color:#8b93a7;font-size:12px;margin-bottom:8px"></div>
+      <div id="al-list">…</div>`);
+    const $ = (id) => document.getElementById(id);
+    $('al-kind').onchange = () => { const a = $('al-kind').value === 'astro'; $('al-astro-box').style.display = a ? '' : 'none'; $('al-price-box').style.display = a ? 'none' : ''; };
+    const refresh = async () => {
+      try {
+        const r = await authApi('alert_list');
+        const rows = (r.alerts || []).map((a) => `<tr><td style="padding:2px 10px 2px 0">${a.kind === 'price' ? (a.instrument + ' ' + a.op + ' ' + a.level) : ('⭐ ' + a.title)}</td><td style="padding:2px 10px 2px 0;color:#8b93a7">${a.channel}${+a.rpt ? ' · повтор' : ''}</td><td style="padding:2px 10px 2px 0;color:${a.status === 'active' ? '#26a69a' : '#8b93a7'}">${a.status}</td><td><span class="al-del" data-id="${a.id}" style="cursor:pointer;color:#ef8a88">✕</span></td></tr>`).join('');
+        $('al-list').innerHTML = rows ? `<table style="border-collapse:collapse;font-size:12px;width:100%"><tbody>${rows}</tbody></table>` : '<div style="color:#8b93a7">Пока нет алертов.</div>';
+        [...document.querySelectorAll('.al-del')].forEach((x) => x.onclick = async () => { await authApi('alert_del', { id: +x.dataset.id }); refresh(); });
+        // Telegram
+        if ($('al-ch').value === 'telegram' || (r.alerts || []).some((a) => a.channel === 'telegram')) {
+          try { const t = await authApi('tg_code'); const bot = window.LUN.TG_BOT; $('al-tg').innerHTML = t.linked ? '✅ Telegram привязан.' : ('Telegram: отправьте боту ' + (bot ? '<a href="https://t.me/' + bot + '?start=' + t.code + '" target="_blank" style="color:#3aa0ff">@' + bot + '</a>' : '(бот ещё не настроен)') + ' сообщение <b>/start ' + t.code + '</b>, затем «Создать».'); } catch (e) {}
+        } else $('al-tg').innerHTML = '';
+      } catch (e) { $('al-list').innerHTML = '<div style="color:#e0a030">' + e.message + '</div>'; }
+    };
+    $('al-ch').onchange = refresh;
+    $('al-add').onclick = async () => {
+      const kind = $('al-kind').value, channel = $('al-ch').value, rpt = $('al-rpt').checked;
+      try {
+        if (kind === 'astro') {
+          const e = evs[+$('al-ev').value]; if (!e) return;
+          await authApi('alert_add', { kind: 'astro', title: e.name, fire_ts: e.ts, channel, rpt });
+        } else {
+          const ins = state.instrument, ticker = await window.LunData.resolveTicker(ins);
+          await authApi('alert_add', { kind: 'price', title: (ins.title || ins.id) + ' ' + $('al-op').value + ' ' + $('al-level').value, instrument: ticker, provider: ins.provider || 'moex', op: $('al-op').value, level: +$('al-level').value, channel, rpt });
+        }
+        refresh();
+      } catch (e) { alert(e.message); }
+    };
+    refresh();
+  }
+
   function startDraw(toolId) {
     closeMenus();
     const ev = overlayEvents();
@@ -1440,6 +1500,13 @@
     mkBtn(setWrap, '🌗 Тема: тёмная/светлая', () => { closeMenus(); setTheme(LOOK.theme === 'dark' ? 'light' : 'dark'); }, false, 'Переключить оформление');
     mkBtn(setWrap, '🕯 Тип: свечи/бары', () => { closeMenus(); setCandleType(LOOK.candle === 'candle_solid' ? 'ohlc' : 'candle_solid'); }, false, 'Свечи ↔ бары (OHLC)');
     mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
+
+    // Алерты
+    const alWrap = document.getElementById('alerts');
+    if (alWrap) {
+      mkBtn(alWrap, '🔔 Алерты…', () => { closeMenus(); alertsModal(); }, false, 'Создать/смотреть алерты (цена/астро), e-mail или Telegram. Работают на сервере — терминал можно закрыть');
+      const note = document.createElement('div'); note.className = 'menu-note'; note.textContent = 'Нужен вход в аккаунт (👤). Проверка — на сервере (cron).'; alWrap.appendChild(note);
+    }
 
     // Коннекторы — реалтайм-потоки
     const conWrap = document.getElementById('connectors');
