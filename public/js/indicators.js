@@ -973,7 +973,8 @@
         if ((vals[i] - vals[i - 1]) * (vals[i + 1] - vals[i]) < 0) {
           const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9;
           ctx.fillStyle = (vals[i] > vals[i - 1]) ? '#ef5350' : '#26a69a';
-          ctx.beginPath(); ctx.arc(x, y, 2, 0, 6.283); ctx.fill();
+          ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.283); ctx.fill();
+          ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.stroke();
         }
       }
       ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText('Bradley (сидерограф, гео)', 4, 2);

@@ -529,6 +529,32 @@
     setTimeout(run, 30);
   }
 
+  // Merriman FAR: взвешенные астро-значения на экстремумах Filtered Wave
+  function farModal() {
+    let bars = []; try { bars = state.chart.getDataList() || []; } catch (e) {}
+    if (bars.length < 80 || !window.LunTS || !window.LunTS.computeFAR) { alert('Мало истории. Поставьте период больше (D1, 2–5 лет).'); return; }
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    openModal('⚖ Merriman FAR — астро-факторы на экстремумах', `
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
+        <label>Волна ≥ %<br><input id="far-pct" type="number" step="0.5" min="1" value="3" style="${inp};width:90px"></label>
+        <button id="far-run" style="${btn};border-color:#26a69a">Прогнать</button>
+      </div>
+      <div id="far-out" style="color:#8b93a7">…</div>`);
+    const run = () => {
+      const pct = parseFloat(document.getElementById('far-pct').value) || 3;
+      const R = window.LunTS.computeFAR(bars, { pct });
+      const col = (rows, title, c) => {
+        const body = rows.length ? rows.map((r) => `<tr><td style="padding:2px 10px 2px 0">${r.factor}</td><td style="padding:2px 10px 2px 0;color:#8b93a7">${r.count}</td><td style="padding:2px 0;color:${r.lift >= 1.3 ? c : '#8b93a7'}"><b>${r.lift.toFixed(2)}×</b></td></tr>`).join('') : '<tr><td colspan="3" style="color:#6b7280">мало экстремумов</td></tr>';
+        return `<div style="flex:1;min-width:240px"><div style="color:${c};margin-bottom:4px">${title}</div><table style="border-collapse:collapse;font-size:12px"><thead><tr style="color:#8b93a7;text-align:left"><th style="padding-right:10px">Фактор</th><th style="padding-right:10px">шт</th><th>lift</th></tr></thead><tbody>${body}</tbody></table></div>`;
+      };
+      document.getElementById('far-out').innerHTML = `<p style="margin:0 0 8px">Волна ≥ ${R.pct}% · вершин: <b style="color:#ef5350">${R.nTops}</b> · оснований: <b style="color:#26a69a">${R.nBottoms}</b>. lift = частота фактора на экстремуме / базовой. <b>lift≥1.3</b> при ≥3 попаданиях = фактор тяготеет к развороту.</p>`
+        + `<div style="display:flex;gap:24px;flex-wrap:wrap">` + col(R.tops, '▼ Вершины', '#ef5350') + col(R.bottoms, '▲ Основания', '#26a69a') + `</div>`;
+    };
+    document.getElementById('far-run').onclick = run;
+    setTimeout(run, 30);
+  }
+
   // прогнозная линия из циклов: тумблер (двигает офсет вправо, чтобы влезла проекция)
   function toggleProjection(on) {
     if (on) {
@@ -1208,13 +1234,17 @@
       mkBtn(gannWrap, '⊞ Калькулятор квадратов…', () => { closeMenus(); gannSquareModal(); }, false, 'Квадрат 9 / шестиугольник / круг 360° / натуральные — уровни поддержки и сопротивления');
       mkBtn(gannWrap, '✕ убрать уровни квадрата', () => { closeMenus(); removeCandInd('GannSquareLevels'); }, false, 'Убрать нанесённые уровни квадрата');
       gsub('Уровни и циклы');
-      [['GannRetr', '📏 Ганн-ретрейсменты', 'Горизонтали 1/8·1/3·1/2 диапазона видимого окна'],
-       ['GannCycles', '⏲ Мастер-циклы времени', 'Вертикали 30·45·60·90·120·144·180·270·360 баров от последнего экстремума']].forEach(([name, label, tip]) =>
-        mkBtn(gannWrap, label, (b) => {
-          const on = !b.classList.contains('active'); b.classList.toggle('active', on);
-          if (on) { state.chart.createIndicator({ name, paneId: 'candle_pane' }, true); state.candleInds[name] = true; }
-          else removeCandInd(name);
-        }, false, tip));
+      mkBtn(gannWrap, '📏 Ганн-ретрейсменты', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (on) { state.chart.createIndicator({ name: 'GannRetr', paneId: 'candle_pane' }, true); state.candleInds.GannRetr = true; }
+        else removeCandInd('GannRetr');
+      }, false, 'Горизонтали 1/8·1/3·1/2 диапазона видимого окна');
+      mkBtn(gannWrap, '⏲ Мастер-циклы (клик = пивот)', () => startOverlay('lun_cycles'), false, 'Клик ставит пивот на ЛЮБОЙ экстремум истории (потом можно перетащить). Вертикали 30·45·60·90·120·144·180·270·360 баров');
+      mkBtn(gannWrap, '⏲ Мастер-циклы (авто, посл. экстремум)', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (on) { state.chart.createIndicator({ name: 'GannCycles', paneId: 'candle_pane' }, true); state.candleInds.GannCycles = true; }
+        else removeCandInd('GannCycles');
+      }, false, 'Авто-пивот на последнем видимом экстремуме');
       gsub('Астро-Ганн');
       mkBtn(gannWrap, '🪐 Настроить планетарные линии…', () => { closeMenus(); astroGannModal(); }, false, 'Планеты, гео/гелио, масштаб цена/градус');
       [['PlanetLines', '🪐 Планетарные линии → цена', 'Долгота планеты как ценовой уровень (ползёт во времени)'],
@@ -1247,6 +1277,7 @@
         const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleProjection(on);
       }, false, 'Прогнозная линия из доминирующих циклов цены, продлённая вперёд');
       mkBtn(gannWrap, '📊 Композит по астро-состоянию…', () => { closeMenus(); compositeModal(); }, false, 'Среднее движение вперёд по фазе Луны / знаку планеты (сезонность)');
+      mkBtn(gannWrap, '⚖ Merriman FAR (экстремумы)…', () => { closeMenus(); farModal(); }, false, 'Взвешенные астро-факторы на вершинах/основаниях волны (Filtered Wave)');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
       gnote.textContent = 'Инструменты Ганна: геометрия · квадраты · циклы · астро-Ганн';
       gannWrap.appendChild(gnote);

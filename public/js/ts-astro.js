@@ -146,5 +146,41 @@
     return { horizon: H, mode, rows };
   }
 
-  window.LunTS = { computeAstroFit, detectPivots, cycleProjection, lunarComposite };
+  /* --- Merriman FAR: взвешенные астро-значения на экстремумах Filtered Wave ---
+   * ZigZag выделяет вершины/основания движения ≥pct%. На каждом экстремуме
+   * фиксируем астро-факторы (фаза Луны, знаки Луны/планет). Считаем их частоту
+   * на вершинах и основаниях против базовой (по всей истории) → lift. */
+  function zigzag(closes, th) {
+    const piv = []; let dir = 0, extIdx = 0, extVal = closes[0];
+    for (let i = 1; i < closes.length; i++) {
+      const p = closes[i];
+      if (dir > 0) { if (p > extVal) { extVal = p; extIdx = i; } else if (p <= extVal * (1 - th)) { piv.push({ i: extIdx, kind: 'top' }); dir = -1; extVal = p; extIdx = i; } }
+      else if (dir < 0) { if (p < extVal) { extVal = p; extIdx = i; } else if (p >= extVal * (1 + th)) { piv.push({ i: extIdx, kind: 'bottom' }); dir = 1; extVal = p; extIdx = i; } }
+      else { if (p >= extVal * (1 + th)) { dir = 1; extVal = p; extIdx = i; } else if (p <= extVal * (1 - th)) { dir = -1; extVal = p; extIdx = i; } }
+    }
+    return piv;
+  }
+  const PH8 = ['новолуние', 'раст.серп', 'I четв', 'раст.горб', 'полнолуние', 'уб.горб', 'III четв', 'уб.серп'];
+  function factorsAt(ts) {
+    const AS = window.LunAstro, S = window.LUN.SIGNS, P = window.LUN.ASTROGANN.planets, out = [];
+    const ml = AS.bodyInfo('Moon', ts, 'geo'), sl = AS.bodyInfo('Sun', ts, 'geo');
+    out.push('Фаза: ' + PH8[Math.floor((((ml.lon - sl.lon) % 360 + 360) % 360) / 45)]);
+    out.push('☾ в ' + S[ml.signIndex].name);
+    ['Sun', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn'].forEach((p) => { out.push(((P[p] || {}).g || p) + ' в ' + S[AS.bodyInfo(p, ts, 'geo').signIndex].name); });
+    return out;
+  }
+  function computeFAR(bars, opts) {
+    opts = opts || {}; const pct = opts.pct || 3;
+    if (!bars || bars.length < 60 || !window.LunAstro) return { tops: [], bottoms: [], nTops: 0, nBottoms: 0, pct };
+    const closes = bars.map((b) => b.close), piv = zigzag(closes, pct / 100);
+    const step = bars.length > 3000 ? 2 : 1, base = {}; let baseTot = 0;
+    for (let i = 0; i < bars.length; i += step) { baseTot++; factorsAt(bars[i].timestamp).forEach((f) => { base[f] = (base[f] || 0) + 1; }); }
+    const topC = {}, botC = {}; let nT = 0, nB = 0;
+    piv.forEach((p) => { const fs = factorsAt(bars[p.i].timestamp); if (p.kind === 'top') { nT++; fs.forEach((f) => topC[f] = (topC[f] || 0) + 1); } else { nB++; fs.forEach((f) => botC[f] = (botC[f] || 0) + 1); } });
+    const rank = (cnt, n) => Object.keys(cnt).map((f) => { const rate = cnt[f] / n, br = (base[f] || 0.5) / baseTot; return { factor: f, count: cnt[f], lift: br > 0 ? rate / br : 0 }; })
+      .filter((x) => x.count >= Math.max(3, Math.round(n * 0.12))).sort((a, b) => b.lift - a.lift).slice(0, 12);
+    return { pct, nTops: nT, nBottoms: nB, tops: rank(topC, nT), bottoms: rank(botC, nB) };
+  }
+
+  window.LunTS = { computeAstroFit, detectPivots, cycleProjection, lunarComposite, computeFAR };
 })();

@@ -205,6 +205,30 @@
     },
   });
 
+  /* --- Мастер-циклы времени (1 точка — пивот, перетаскивается) ---
+   * Вертикаль пивота + вертикали через N баров (LUN.GANNTOOLS.cycles.nums).
+   * Точку можно поставить на ЛЮБОЙ экстремум истории и двигать. */
+  kc.registerOverlay({
+    name: 'lun_cycles', totalStep: 2, needDefaultPointFigure: true,
+    createPointFigures: ({ coordinates, overlay, chart, xAxis, bounding }) => {
+      if (!coordinates.length) return [];
+      const p0 = coordinates[0], st = styleOf(overlay);
+      const pt = overlay.points && overlay.points[0];
+      const pivotIdx = pt && pt.dataIndex != null ? Math.round(pt.dataIndex) : null;
+      const nums = (window.LUN.GANNTOOLS.cycles && window.LUN.GANNTOOLS.cycles.nums) || [30, 60, 90, 144, 180, 360];
+      const H = bounding.height, W = bounding.width;
+      const figs = [
+        { type: 'line', attrs: { coordinates: [{ x: p0.x, y: 0 }, { x: p0.x, y: H }] }, styles: { color: st.color, size: st.size || 1.4 } },
+        { type: 'text', attrs: { x: p0.x + 2, y: 2, text: 'пивот', baseline: 'top' }, ignoreEvent: true, styles: { color: st.color, size: 10 } },
+      ];
+      if (pivotIdx != null) {
+        const cyc = lineStyle(Object.assign({}, st, { dash: 'dashed' }));
+        nums.forEach((n) => { const x = xAxis.convertToPixel(pivotIdx + n); if (x < 0 || x > W) return; figs.push({ type: 'line', attrs: { coordinates: [{ x, y: 0 }, { x, y: H }] }, styles: cyc }); figs.push({ type: 'text', attrs: { x: x + 2, y: 2, text: '+' + n, baseline: 'top' }, ignoreEvent: true, styles: { color: st.color, size: 10 } }); });
+      }
+      return figs;
+    },
+  });
+
   /* --- текстовая метка (extendData.text) --- */
   kc.registerOverlay({
     name: 'lun_text', totalStep: 2, needDefaultPointFigure: false,
