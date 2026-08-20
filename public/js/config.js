@@ -270,6 +270,8 @@ LUN.ISS_GATEWAYS = [
   { name: 'прямой',     wrap: (u) => u },
   { name: 'allorigins', wrap: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
   { name: 'corsproxy',  wrap: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
+  { name: 'codetabs',   wrap: (u) => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u) },
+  { name: 'thingproxy', wrap: (u) => 'https://thingproxy.freeboard.io/fetch/' + u },
 ];
 
 /* --- Новости (правая колонка, по текущему инструменту) ----------------------

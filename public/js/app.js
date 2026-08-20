@@ -37,14 +37,34 @@
     m.querySelector('.x').onclick = close; bg.onclick = (e) => { if (e.target === bg) close(); };
   }
   function helpModal() {
-    openModal('Справка — Lun_term', `
-      <p><b>Lun_term</b> — астро-трейдинг терминал по инструментам MOEX с лунной лентой и марковскими режимами.</p>
-      <p><b>Инструменты</b> — избранное (Si, CNY, золото, Brent, EUR/USD, серебро) + поиск любого тикера MOEX.</p>
-      <p><b>Астро:</b> лента знаков Луны (цвет по знаку, градус), торговые циклы (зоны лонг/шорт по долготе), полосы аспектов планет к Солнцу, узлы 0°/15°, прогноз шкал вперёд до аспекта ☉–♅.</p>
-      <p><b>Индикаторы:</b> SMA/EMA/VWAP, объём, кумулятивная дельта, сильные бары (всплеск объёма «сила/силища»), торговые сессии (Азия/Лондон/Нью-Йорк), марковский режим (BEAR/SIDE/BULL) с сигналом и матрицей переходов.</p>
-      <p><b>Рисование:</b> уровень, трендовая, прямоугольник, стрелка, текст, линия Ганна (луч из т1 через т2), горизонтальный луч с обрезкой по пересечениям, профиль объёма (горизонтальный объём по диапазону).</p>
-      <p><b>Бэктест</b> (в «Настройки») — сверка зон/знаков/аспектов, сила+поглощение с издержками и out-of-sample, марковские режимы и синтез «зона × режим».</p>
-      <p style="color:#8b93a7">Данные: MOEX ISS прямо из браузера (с задержкой ~15 мин). Настройки цветов/зон — в «⚙ Настройки».</p>`);
+    const h = (t) => `<h3 style="margin:14px 0 4px;color:#3aa0ff;font-size:13px">${t}</h3>`;
+    openModal('Справка — как работают инструменты', `
+      <p><b>Lun_term</b> — исследовательский астро-трейдинг терминал. Данные MOEX ISS / крипта Bybit / США Yahoo прямо из браузера. Меню сверху: Инструменты · ТФ · Период (глубина истории) · Индикаторы · Рисование · Ганн · Коннекторы (реалтайм) · Настройки · Экраны (мультичарт).</p>
+
+      ${h('🌙 Астро')}
+      <p><b>Луна в знаках</b> (Астро → ☾ Луна в знаках) — верхняя лента: цвет по знаку зодиака, текущий градус. Тумблер показать/скрыть.</p>
+      <p><b>Циклы (1…6)</b> — торговые зоны лонг/шорт по долготе тела (Луна/Солнце/…). Зоны и цвета правятся в ⚙ Настройках (долгота 0°=Овен).</p>
+      <p><b>Аспекты к Солнцу</b> — полоса на планету (☉/☿ по умолч.), Луна = фазы (соединение=новолуние, оппозиция=полнолуние). Цвета аспектов — в Настройках (соед. оранж, квадрат красн, оппоз. фиол, трин зелён, 60° голуб). Орб 2–6°.</p>
+      <p><b>Узлы ☾</b> — ингрессии (0°) и середины (15°) знаков Луны на цене. <b>Прогноз</b> (F) — продлевает астро-полосы вправо до ближайшего аспекта ☉–♅.</p>
+
+      ${h('📐 Ганн')}
+      <p><b>Геометрия</b> (2 клика — угол→охват): <b>Gann Box / Квадрат</b> (единая форма — рамка с делениями 1/8·1/3·1/2 или сетка N×N: 8 = квадрат, 12 = «144»). <b>Линия Ганна</b> — луч из т1 через т2; в свойствах объекта можно задать точный <b>угол</b> (цена/бар) от закреплённой т1.</p>
+      <p><b>Квадраты (калькулятор)</b> — уровни поддержки/сопротивления по √-спирали: база 9 (крест 45°), шестиугольник (60°), круг 360° (15°), натуральные. «Нанести на график» — рисует уровни.</p>
+      <p><b>Уровни/циклы</b>: ретрейсменты 1/8·1/3·1/2; <b>мастер-циклы</b> — вертикали 30·45·60·90·144·180·360 баров от пивота (клик = пивот на любой экстремум, можно двигать). <b>Сквоузинг 1×1</b> — линии баланса цены и времени.</p>
+      <p><b>Астро-Ганн</b>: планетарные линии→цена (долгота как ценовой уровень), ингрессии, ретроградности, веер долготы, Sq9 в градусах планет, затмения, космограмма (колесо на дату).</p>
+      <p><b>Timing Solutions</b>: <b>Астро-фит</b> (какие астро-события совпадают с разворотами — lift/z), <b>прогноз циклов</b> (спектр цены вперёд), <b>композит</b> (среднее движение по фазе/знаку), <b>Merriman FAR</b> (астро-факторы на вершинах/основаниях волны), <b>Bradley</b> (барометр аспектов).</p>
+
+      ${h('📊 Открытый интерес и поток')}
+      <p><b>ОИ физ/юр</b> — открытый интерес и чистые позиции физиков/юриков (MOEX FUTOI, дневной). Красные/зелёные вертикали = экстремальный ΔОИ по порогам (Si: 5k·40k·100k). Точки на юриках = COT-экстремумы (контр-сигнал). <b>Базис к споту</b> — фьюч − спот исходного товара (регрессией) + z. <b>Арбитраж</b> (Инструменты) — синтетика/спред + z.</p>
+
+      ${h('🔬 Бэктест и исследование')}
+      <p><b>Исследование сигналов</b> (Настройки) — выбираемый бэктест на текущих данных: объём ≥2×/3×, EMA-пересечения, RSI, пробой, лунные зоны, фейд по астро/Sq9. Метрики: win%, средняя доходность, t-стат; <b>издержки %/сделку</b> и <b>out-of-sample</b> (посл. ⅓ с меткой устойчивости ✓/✗). win>55% и |t|≥2 при ≥30 входах = перевес, иначе шум.</p>
+      <p><b>Бэктест</b> (B) — сверка лунных зон/аспектов, сила+поглощение с издержками и OOS, марковские режимы, синтез «зона×режим».</p>
+
+      ${h('✏️ Рисование и прочее')}
+      <p>Уровень, трендовая, прямоугольник, стрелка, текст, луч ⨯N (обрезка по пересечениям), профиль объёма. У каждого объекта — панель свойств (цвет/толщина/тип линии/заливка/🔒 замок). <b>Новости</b> (Настройки → 📰) — правая колонка по исходному товару с сентимент-метками. <b>Коннекторы</b> — реалтайм (крипта — настоящий, MOEX/США — опрос).</p>
+
+      <p style="color:#8b93a7;margin-top:12px">Важно: все статистики — <b>исследовательские</b>. Малые выборки честно помечаются; астро/Ганн-гипотезы проверяйте бэктестом с издержками и OOS, а не на веру. Данные MOEX — с задержкой ~15 мин.</p>`);
   }
   function hotkeysModal() {
     const row = (k, d) => `<tr><td style="padding:3px 12px 3px 0;color:#3aa0ff;white-space:nowrap"><b>${k}</b></td><td style="padding:3px 0">${d}</td></tr>`;
@@ -412,6 +432,26 @@
   function removeCandInd(name) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {} delete state.candleInds[name]; }
   // запустить рисование оверлея (первый клик = пивот/угол, второй = охват)
   const defOvStyle = () => Object.assign({}, window.LUN_OVERLAY_DEF_STYLE || { color: '#f0c040', size: 1.4, dash: 'solid', fill: false, fillColor: 'rgba(240,192,64,0.14)' });
+  // единая форма для геометрии Ганна: Box (деления) или Квадрат-сетка N×N
+  function gannGeomModal() {
+    const S = window.LUN.GANNTOOLS.boxChoice || (window.LUN.GANNTOOLS.boxChoice = { type: 'box', divisions: 8 });
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    openModal('Gann Box / Квадрат', `
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        <label><input type="radio" name="gg-type" value="box"${S.type === 'box' ? ' checked' : ''}> <b>Box</b> — рамка с делениями (1/8·1/3·1/2) по цене и времени + диагонали</label>
+        <label><input type="radio" name="gg-type" value="grid"${S.type === 'grid' ? ' checked' : ''}> <b>Квадрат-сетка N×N</b> — крест по центру + диагонали</label>
+        <label>Делений (для сетки): <input id="gg-div" type="number" min="2" max="32" value="${S.divisions || 8}" style="${inp};width:80px"> <span style="color:#8b93a7">8 = квадрат, 12 = «144»</span></label>
+      </div>
+      <button id="gg-draw" style="${btn};border-color:#26a69a">Рисовать (2 клика: угол → охват)</button>`);
+    document.getElementById('gg-draw').onclick = () => {
+      const type = (document.querySelector('input[name="gg-type"]:checked') || {}).value || 'box';
+      const divisions = Math.max(2, Math.min(32, +document.getElementById('gg-div').value || 8));
+      window.LUN.GANNTOOLS.boxChoice = { type, divisions };
+      const bg = document.querySelector('.lun-modal-bg'); if (bg) bg.remove();
+      if (type === 'grid') startOverlay('lun_gannsquare', { divisions }); else startOverlay('lun_gannbox');
+    };
+  }
   function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); state.chart.createOverlay(Object.assign({ name, extendData: Object.assign({ style: defOvStyle() }, extendData) }, ev)); }
   // масштаб 1×1 (цена на бар) для сквоузинга: авто / ручной
   function scaleModal() {
@@ -1042,7 +1082,8 @@
       return;
     }
     const m = res.mood, net = Math.round(m.net * 100), mcol = m.net > 0.1 ? '#26a69a' : (m.net < -0.1 ? '#ef5350' : '#8b93a7');
-    const moodHtml = `<div style="padding:6px 4px 8px;margin-bottom:4px;border-bottom:1px solid #232b3a;color:${mcol};font-size:12px">Настроение СМИ: ▲${m.pos} ▼${m.neg} • ${m.neu} · нетто <b>${net > 0 ? '+' : ''}${net}%</b></div>`;
+    const fbHtml = res.fallback ? `<div style="padding:5px 4px;color:#e0a030;font-size:11px">Нет точных совпадений по инструменту — последние новости по рынку.</div>` : '';
+    const moodHtml = fbHtml + `<div style="padding:6px 4px 8px;margin-bottom:4px;border-bottom:1px solid #232b3a;color:${mcol};font-size:12px">Настроение СМИ: ▲${m.pos} ▼${m.neg} • ${m.neu} · нетто <b>${net > 0 ? '+' : ''}${net}%</b></div>`;
     list.innerHTML = moodHtml + res.items.map((it) => {
       const t = it.ts ? new Date(it.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
       return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener" style="display:block;padding:7px 4px;border-bottom:1px solid #1a2130;color:#d7deea;text-decoration:none;font-size:12px;line-height:1.35">`
@@ -1221,9 +1262,7 @@
     if (gannWrap) {
       const gsub = (t) => { const h = document.createElement('div'); h.className = 'menu-sub'; h.textContent = t; gannWrap.appendChild(h); };
       gsub('Геометрия (2 клика: пивот → охват)');
-      mkBtn(gannWrap, '▱ Gann Box', () => startOverlay('lun_gannbox'), false, 'Рамка время×цена с делениями и диагоналями (1×1)');
-      mkBtn(gannWrap, '⊞ Квадрат Ганна (8×8)', () => startOverlay('lun_gannsquare', { divisions: 8 }), false, 'Квадрат-сетка с крестом и диагоналями');
-      mkBtn(gannWrap, '⊞ Квадрат 144 (12×12)', () => startOverlay('lun_gannsquare', { divisions: 12 }), false, 'Квадрат 144: сетка 12×12');
+      mkBtn(gannWrap, '▱ Gann Box / Квадрат…', () => { closeMenus(); gannGeomModal(); }, false, 'Единая форма: Box с делениями или квадрат-сетка N×N (8/12/своё)');
       mkBtn(gannWrap, '⟋ Сквоузинг 1×1 (панель)', (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
         if (on) { state.chart.createIndicator({ name: 'GannSquaring', paneId: 'candle_pane' }, true); state.candleInds.GannSquaring = true; }
@@ -1470,9 +1509,24 @@
   }
 
   // тумблеры циклов (пересобираются после изменения настроек)
+  function toggleMoonSign(on) {
+    if (on) {
+      if (state.signPanes.Moon) return;
+      state.signPane = 'pane_sign_Moon';
+      state.chart.createIndicator({ name: 'SignStrip', paneId: state.signPane, shortName: BODY_LABEL.Moon, extendData: { body: 'Moon', frame: 'geo' } }, false);
+      state.signPanes.Moon = state.signPane;
+      wishPane(state.signPane, { height: window.LUN.PANE_HEIGHTS.moonSign, minHeight: 26, order: 10 });
+    } else if (state.signPanes.Moon) {
+      try { state.chart.removeIndicator({ paneId: state.signPanes.Moon }); } catch (e) {}
+      delete state.signPanes.Moon; state.signPane = null;
+    }
+  }
   function buildCycleButtons() {
     const cycWrap = document.getElementById('cycles');
     cycWrap.innerHTML = '';
+    mkBtn(cycWrap, '☾ Луна в знаках', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleMoonSign(on);
+    }, true, 'Верхняя лента знаков Луны (цвет по знаку, градус). Тумблер показать/скрыть');
     window.LUN.CYCLES.forEach((cy, i) => { mkBtn(cycWrap, String(i + 1), (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) { if (!state.cyclePanes[cy.id]) createCyclePane(cy, 11 + i); }

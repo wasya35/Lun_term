@@ -39,7 +39,10 @@
     const chunks = await Promise.all(feeds.map((f) => fetchFeed(f).catch(() => [])));
     const all = chunks.reduce((a, x) => a.concat(x), []);
     const kw = (opts.keywords && opts.keywords.length) ? opts.keywords.map((k) => k.toLowerCase()) : null;
-    let items = kw ? all.filter((it) => { const t = it.title.toLowerCase(); return kw.some((k) => t.indexOf(k) >= 0); }) : all.slice();
+    const filtered = kw ? all.filter((it) => { const t = it.title.toLowerCase(); return kw.some((k) => t.indexOf(k) >= 0); }) : all.slice();
+    // если по ключам инструмента пусто — показываем последние по рынку (не пустоту)
+    let items = filtered, fallback = false;
+    if (kw && !filtered.length && all.length) { items = all.slice(); fallback = true; }
     const seen = new Set();
     items = items.filter((it) => { const k = it.title.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
     items.forEach((it) => { const sc = scoreTitle(it.title); it.score = sc; it.sent = sc > 0 ? 1 : (sc < 0 ? -1 : 0); });
@@ -48,7 +51,7 @@
     let pos = 0, neg = 0, neu = 0;
     items.forEach((it) => { if (it.sent > 0) pos++; else if (it.sent < 0) neg++; else neu++; });
     const net = (pos + neg) ? (pos - neg) / (pos + neg) : 0;
-    return { items, total: all.length, matched: items.length, mood: { pos, neg, neu, net } };
+    return { items, total: all.length, matched: filtered.length, fallback, mood: { pos, neg, neu, net } };
   }
 
   window.LunNews = { fetch: fetchNews, scoreTitle };
