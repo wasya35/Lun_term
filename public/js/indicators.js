@@ -649,34 +649,39 @@
     calc: (dataList) => dataList.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
       const ed = indicator.extendData || {}, bd = ed.byDate; if (!bd) return true;
-      const H = bounding.height, mid = H / 2, list = chart.getDataList(), range = chart.getVisibleRange();
+      const H = bounding.height, list = chart.getDataList(), range = chart.getVisibleRange();
       const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.realTo != null ? range.realTo : range.to));
       const dOf = (ts) => new Date(ts + MSK_OFFSET).toISOString().slice(0, 10);
+      const bs = chart.getBarSpace(), halfW = Math.max(1, bs.halfBar), thr = ed.thr || null;
+      // диапазон видимого ОИ для нормировки гистограммы
+      let mn = Infinity, mx = -Infinity;
+      for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r || r.oi == null) continue; if (r.oi < mn) mn = r.oi; if (r.oi > mx) mx = r.oi; }
       ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-      if (ed.split) {
-        const pts = []; let amax = 1;
-        for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r) continue; pts.push([i, r.fizNet, r.yurNet]); amax = Math.max(amax, Math.abs(r.fizNet), Math.abs(r.yurNet)); }
-        ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(bounding.width, mid); ctx.stroke();
-        const yOf = (v) => mid - (v / amax) * (H * 0.42);
-        const line = (idx, color) => { ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath(); pts.forEach((p, k) => { const x = xAxis.convertToPixel(p[0]), y = yOf(p[idx]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); };
-        if (pts.length >= 2) { line(2, '#e0a030'); line(1, '#3aa0ff'); }
-        // COT-экстремумы юриков (крайний нетто за 60 дн): красный = макс лонг
-        // (потенц. вершина), зелёный = макс шорт (потенц. дно) — контр-сигнал
-        for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r || !r.cot) continue; const x = xAxis.convertToPixel(i), y = yOf(r.yurNet); ctx.fillStyle = r.cot > 0 ? '#ef5350' : '#26a69a'; ctx.beginPath(); ctx.arc(x, y, 3, 0, 6.283); ctx.fill(); }
-        const L = ed.latest || {};
-        ctx.fillStyle = '#3aa0ff'; ctx.fillText('физ net ' + ((L.fizNet >= 0 ? '+' : '') + (L.fizNet || 0)), 6, 3);
-        ctx.fillStyle = '#e0a030'; ctx.fillText('юр net ' + ((L.yurNet >= 0 ? '+' : '') + (L.yurNet || 0)), 130, 3);
-        ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ ' + (L.oi || 0), 250, 3);
-        if (L.dOI != null) { ctx.fillStyle = L.dOI >= 0 ? '#26a69a' : '#ef5350'; ctx.fillText('ΔОИ ' + (L.dOI >= 0 ? '+' : '') + L.dOI, 340, 3); }
-      } else {
-        const pts = []; let mn = Infinity, mx = -Infinity;
-        for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r || r.oi == null) continue; pts.push([i, r.oi]); mn = Math.min(mn, r.oi); mx = Math.max(mx, r.oi); }
-        if (pts.length < 2 || !(mx > mn)) return true;
-        const yOf = (v) => H * 0.9 - ((v - mn) / (mx - mn)) * H * 0.8;
-        ctx.strokeStyle = '#6bd3a0'; ctx.lineWidth = 1.4; ctx.beginPath(); pts.forEach((p, k) => { const x = xAxis.convertToPixel(p[0]), y = yOf(p[1]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke();
-        ctx.fillStyle = '#6bd3a0'; ctx.fillText('Открытый интерес', 6, 3);
-        const L = ed.latest || {}; if (L.dOI != null) { ctx.fillStyle = L.dOI >= 0 ? '#26a69a' : '#ef5350'; ctx.fillText('ΔОИ ' + (L.dOI >= 0 ? '+' : '') + L.dOI, 140, 3); }
+      if (!(mx > mn)) { ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ: нет данных в окне', 6, 3); return true; }
+      const top = H * 0.16, bot = H * 0.96, yOf = (v) => bot - ((v - mn) / (mx - mn)) * (bot - top);
+      const tierOf = (ab) => !thr ? 0 : (ab >= thr[2] ? 3 : (ab >= thr[1] ? 2 : (ab >= thr[0] ? 1 : 0)));
+      const ALPHA = [0.5, 0.62, 0.8, 1];
+      let lastDate = null; const labels = [];
+      // гистограмма ОИ: столбик = уровень ОИ, цвет = знак ΔОИ, яркость = уровень экстремума
+      for (let i = from; i < to; i++) {
+        const bar = list[i]; if (!bar) continue; const date = dOf(bar.timestamp), r = bd[date]; if (!r || r.oi == null) continue;
+        const up = (r.dOI == null) ? true : r.dOI >= 0, tier = tierOf(Math.abs(r.dOI || 0));
+        const x = xAxis.convertToPixel(i), y = yOf(r.oi);
+        ctx.fillStyle = (up ? 'rgba(38,166,154,' : 'rgba(239,83,80,') + ALPHA[tier] + ')';
+        ctx.fillRect(x - halfW, y, halfW * 2 + 0.4, bot - y);
+        if (r.cot) { ctx.fillStyle = r.cot > 0 ? '#ef5350' : '#26a69a'; ctx.beginPath(); ctx.arc(x, y - 3, 2.6, 0, 6.283); ctx.fill(); }
+        if (tier >= 2 && date !== lastDate) labels.push({ x, y, up, ab: Math.abs(r.dOI), tier });
+        lastDate = date;
       }
+      // подписи крупных ΔОИ поверх столбиков
+      ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
+      labels.forEach((l) => { ctx.fillStyle = l.up ? '#26a69a' : '#ef5350'; ctx.font = (l.tier === 3 ? 'bold ' : '') + '10px system-ui, sans-serif'; ctx.fillText((l.up ? '+' : '−') + oiKfmt(l.ab) + (l.tier === 3 ? '!' : ''), l.x, Math.max(11, l.y - 4)); });
+      // шапка
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif';
+      const L = ed.latest || {};
+      ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ ' + (L.oi || 0), 6, 3);
+      if (L.dOI != null) { ctx.fillStyle = L.dOI >= 0 ? '#26a69a' : '#ef5350'; ctx.fillText('ΔОИ ' + (L.dOI >= 0 ? '+' : '') + L.dOI, 92, 3); }
+      if (ed.split) { ctx.fillStyle = '#3aa0ff'; ctx.fillText('физ ' + ((L.fizNet >= 0 ? '+' : '') + (L.fizNet || 0)), 200, 3); ctx.fillStyle = '#e0a030'; ctx.fillText('юр ' + ((L.yurNet >= 0 ? '+' : '') + (L.yurNet || 0)), 300, 3); }
       return true;
     },
   });

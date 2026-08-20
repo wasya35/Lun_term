@@ -347,12 +347,7 @@
     const paneId = 'pane_oi';
     try { slot.chart.removeIndicator({ paneId }); } catch (e) {}
     slot.chart.createIndicator({ name: 'OpenInterest', paneId, shortName: 'ОИ ' + code + (split ? ' физ/юр' : ''), extendData: { byDate, latest, split, thr } }, false);
-    slot.oiPane = paneId; wishPane(paneId, { height: 84, order: 92 });
-    // метки экстремальных ΔОИ на цене
-    window.LUN_OI_EXTREMES = { byDate, thresholds: thr, code };
-    try { slot.chart.removeIndicator({ paneId: 'candle_pane', name: 'OIExtremes' }); } catch (e) {}
-    slot.chart.createIndicator({ name: 'OIExtremes', paneId: 'candle_pane' }, true);
-    slot.candleInds.OIExtremes = true;
+    slot.oiPane = paneId; wishPane(paneId, { height: 92, order: 92 });
     return true;
   }
   function removeOI(slot) {
