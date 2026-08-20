@@ -77,7 +77,7 @@
       deltaPane: null, cyclePanes: {}, uranusPane: null, markovPanes: null, markovTimer: null,
       overlayIds: {}, candleInds: {}, selectedOverlayId: null, selectedOverlay: null, forecastOn: false, paneWish: {},
       compareInstrument: null, comparePane: false, oiPane: null, arbPane: null, arbBundle: null,
-      retroPane: null, bradleyPane: null,
+      retroPane: null, bradleyPane: null, basisPane: null,
     };
   }
   let slots = [];
@@ -308,6 +308,15 @@
     const sortedD = Object.keys(byDate).sort(); let prevOi = null;
     sortedD.forEach((d) => { const oi = byDate[d].oi; if (oi != null && prevOi != null) byDate[d].dOI = oi - prevOi; if (oi != null) prevOi = oi; });
     if (latest && byDate[latest.date]) latest.dOI = byDate[latest.date].dOI;
+    // COT-экстремумы нетто-юриков: скользящий ранг за 60 дней (0.9/0.1 = крайности)
+    if (split) {
+      const win = 60;
+      for (let a = 0; a < sortedD.length; a++) {
+        const cur = byDate[sortedD[a]].yurNet, lo0 = Math.max(0, a - win); let below = 0, cnt = 0;
+        for (let x = lo0; x < a; x++) { cnt++; if (byDate[sortedD[x]].yurNet <= cur) below++; }
+        if (cnt >= 20) { const pr = below / cnt; byDate[sortedD[a]].cot = pr >= 0.9 ? 1 : (pr <= 0.1 ? -1 : 0); }
+      }
+    }
     const T = window.LUN.OI_EXTREMES || {};
     let thr = (T.thresholds && T.thresholds[code]) || null;
     if (!thr) {
@@ -332,6 +341,37 @@
     try { slot.chart.removeIndicator({ paneId: 'candle_pane', name: 'OIExtremes' }); } catch (e) {}
     delete slot.candleInds.OIExtremes; window.LUN_OI_EXTREMES = null;
   }
+
+  /* ---------- базис к споту (фьюч − спот, регрессией) ---------- */
+  async function rebuildBasis(slot) {
+    slot = slot || state; const ins = slot.instrument;
+    const sp = (window.LUN.SPOT_MAP || {})[ins.id];
+    if ((ins.provider || 'moex') !== 'moex' || !sp) { alert('Базис доступен для фьючерсов MOEX с известным спотом (Si, CNY, золото, серебро).'); return false; }
+    const list = slot.chart.getDataList(); if (!list || list.length < 20) { alert('Мало данных для базиса.'); return false; }
+    const from = new Date(list[0].timestamp).toISOString().slice(0, 10), till = new Date(list[list.length - 1].timestamp).toISOString().slice(0, 10);
+    let spot = [];
+    try { spot = await window.LunISS.fetchCandlesFrom(sp.engine, sp.market, sp.secid, 24, from, till, 100); } catch (e) {}
+    if (!spot || !spot.length) { alert('Спот ' + sp.secid + ' не получен.'); return false; }
+    const dOf = (ts) => new Date(ts + 3 * 3600000).toISOString().slice(0, 10);
+    const spotByDate = {}; spot.forEach((b) => { spotByDate[dOf(b.timestamp)] = b.close; });
+    // точки (fut, spot) по датам → регрессия fut = k·spot + c
+    const pts = [];
+    for (const b of list) { const s = spotByDate[dOf(b.timestamp)]; if (s != null && s > 0) pts.push([b.close, s, b.timestamp]); }
+    if (pts.length < 20) { alert('Мало общих дат фьюч/спот.'); return false; }
+    let n = pts.length, sx = 0, sy = 0, sxx = 0, sxy = 0;
+    pts.forEach(([f, s]) => { sx += s; sy += f; sxx += s * s; sxy += s * f; });
+    const den = n * sxx - sx * sx, k = den ? (n * sxy - sx * sy) / den : 0, c = (sy - k * sx) / n;
+    const byTs = {}; const vals = [];
+    pts.forEach(([f, s, ts]) => { const r = f - (k * s + c); byTs[ts] = r; vals.push(r); });
+    const mean = vals.reduce((a, x) => a + x, 0) / vals.length;
+    const std = Math.sqrt(vals.reduce((a, x) => a + (x - mean) * (x - mean), 0) / vals.length) || 1e-9;
+    const paneId = 'pane_basis';
+    try { slot.chart.removeIndicator({ paneId }); } catch (e) {}
+    slot.chart.createIndicator({ name: 'ArbSpread', paneId, shortName: 'Базис ' + ins.id + '−' + sp.secid, extendData: { byTs, mean, std, title: 'Базис ' + (ins.title || ins.id) + ' − ' + sp.title, formula: 'basis', last: vals[vals.length - 1] } }, false);
+    slot.basisPane = paneId; wishPane(paneId, { height: 90, order: 94 });
+    return true;
+  }
+  function removeBasis(slot) { slot = slot || state; if (slot.basisPane) { try { slot.chart.removeIndicator({ paneId: slot.basisPane }); } catch (e) {} slot.basisPane = null; } }
 
   /* ---------- арбитражная связка: синтетика + спред + z-score ---------- */
   async function buildArb(slot, bundle) {
@@ -452,15 +492,19 @@
     openModal('🔬 Исследование сигналов (бэктест по выбору)', `
       <div style="margin-bottom:8px">${checksHtml}</div>
       <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
-        <label>Горизонты (баров)<br><input id="rs-h" type="text" value="1, 3, 5, 10" style="${inp};width:150px"></label>
+        <label>Горизонты (баров)<br><input id="rs-h" type="text" value="1, 3, 5, 10" style="${inp};width:130px"></label>
+        <label>Издержки %/сделку<br><input id="rs-cost" type="number" step="any" value="0.02" style="${inp};width:90px"></label>
+        <label style="display:inline-flex;align-items:center;gap:5px"><input id="rs-oos" type="checkbox"> out-of-sample (посл. ⅓)</label>
         <button id="rs-run" style="${btn};border-color:#26a69a">Прогнать</button>
-        <span style="color:#8b93a7">данных: ${bars.length} баров · ${state.instrument.title || ''} · ${state.tf.title}</span>
+        <span style="color:#8b93a7">${bars.length} баров · ${state.instrument.title || ''} · ${state.tf.title}</span>
       </div>
       <div id="rs-out" style="color:#8b93a7">…</div>`);
     const run = () => {
       const keys = [...document.querySelectorAll('.rs-sig')].filter((c) => c.checked).map((c) => c.value);
       const H = document.getElementById('rs-h').value.split(',').map((x) => parseInt(x.trim(), 10)).filter((n) => n > 0);
-      const R = window.LunResearch.run(bars, keys, H.length ? H : [1, 3, 5, 10]);
+      const costPct = (parseFloat(document.getElementById('rs-cost').value) || 0) / 100;
+      const oos = document.getElementById('rs-oos').checked;
+      const R = window.LunResearch.run(bars, keys, H.length ? H : [1, 3, 5, 10], { costPct, oos });
       const head = '<tr style="color:#8b93a7;text-align:left"><th style="padding-right:10px">Сигнал</th><th style="padding-right:10px">входов</th>'
         + R.horizons.map((h) => `<th style="padding-right:10px" colspan="2">+${h}: win / ср% (t)</th>`).join('') + '</tr>';
       const rows = R.rows.map((r) => {
@@ -470,12 +514,15 @@
           if (!s || !s.n) { tds += '<td colspan="2" style="color:#6b7280">—</td>'; return; }
           const sig = s.n >= 30 && Math.abs(s.t) >= 2;
           const wcol = s.win > 0.55 ? '#26a69a' : (s.win < 0.45 ? '#ef5350' : '#d7deea');
+          // при OOS: ✓ если знак на train и test совпал (устойчиво)
+          let rob = '';
+          if (R.oos && r.trainH && r.trainH[h] && r.trainH[h].n) { const tr = r.trainH[h]; rob = (tr.avg > 0 && s.avg > 0) ? '<span style="color:#26a69a"> ✓</span>' : '<span style="color:#ef5350"> ✗</span>'; }
           tds += `<td style="padding:2px 4px 2px 0;color:${wcol}">${(s.win * 100).toFixed(0)}%</td>`
-            + `<td style="padding:2px 12px 2px 0;color:${s.avg >= 0 ? '#26a69a' : '#ef5350'}">${(s.avg * 100).toFixed(2)}%<span style="color:${sig ? '#e0c040' : '#6b7280'}"> (${s.t.toFixed(1)})</span></td>`;
+            + `<td style="padding:2px 12px 2px 0;color:${s.avg >= 0 ? '#26a69a' : '#ef5350'}">${(s.avg * 100).toFixed(2)}%<span style="color:${sig ? '#e0c040' : '#6b7280'}"> (${s.t.toFixed(1)})</span>${rob}</td>`;
         });
         return `<tr>${tds}</tr>`;
       }).join('');
-      document.getElementById('rs-out').innerHTML = `<p style="margin:0 0 8px">Направленный вход по сигналу, доходность вперёд. <b>win>55%</b> и <b>|t|≥2</b> при входах ≥30 = есть перевес. Иначе — шум. Считается на текущем инструменте/ТФ/периоде.</p>`
+      document.getElementById('rs-out').innerHTML = `<p style="margin:0 0 8px">Направленный вход, доходность вперёд за вычетом издержек. <b>win>55%</b> и <b>|t|≥2</b> при ≥30 входах = перевес. ${R.oos ? '<b>OOS</b>: только последняя ⅓; ✓ = знак совпал с train (устойчиво).' : ''} Считается на текущем инструменте/ТФ/периоде.</p>`
         + `<div style="max-height:340px;overflow:auto"><table style="border-collapse:collapse;font-size:12px"><thead>${head}</thead><tbody>${rows}</tbody></table></div>`;
     };
     document.getElementById('rs-run').onclick = run;
@@ -739,6 +786,8 @@
     if (slot.oiPane) setTimeout(() => rebuildOI(slot), 900);
     // пересчитать арбитражный спред под новый ТФ
     if (slot.arbBundle) setTimeout(() => buildArb(slot, slot.arbBundle), 1000);
+    // пересчитать базис к споту
+    if (slot.basisPane) setTimeout(() => rebuildBasis(slot), 1100);
   }
 
   function reloadAllSlots() { slots.forEach((s) => load(s)); }
@@ -1113,6 +1162,13 @@
       else { b.classList.remove('active'); removeOI(state); }
     }, false, 'Открытый интерес и чистые позиции физлиц/юрлиц (FUTOI, только фьючерсы MOEX, дневной)');
     oiBtn.dataset.sync = 'oi';
+    // базис к споту исходного товара (фьюч − спот, регрессией) + z-score
+    const basisBtn = mkBtn(indWrap, 'Базис к споту', (b) => {
+      const on = !b.classList.contains('active');
+      if (on) rebuildBasis(state).then((ok) => b.classList.toggle('active', ok !== false));
+      else { b.classList.remove('active'); removeBasis(state); }
+    }, false, 'Базис фьюч − спот исходного товара (Si↔USD/RUB, золото, CNY…): остаток регрессии + z');
+    basisBtn.dataset.sync = 'basis';
     // узлы Луны (0°/15°) и сильные бары на цене — для поиска «сильный бар в узле»
     [['MoonNodes', 'Узлы ☾', 'Ингрессии (0°) и середины (15°) знаков Луны на цене'],
      ['StrongBars', 'Сильбары', 'Сила: всплеск объёма ≥2× среднего · силища (двойной знак): объём держится'],

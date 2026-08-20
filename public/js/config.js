@@ -157,6 +157,18 @@ LUN.OI_EXTREMES = {
   },
   autoPct: [0.85, 0.95, 0.99],
 };
+
+/* Спот исходного товара для базиса (фьюч − спот). Базис считаем регрессией
+ * fut ~ spot (МНК), остаток = «дорого/дёшево» фьюча к споту — так множитель
+ * контракта подбирается сам, не надо знать номинал. Экстремум остатка = сдвиг
+ * керри / хедж-давление (в т.ч. внебиржевое). */
+LUN.SPOT_MAP = {
+  Si:   { secid: 'USD000UTSTOM', engine: 'currency', market: 'selt', title: 'USD/RUB спот' },
+  CNY:  { secid: 'CNYRUB_TOM',   engine: 'currency', market: 'selt', title: 'CNY/RUB спот' },
+  GOLD: { secid: 'GLDRUB_TOM',   engine: 'currency', market: 'selt', title: 'Золото спот' },
+  GD:   { secid: 'GLDRUB_TOM',   engine: 'currency', market: 'selt', title: 'Золото спот' },
+  SILV: { secid: 'SLVRUB_TOM',   engine: 'currency', market: 'selt', title: 'Серебро спот' },
+};
 LUN.BODY_GLYPH = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Pluto: '♇' };
 
 /* --- Горизонтальный луч с обрезкой по пересечениям --------------------------

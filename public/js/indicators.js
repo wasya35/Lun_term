@@ -660,6 +660,9 @@
         const yOf = (v) => mid - (v / amax) * (H * 0.42);
         const line = (idx, color) => { ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath(); pts.forEach((p, k) => { const x = xAxis.convertToPixel(p[0]), y = yOf(p[idx]); if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke(); };
         if (pts.length >= 2) { line(2, '#e0a030'); line(1, '#3aa0ff'); }
+        // COT-экстремумы юриков (крайний нетто за 60 дн): красный = макс лонг
+        // (потенц. вершина), зелёный = макс шорт (потенц. дно) — контр-сигнал
+        for (let i = from; i < to; i++) { const bar = list[i]; if (!bar) continue; const r = bd[dOf(bar.timestamp)]; if (!r || !r.cot) continue; const x = xAxis.convertToPixel(i), y = yOf(r.yurNet); ctx.fillStyle = r.cot > 0 ? '#ef5350' : '#26a69a'; ctx.beginPath(); ctx.arc(x, y, 3, 0, 6.283); ctx.fill(); }
         const L = ed.latest || {};
         ctx.fillStyle = '#3aa0ff'; ctx.fillText('физ net ' + ((L.fizNet >= 0 ? '+' : '') + (L.fizNet || 0)), 6, 3);
         ctx.fillStyle = '#e0a030'; ctx.fillText('юр net ' + ((L.yurNet >= 0 ? '+' : '') + (L.yurNet || 0)), 130, 3);
