@@ -167,6 +167,26 @@
       vertical: { line: { color: '#6b7280' }, text: { backgroundColor: '#334155' } },
     },
   };
+  // светлая тема графика (chrome — через CSS class body.light)
+  const THEME_LIGHT = {
+    grid: { horizontal: { color: '#e7e9f0' }, vertical: { color: '#e7e9f0' } },
+    candle: { bar: { upColor: '#1a9e8f', downColor: '#e5484d', upBorderColor: '#1a9e8f', downBorderColor: '#e5484d', upWuckColor: '#1a9e8f', downWuckColor: '#e5484d' }, priceMark: { last: { text: { color: '#ffffff' } } } },
+    xAxis: { axisLine: { color: '#c8ccd6' }, tickText: { color: '#5b6270' } },
+    yAxis: { axisLine: { color: '#c8ccd6' }, tickText: { color: '#5b6270' } },
+    crosshair: { horizontal: { line: { color: '#9aa0ad' }, text: { backgroundColor: '#5b6270' } }, vertical: { line: { color: '#9aa0ad' }, text: { backgroundColor: '#5b6270' } } },
+  };
+  // внешний вид: тема (dark/light) + тип свечей (candle_solid/ohlc=бары)
+  let LOOK = { theme: 'dark', candle: 'candle_solid' };
+  try { const s = JSON.parse(localStorage.getItem('lun_look') || 'null'); if (s) LOOK = Object.assign(LOOK, s); } catch (e) {}
+  function applyChartLook() {
+    document.body.classList.toggle('light', LOOK.theme === 'light');
+    const base = LOOK.theme === 'light' ? THEME_LIGHT : THEME;
+    const styles = Object.assign({}, base, { candle: Object.assign({}, base.candle, { type: LOOK.candle }) });
+    slots.forEach((s) => { try { s.chart.setStyles(styles); } catch (e) {} });
+    try { localStorage.setItem('lun_look', JSON.stringify(LOOK)); } catch (e) {}
+  }
+  function setTheme(t) { LOOK.theme = t; applyChartLook(); }
+  function setCandleType(c) { LOOK.candle = c; applyChartLook(); }
 
   /* ---------- панели ----------
    * KLineChart раскладывает новую панель асинхронно, поэтому setPaneOptions
@@ -1124,6 +1144,39 @@
     }).join('');
   }
 
+  /* ---------- астро-календарь (правая колонка) ---------- */
+  let calOpen = false, calEl = null;
+  function ensureCal() {
+    if (calEl) return calEl;
+    const p = document.createElement('div');
+    p.id = 'lun-cal';
+    p.style.cssText = 'position:fixed;top:0;right:0;height:100%;width:320px;max-width:86vw;background:#0f1420;border-left:1px solid #232b3a;box-shadow:-8px 0 24px rgba(0,0,0,.45);z-index:60;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s ease';
+    p.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid #232b3a"><b style="flex:1;font-size:13px">🗓 Астро-календарь</b><span id="cal-close" style="cursor:pointer;color:#8b93a7;font-size:18px">×</span></div>
+      <div id="cal-list" style="flex:1;overflow:auto;padding:6px 10px"></div>
+      <div style="padding:7px 10px;border-top:1px solid #232b3a;color:#6b7280;font-size:11px">Ближайшие 90 дней · гео. Проверяйте влияние в «Астро-фит».</div>`;
+    document.body.appendChild(p);
+    p.querySelector('#cal-close').onclick = () => toggleCalendar(false);
+    calEl = p; return p;
+  }
+  function toggleCalendar(on) { ensureCal(); calOpen = on; calEl.style.transform = on ? 'translateX(0)' : 'translateX(100%)'; if (on) renderCalendar(); }
+  function renderCalendar() {
+    if (!calEl || !window.LunTS || !window.LunTS.upcomingEvents) return;
+    const list = calEl.querySelector('#cal-list'), now = Date.now();
+    list.innerHTML = '<div style="color:#8b93a7;padding:8px 4px">Считаю…</div>';
+    setTimeout(() => {
+      let ev = []; try { ev = window.LunTS.upcomingEvents(now, 90); } catch (e) {}
+      if (!ev.length) { list.innerHTML = '<div style="color:#8b93a7;padding:8px 4px">Событий не найдено.</div>'; return; }
+      let html = '', lastD = '';
+      ev.slice(0, 140).forEach((e) => {
+        const d = new Date(e.ts), ds = d.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', weekday: 'short' });
+        if (ds !== lastD) { html += `<div style="color:#3aa0ff;font-size:11px;margin:9px 0 2px">${ds}</div>`; lastD = ds; }
+        const da = Math.max(0, Math.round((e.ts - now) / 86400000));
+        html += `<div style="padding:3px 4px;border-bottom:1px solid #1a2130;font-size:12px;color:#d7deea">${e.name} <span style="color:#6b7280">· через ${da}д</span></div>`;
+      });
+      list.innerHTML = html;
+    }, 20);
+  }
+
   function startDraw(toolId) {
     closeMenus();
     const ev = overlayEvents();
@@ -1384,6 +1437,8 @@
     mkBtn(setWrap, '📰 Новости по инструменту', () => { closeMenus(); toggleNews(!newsOpen); }, false, 'Правая колонка новостей по текущему инструменту (СМИ как контр-индикатор)');
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '📚 Как пользоваться', () => { closeMenus(); guideModal(); }, false, 'Пошагово: Астро, Ганн, Бэктест');
+    mkBtn(setWrap, '🌗 Тема: тёмная/светлая', () => { closeMenus(); setTheme(LOOK.theme === 'dark' ? 'light' : 'dark'); }, false, 'Переключить оформление');
+    mkBtn(setWrap, '🕯 Тип: свечи/бары', () => { closeMenus(); setCandleType(LOOK.candle === 'candle_solid' ? 'ohlc' : 'candle_solid'); }, false, 'Свечи ↔ бары (OHLC)');
     mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
 
     // Коннекторы — реалтайм-потоки
@@ -1510,6 +1565,7 @@
     activeIdx = 0; state = slots[0]; window.LUN_CHART = state.chart;
     slots.forEach((s) => { state = s; buildPanes(); });   // buildPanes синхронно, по активному state
     state = slots[0];
+    applyChartLook();                                      // тема + тип свечей
     slots.forEach((s) => load(s));
     highlightActive(); syncToolbar();
   }
@@ -1561,6 +1617,7 @@
     mkBtn(cycWrap, '☾ Луна в знаках', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleMoonSign(on);
     }, true, 'Верхняя лента знаков Луны (цвет по знаку, градус). Тумблер показать/скрыть');
+    mkBtn(cycWrap, '🗓 Астро-календарь', () => { closeMenus(); toggleCalendar(!calOpen); }, false, 'Правая панель: ближайшие ингрессии, аспекты, ретро, фазы, затмения (90 дней)');
     window.LUN.CYCLES.forEach((cy, i) => { mkBtn(cycWrap, String(i + 1), (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) { if (!state.cyclePanes[cy.id]) createCyclePane(cy, 11 + i); }

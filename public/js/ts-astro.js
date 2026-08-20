@@ -182,5 +182,13 @@
     return { pct, nTops: nT, nBottoms: nB, tops: rank(topC, nT), bottoms: rank(botC, nB) };
   }
 
-  window.LunTS = { computeAstroFit, detectPivots, cycleProjection, lunarComposite, computeFAR };
+  // ближайшие астро-события вперёд от fromMs на days дней (для календаря)
+  function upcomingEvents(fromMs, days) {
+    const t1 = fromMs + (days || 90) * DAY, F = scanEvents(fromMs, t1), out = [];
+    Object.keys(F).forEach((name) => F[name].forEach((ts) => { if (ts >= fromMs) out.push({ ts, name }); }));
+    out.sort((a, b) => a.ts - b.ts);
+    return out;
+  }
+
+  window.LunTS = { computeAstroFit, detectPivots, cycleProjection, lunarComposite, computeFAR, upcomingEvents };
 })();
