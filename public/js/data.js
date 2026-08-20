@@ -159,12 +159,17 @@
     // KLineChart v10: реалтайм идёт НЕ через chart.updateData (такого метода в
     // этой сборке нет), а через колбэк subscribeBar. Ловим его в loader.pushBar —
     // stream.js толкает туда новые/обновлённые свечи (_addData(bar,"update")).
+    // stale: помечается при смене ТФ/инструмента. Старый лоадер, у которого
+    // setSymbol/setPeriod успели дёрнуть getBars, НЕ должен перезаписать новый
+    // ТФ, если его запрос вернётся последним. Поэтому проверяем stale до и после
+    // загрузки.
     const loader = {
-      pushBar: null,
+      pushBar: null, stale: false,
       getBars: async ({ type, symbol, period, callback }) => {
-        if (type !== 'init') { callback([], false); return; }   // прототип: без подгрузки истории
+        if (loader.stale || type !== 'init') { callback([], false); return; }
         const tf = window.LUN.TIMEFRAMES.find((t) => t.span === period.span && t.type === period.type) || { iss: 60 };
         const bars = await loadCandles(symbol, tf);
+        if (loader.stale) { callback([], false); return; }   // ТФ уже сменили — не перетираем
         callback(bars || demoBars(symbol, period), false);
         if (bars) console.info('[data]', window.LUN_DATA_SOURCE);
         else console.warn('[data] демо-режим:', window.LUN_DATA_ERROR);

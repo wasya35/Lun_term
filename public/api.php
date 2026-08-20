@@ -148,9 +148,22 @@ function fetch_front($asset, $today) {
 /* ------------------------------- диспетчер ------------------------------- */
 
 if (!defined('LUN_NO_DISPATCH')) {
+  $fn = $_GET['fn'] ?? '';
+  // RSS-прокси новостей: тянет ленту на сервере (без CORS у клиента). Хосты —
+  // по белому списку, чтобы не быть открытым прокси.
+  if ($fn === 'rss') {
+    header('Access-Control-Allow-Origin: *');
+    $url = $_GET['url'] ?? '';
+    $allow = ['rbc.ru', 'ria.ru', '1prime.ru', 'lenta.ru', 'finam.ru', 'investing.com', 'oilprice.com', 'mining.com', 'coindesk.com', 'cointelegraph.com', 'finance.yahoo.com'];
+    $host = strtolower(parse_url($url, PHP_URL_HOST) ?? '');
+    $ok = false; foreach ($allow as $h) { if ($host === $h || substr($host, -(strlen($h) + 1)) === '.' . $h) { $ok = true; break; } }
+    if (!$ok) { http_response_code(400); header('Content-Type: application/json'); echo json_encode(['error' => 'host not allowed']); exit; }
+    try { $body = http_get($url); header('Content-Type: application/xml; charset=utf-8'); echo $body; }
+    catch (Exception $e) { http_response_code(502); header('Content-Type: application/json'); echo json_encode(['error' => $e->getMessage()]); }
+    exit;
+  }
   header('Content-Type: application/json; charset=utf-8');
   header('Access-Control-Allow-Origin: *');
-  $fn = $_GET['fn'] ?? '';
   try {
     if ($fn === 'front') {
       $asset = $_GET['asset'] ?? '';

@@ -12,7 +12,14 @@
   async function fetchFeed(feed) {
     const c = cache.get(feed.url);
     if (c && (Date.now() - c.ts) < CACHE_MS) return c.items;
-    let txt; try { txt = await window.LunFetchText(feed.url); } catch (e) { return []; }
+    let txt = null;
+    // 1) свой серверный RSS-прокси (без CORS, если есть PHP на хостинге)
+    for (const u of ['api.php?fn=rss&url=' + encodeURIComponent(feed.url), '/api/rss?url=' + encodeURIComponent(feed.url)]) {
+      try { const res = await fetch(u); if (res.ok) { const t = await res.text(); if (t && t.indexOf('<') >= 0) { txt = t; break; } } } catch (e) { /* нет PHP — идём на публичные шлюзы */ }
+    }
+    // 2) публичные CORS-шлюзы
+    if (!txt) { try { txt = await window.LunFetchText(feed.url); } catch (e) { return []; } }
+    if (!txt) return [];
     let doc; try { doc = new DOMParser().parseFromString(txt, 'text/xml'); } catch (e) { return []; }
     const nodes = doc.querySelectorAll('item, entry');
     const items = [];

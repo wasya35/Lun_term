@@ -45,10 +45,9 @@
       const barPx = chart.getBarSpace().bar || 6;
       const pts = overlay.points || [];
       const v0 = pts[0] ? pts[0].value : null, v1 = pts[1] ? pts[1].value : null;
-      // угол: сначала персональный (extendData.gannAngle), потом общий (LUN.GANN.unitPerBar)
-      const perObj = (typeof ed.gannAngle === 'number' && ed.gannAngle > 0) ? ed.gannAngle : null;
-      const glob = (typeof G.unitPerBar === 'number' && G.unitPerBar > 0) ? G.unitPerBar : null;
-      const angle = perObj != null ? perObj : glob;
+      // угол ТОЛЬКО пообъектный (extendData.gannAngle). Нет угла → луч строго
+      // через т1 и т2. Точный угол задаётся в панели свойств конкретной линии.
+      const angle = (typeof ed.gannAngle === 'number' && ed.gannAngle > 0) ? ed.gannAngle : null;
       const fixed = (angle != null && v0 != null && yAxis);
       const segA = { x: p0.x, y: p0.y };
       let segB, pricePerBar;
