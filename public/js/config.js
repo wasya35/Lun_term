@@ -107,6 +107,11 @@ LUN.CYCLES = [
  *   при этом реальны ВСЕ мажорные аспекты), 'geo' — геоцентр. */
 LUN.ASPECTS = { enabled: false, bodyA: 'Sun', bodyB: 'Mercury', orb: 3, frame: 'helio' };
 
+/* Цвета аспектов (по углу) — общие, редактируются в ⚙ Настройках.
+ * соединение оранжевый · секстиль голубой · квадрат красный · трин зелёный ·
+ * оппозиция фиолетовый. */
+LUN.ASPECT_COLORS = { 0: '#e0a030', 60: '#4bb4e6', 90: '#ef5350', 120: '#26a69a', 180: '#9b6bff' };
+
 /* Линейки аспектов планеты к СОЛНЦУ — по одной полосе на планету (тумблер).
  * Луна — геоцентр (фазы: соед.=новолуние, оппоз.=полнолуние), планеты — гелио
  * (Солнце = позиция Земли; у Меркурия с Солнцем реальны все мажорные аспекты).
@@ -250,21 +255,26 @@ LUN.NEWS = {
     { name: 'РИА',    url: 'https://ria.ru/export/rss2/economy/index.xml' },
     { name: '1ПРАЙМ', url: 'https://1prime.ru/export/rss2/index.xml' },
     { name: 'Лента',  url: 'https://lenta.ru/rss/news/economics' },
+    { name: 'Финам',  url: 'https://www.finam.ru/analysis/conews/rsspoint/' },
+    { name: 'Investing', url: 'https://ru.investing.com/rss/news.rss' },
   ],
+  // ключи описывают ИСХОДНЫЙ товар/актив фьючерса (доллар, нефть, золото…),
+  // а не только тикер — новости про базовый рынок так же релевантны.
   keywords: {
-    Si:   ['доллар', 'рубль', 'usd', 'валют', 'цб ', 'курс'],
-    CNY:  ['юань', 'рубл', 'кита'],
-    GOLD: ['золот', 'драгмет'],
-    BR:   ['нефт', 'brent', 'опек', 'oil'],
-    ED:   ['евро', 'eur', 'ецб'],
-    SILV: ['серебр', 'silver'],
-    BTC:  ['биткоин', 'bitcoin', 'крипт'],
-    ETH:  ['эфир', 'ethereum', 'крипт'],
-    SOL:  ['solana', 'крипт'],
+    Si:   ['доллар', 'рубл', 'usd/rub', 'usd ', 'валют', 'цб ', 'курс', 'бакс'],
+    CNY:  ['юан', 'рубл', 'кита', 'cny'],
+    GOLD: ['золот', 'драгмет', 'xau', 'gold'],
+    BR:   ['нефт', 'brent', 'опек', 'opec', 'oil', 'баррел'],
+    ED:   ['евро', 'eur', 'ецб', 'ecb'],
+    SILV: ['серебр', 'silver', 'xag'],
+    BTC:  ['биткоин', 'bitcoin', 'btc', 'крипт'],
+    ETH:  ['эфир', 'ethereum', 'eth', 'крипт'],
+    SOL:  ['solana', 'sol ', 'крипт'],
   },
   default: ['экономик', 'рынок', 'ставк', 'инфляц', 'фрс', 'цб ', 'нефт', 'рубл'],
-  // англоязычные ленты для крипты; для акций США добавляется Yahoo по тикеру
+  // ленты крипто-рынка (RU+EN); для акций США добавляется Yahoo по тикеру
   cryptoEnFeeds: [
+    { name: 'РБК-Крипто', url: 'https://www.rbc.ru/crypto/rss' },
     { name: 'CoinDesk', url: 'https://www.coindesk.com/arc/outboundfeeds/rss/' },
     { name: 'Cointelegraph', url: 'https://cointelegraph.com/rss' },
   ],

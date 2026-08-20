@@ -18,7 +18,7 @@
       signs: window.LUN.SIGNS.map((s) => ({ color: s.color })),
       cycles: window.LUN.CYCLES.map((c) => ({ id: c.id, title: c.title, body: c.body, enabled: c.enabled, zones: c.zones })),
       indicators: { smaPeriods: I.sma.periods, emaPeriods: I.ema.periods, vwapSigma: I.vwap.sigma, vwapReset: I.vwap.reset },
-      aspects: { planets: window.LUN.ASPECT_PLANETS.map((p) => ({ body: p.body, enabled: p.enabled })), all: window.LUN.ALL_ASPECTS.enabled, orb: window.LUN.ASPECTS.orb },
+      aspects: { planets: window.LUN.ASPECT_PLANETS.map((p) => ({ body: p.body, enabled: p.enabled })), all: window.LUN.ALL_ASPECTS.enabled, orb: window.LUN.ASPECTS.orb, colors: Object.assign({}, window.LUN.ASPECT_COLORS) },
       gann: { unitPerBar: window.LUN.GANN.unitPerBar, extendRight: window.LUN.GANN.extendRight },
     };
     localStorage.setItem(KEY, JSON.stringify(data));
@@ -41,6 +41,7 @@
       if (Array.isArray(d.aspects.planets)) d.aspects.planets.forEach((sp) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === sp.body); if (pl) pl.enabled = !!sp.enabled; });
       if (typeof d.aspects.all === 'boolean') window.LUN.ALL_ASPECTS.enabled = d.aspects.all;
       if (typeof d.aspects.orb === 'number') window.LUN.ASPECTS.orb = d.aspects.orb;
+      if (d.aspects.colors) Object.assign(window.LUN.ASPECT_COLORS, d.aspects.colors);
     }
     if (d.gann) {
       window.LUN.GANN.unitPerBar = (typeof d.gann.unitPerBar === 'number') ? d.gann.unitPerBar : null;
@@ -147,11 +148,19 @@
     });
     const cbAll = el('input', { type: 'checkbox', checked: window.LUN.ALL_ASPECTS.enabled });
     const inOrb = el('input', { type: 'number', min: 2, max: 6, step: 0.5, value: Math.min(6, Math.max(2, +window.LUN.ASPECTS.orb || 3)) });
+    // цвета аспектов (общие)
+    const ASP_DEFS = [[0, '☌ соединение'], [60, '⚹ секстиль'], [90, '□ квадрат'], [120, '△ трин'], [180, '☍ оппозиция']];
+    const aspColorInputs = ASP_DEFS.map(([ang, label]) => {
+      const inp = el('input', { type: 'color', value: (window.LUN.ASPECT_COLORS && window.LUN.ASPECT_COLORS[ang]) || '#888888' });
+      return { ang, inp, row: el('div', { class: 'lun-sign' }, [inp, el('span', {}, [label])]) };
+    });
     const aspSection = el('div', { class: 'lun-sec' }, [
       el('h3', {}, ['Аспекты к Солнцу (☉/планета)']),
       el('div', { class: 'lun-signs' }, aspChecks.map((x) => x.row)),
       el('div', { class: 'lun-cy-head' }, [el('label', {}, ['общий орб °: ', inOrb]), el('label', {}, [cbAll, ' сводная полоса всех аспектов ∀'])]),
-      el('p', { class: 'lun-hint' }, ['☉/планета — своя полоса на планету (Луна = фазы). ∀ — все пары одной строкой (подробно на M5/M15, на H1/D — отметки). Орб 2–6°.']),
+      el('h3', { style: 'margin-top:10px' }, ['Цвета аспектов']),
+      el('div', { class: 'lun-signs' }, aspColorInputs.map((x) => x.row)),
+      el('p', { class: 'lun-hint' }, ['☉/планета — своя полоса на планету (Луна = фазы). ∀ — все пары одной строкой. Цвета применяются ко всем аспектным лентам и меткам.']),
     ]);
 
     // блок линии Ганна
@@ -199,6 +208,8 @@
       aspChecks.forEach((x) => { x.pl.enabled = x.cb.checked; });
       window.LUN.ALL_ASPECTS.enabled = cbAll.checked;
       const orb = parseFloat(inOrb.value); if (!isNaN(orb)) window.LUN.ASPECTS.orb = Math.min(6, Math.max(2, orb));
+      aspColorInputs.forEach((x) => { window.LUN.ASPECT_COLORS[x.ang] = x.inp.value; });
+      if (window.LUN_SYNC_ASPECTS) window.LUN_SYNC_ASPECTS();
       const G2 = window.LUN.GANN;
       G2.unitPerBar = inUnit.value.trim() === '' ? null : parseFloat(inUnit.value);
       G2.extendRight = inExt.checked;

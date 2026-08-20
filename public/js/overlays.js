@@ -41,19 +41,23 @@
     name: 'lun_gann', totalStep: 3, needDefaultPointFigure: true,
     createPointFigures: ({ coordinates, bounding, overlay, chart, yAxis }) => {
       if (coordinates.length < 2) return [];
-      const [p0, p1] = coordinates, G = window.LUN.GANN || {}, st = styleOf(overlay);
+      const [p0, p1] = coordinates, G = window.LUN.GANN || {}, st = styleOf(overlay), ed = overlay.extendData || {};
       const barPx = chart.getBarSpace().bar || 6;
       const pts = overlay.points || [];
       const v0 = pts[0] ? pts[0].value : null, v1 = pts[1] ? pts[1].value : null;
-      const fixed = (typeof G.unitPerBar === 'number' && G.unitPerBar > 0 && v0 != null && yAxis);
+      // угол: сначала персональный (extendData.gannAngle), потом общий (LUN.GANN.unitPerBar)
+      const perObj = (typeof ed.gannAngle === 'number' && ed.gannAngle > 0) ? ed.gannAngle : null;
+      const glob = (typeof G.unitPerBar === 'number' && G.unitPerBar > 0) ? G.unitPerBar : null;
+      const angle = perObj != null ? perObj : glob;
+      const fixed = (angle != null && v0 != null && yAxis);
       const segA = { x: p0.x, y: p0.y };
       let segB, pricePerBar;
       if (fixed) {
         const dir = (v1 != null && v1 < v0) ? -1 : 1;
-        const dyPerBar = yAxis.convertToPixel(v0 + dir * G.unitPerBar) - yAxis.convertToPixel(v0);
+        const dyPerBar = yAxis.convertToPixel(v0 + dir * angle) - yAxis.convertToPixel(v0);
         const endX = (G.extendRight !== false) ? (p1.x >= p0.x ? bounding.width : 0) : p1.x;
         segB = { x: endX, y: p0.y + dyPerBar * ((endX - p0.x) / barPx) };
-        pricePerBar = dir * G.unitPerBar;
+        pricePerBar = dir * angle;
       } else {
         const dx = p1.x - p0.x, dy = p1.y - p0.y;
         if (G.extendRight !== false && dx !== 0) { const edgeX = dx > 0 ? bounding.width : 0; segB = { x: edgeX, y: p0.y + dy * ((edgeX - p0.x) / dx) }; }

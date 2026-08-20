@@ -560,7 +560,8 @@
     const AG = window.LUN.ASTROGANN, SIGNS = window.LUN.SIGNS;
     let ts = Date.now(); try { const l = state.chart.getDataList(); if (l.length) ts = l[l.length - 1].timestamp; } catch (e) {}
     const bodies = ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto'];
-    const ASP = [{ a: 0, sym: '☌', c: '#c0392b' }, { a: 60, sym: '⚹', c: '#2c6fb0' }, { a: 90, sym: '□', c: '#c0392b' }, { a: 120, sym: '△', c: '#2c6fb0' }, { a: 180, sym: '☍', c: '#c0392b' }];
+    const AC = window.LUN.ASPECT_COLORS || {};
+    const ASP = [{ a: 0, sym: '☌', c: AC[0] || '#e0a030' }, { a: 60, sym: '⚹', c: AC[60] || '#4bb4e6' }, { a: 90, sym: '□', c: AC[90] || '#ef5350' }, { a: 120, sym: '△', c: AC[120] || '#26a69a' }, { a: 180, sym: '☍', c: AC[180] || '#9b6bff' }];
     const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
     openModal('Космограмма', `
       <div style="display:flex;gap:14px;align-items:flex-end;margin-bottom:10px">
@@ -780,11 +781,14 @@
       <label style="${row}">Линия <select id="sp-dash" style="background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"><option value="solid">сплошная</option><option value="dashed">пунктир</option><option value="dotted">точки</option></select></label>
       <label style="${row}">Заливка <input id="sp-fill" type="checkbox"></label>
       <label style="${row}">🔒 Блокировка <input id="sp-lock" type="checkbox"></label>
+      <div id="sp-angle-row" style="${row};display:none;border-top:1px solid #232b3a;margin-top:6px;padding-top:8px">Угол ∠ <span><input id="sp-angle" type="number" step="any" style="width:96px;background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"> <span id="sp-angle-clr" title="Вернуть по 2 точкам" style="cursor:pointer;color:#8b93a7">↺</span></span></div>
       <button id="sp-del" style="width:100%;margin-top:8px;background:#2a1720;color:#ef8a88;border:1px solid #5a2b33;border-radius:6px;padding:6px;cursor:pointer">Удалить (Del)</button>`;
     document.body.appendChild(p);
     p.querySelector('#sp-close').onclick = hideStylePanel;
     p.querySelector('#sp-del').onclick = () => { deleteSelected(); hideStylePanel(); };
     ['#sp-color', '#sp-size', '#sp-dash', '#sp-fill', '#sp-lock'].forEach((id) => { const el = p.querySelector(id); el.oninput = applySelStyle; el.onchange = applySelStyle; });
+    p.querySelector('#sp-angle').oninput = applyGannAngle;
+    p.querySelector('#sp-angle-clr').onclick = () => { p.querySelector('#sp-angle').value = ''; applyGannAngle(); };
     stylePanelEl = p; return p;
   }
   const OV_NAMES = { lun_rect: 'Прямоугольник', lun_gann: 'Линия Ганна', lun_arrow: 'Стрелка', lun_hray: 'Луч ⨯N', lun_vprofile: 'Профиль объёма', lun_gannbox: 'Gann Box', lun_gannsquare: 'Квадрат Ганна', lun_text: 'Текст', horizontalStraightLine: 'Уровень', segment: 'Трендовая' };
@@ -798,7 +802,30 @@
     p.querySelector('#sp-dash').value = st.dash || 'solid';
     p.querySelector('#sp-fill').checked = !!st.fill;
     p.querySelector('#sp-lock').checked = !!ov.lock;
+    // строка угла — только для линии Ганна; показываем текущий (перс./общий/по 2 точкам)
+    const angleRow = p.querySelector('#sp-angle-row');
+    if (ov.name === 'lun_gann') {
+      angleRow.style.display = '';
+      const ai = p.querySelector('#sp-angle');
+      if (typeof ed.gannAngle === 'number' && ed.gannAngle > 0) ai.value = ed.gannAngle;
+      else { const cur = gannAngleOf(ov); ai.value = cur != null ? +cur.toFixed(cur < 10 ? 3 : 1) : ''; ai.placeholder = 'по 2 точкам'; }
+    } else angleRow.style.display = 'none';
     p.style.display = 'block';
+  }
+  // текущий угол линии Ганна (цена/бар) по её двум точкам
+  function gannAngleOf(ov) {
+    const pts = ov.points || []; if (pts.length < 2) return null;
+    const v0 = pts[0].value, v1 = pts[1].value, i0 = pts[0].dataIndex, i1 = pts[1].dataIndex;
+    if (v0 == null || v1 == null || i0 == null || i1 == null) return null;
+    const bars = Math.abs(i1 - i0) || 1; return Math.abs((v1 - v0) / bars);
+  }
+  function applyGannAngle() {
+    const id = state.selectedOverlayId, ov = state.selectedOverlay; if (!id || !ov || !stylePanelEl) return;
+    const v = stylePanelEl.querySelector('#sp-angle').value.trim();
+    const ed = Object.assign({}, (ov.extendData && typeof ov.extendData === 'object') ? ov.extendData : {});
+    if (v === '' || !(+v > 0)) delete ed.gannAngle; else ed.gannAngle = +v;
+    ov.extendData = ed;
+    try { state.chart.overrideOverlay({ id, extendData: ed }); } catch (e) {}
   }
   function hideStylePanel() { if (stylePanelEl) stylePanelEl.style.display = 'none'; }
   function applySelStyle() {

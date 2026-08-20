@@ -429,12 +429,16 @@
   const BODY_SYM = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄' };
   // голубые (soft) = продолжение движения; красные (hard) = разворот/коррекция
   const ASPECTS = [
-    { name: 'соединение', sym: '☌', angle: 0,   kind: 'hard', color: '#c0392b' },
-    { name: 'секстиль',   sym: '⚹', angle: 60,  kind: 'soft', color: '#2c6fb0' },
-    { name: 'квадрат',    sym: '□', angle: 90,  kind: 'hard', color: '#c0392b' },
-    { name: 'трин',       sym: '△', angle: 120, kind: 'soft', color: '#2c6fb0' },
-    { name: 'оппозиция',  sym: '☍', angle: 180, kind: 'hard', color: '#c0392b' },
+    { name: 'соединение', sym: '☌', angle: 0,   kind: 'hard', color: '#e0a030' },
+    { name: 'секстиль',   sym: '⚹', angle: 60,  kind: 'soft', color: '#4bb4e6' },
+    { name: 'квадрат',    sym: '□', angle: 90,  kind: 'hard', color: '#ef5350' },
+    { name: 'трин',       sym: '△', angle: 120, kind: 'soft', color: '#26a69a' },
+    { name: 'оппозиция',  sym: '☍', angle: 180, kind: 'hard', color: '#9b6bff' },
   ];
+  // цвета аспектов берём из общих настроек (LUN.ASPECT_COLORS), с живым обновлением
+  function syncAspectColors() { ASPECTS.forEach((A) => { const c = window.LUN.ASPECT_COLORS && window.LUN.ASPECT_COLORS[A.angle]; if (c) A.color = c; }); }
+  syncAspectColors();
+  window.LUN_SYNC_ASPECTS = syncAspectColors;
   window.LUN_ASPECT_DEFS = ASPECTS;
   function separation(a, b) { let d = Math.abs(a - b) % 360; if (d > 180) d = 360 - d; return d; }
   function aspectCfg(indicator) {
