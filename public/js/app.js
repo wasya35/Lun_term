@@ -818,8 +818,9 @@
     const sources = [];
     if (window.LunSBC && window.LUN_SBC && window.LUN_SBC.janma) sources.push(['sbc', 'Экстремумы СБЧ (текущий инструмент)']);
     if (window.LunSynastry && window.LUN_SYNASTRY && window.LUN_SYNASTRY.points) sources.push(['syn', 'Экстремумы синастрии']);
+    if (window.LunCycle) { sources.push(['stages', 'Этапы цикла Меркурий–Солнце']); sources.push(['moonstages', 'Этапы цикла Луна–Солнце (фазы)']); }
     if (window.LunSBC) sources.push(['merc', 'Меркурий ретроградный']);
-    if (!sources.length) { openModal('🎲 Монте-Карло', '<p>Сначала включите ряд: СБЧ или синастрию (в «Прогностика» / «Личные данные»).</p>'); return; }
+    if (!sources.length) { openModal('🎲 Монте-Карло', '<p>Сначала включите ряд: СБЧ / синастрию / цикл (в «Прогностика» / «Личные данные»).</p>'); return; }
     openModal('🎲 Монте-Карло — проверка гипотезы', `
       <p style="color:#8b93a7">Вопрос: цена разворачивается у дат события чаще, чем при случайности? <b>lift</b> = P(разворот|окно)/P(разворот), <b>p</b> = доля из 2000 случайных выборок с lift ≥ наблюдаемого. p≥0.05 — «не отличается от шума». Лучше на D1.</p>
       <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:8px 0">
@@ -845,6 +846,12 @@
         if (src === 'sbc') series = bars.map((b) => window.LunSBC.scoreAt(b.timestamp, { janma: window.LUN_SBC.janma, sunVedha: window.LUN_SBC.sunVedha }));
         else if (src === 'syn') series = bars.map((b) => window.LunSynastry.riAt(b.timestamp, window.LUN_SYNASTRY.points, 6, noMoon));
         else if (src === 'merc') { eventIdx = []; bars.forEach((b, i) => { if (window.LunSBC.planet(b.timestamp, 'Mercury').speed < 0) eventIdx.push(i); }); }
+        else if (src === 'stages' || src === 'moonstages') {
+          const cyc = src === 'moonstages' ? 'moon' : 'merc';
+          const ev = window.LunCycle.stages(cyc, bars[0].timestamp, bars[bars.length - 1].timestamp);
+          const seen = new Set(); eventIdx = [];
+          ev.forEach((e) => { let lo = 0, hi = bars.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (bars[m].timestamp < e.ts) lo = m + 1; else hi = m; } if (!seen.has(lo)) { seen.add(lo); eventIdx.push(lo); } });
+        }
         let R;
         if (eventIdx) R = window.LunMC.liftTest(bars.length, eventIdx, near, 2000);
         else { const ev = window.LunMC.eventsFromSeries(series, frac, true); R = window.LunMC.liftTest(bars.length, ev, near, 2000); }
@@ -1463,7 +1470,7 @@
     const s = state;
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
-      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null,
+      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null,
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
@@ -1508,6 +1515,7 @@
       if (ws.synastry && ws.synastry.points) window.LUN_SYNASTRY = ws.synastry;
       if (ws.synMode) window.LUN.SYN.mode = ws.synMode;
       if (ws.sbc && ws.sbc.janma) window.LUN_SBC = ws.sbc;
+      if (ws.maslov && ws.maslov.cycle) window.LUN_MASLOV = ws.maslov;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
@@ -1954,6 +1962,19 @@
       mkBtn(gannWrap, '⚖ Астро-факторы на экстремумах…', () => { closeMenus(); farModal(); }, false, 'Взвешенные астро-факторы на вершинах/основаниях волны (по фильтрованной волне)');
       mkBtn(gannWrap, '🕉 СБЧ (Сарватобхадра-чакра)…', () => { closeMenus(); sbcModal(); }, false, 'Ведха-скаляр в сидерике (джйотиш): активация чувствительных накшатр инструмента. Не сигнал — проверяется Монте-Карло');
       mkBtn(gannWrap, '🎲 Монте-Карло: проверка гипотезы…', () => { closeMenus(); mcModal(); }, false, 'lift + перестановочный p: разворачивается ли цена у дат события чаще случайного');
+      const mcyBtn = mkBtn(gannWrap, '🪐 Цикл Меркурий–Солнце (каркас)', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+        if (on) { window.LUN_MASLOV = window.LUN_MASLOV || { cycle: 'merc' }; state.chart.createIndicator({ name: 'MercSunCycle', paneId: 'candle_pane' }, true); state.candleInds.MercSunCycle = true; }
+        else removeCandInd('MercSunCycle');
+        closeMenus();
+      }, false, 'Каркас Маслова: вертикали на этапах цикла Меркурий–Солнце (стоянки/соединения) + чередующийся фон. Направление не постулируется — проверяйте Монте-Карло');
+      mcyBtn.dataset.sync = 'cand:MercSunCycle';
+      mkBtn(gannWrap, '↺ Цикл: Меркурий↔Луна (валюты)', () => {
+        window.LUN_MASLOV = window.LUN_MASLOV || { cycle: 'merc' };
+        window.LUN_MASLOV.cycle = window.LUN_MASLOV.cycle === 'moon' ? 'merc' : 'moon';
+        if (state.candleInds.MercSunCycle) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'MercSunCycle' }); state.chart.createIndicator({ name: 'MercSunCycle', paneId: 'candle_pane' }, true); } catch (e) {} }
+        closeMenus();
+      }, false, 'Переключить каркас: Меркурий–Солнце (товары/акции) ↔ Луна–Солнце (валюты, фазы Луны)');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
       gnote.textContent = 'Инструменты Ганна: геометрия · квадраты · циклы · астро-Ганн';
       gannWrap.appendChild(gnote);

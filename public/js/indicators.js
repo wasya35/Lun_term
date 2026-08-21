@@ -1046,6 +1046,48 @@
     },
   });
 
+  /* ============ Прогностика: цикл Меркурий–Солнце (каркас Маслова) ============
+   * window.LUN_MASLOV = { cycle:'merc'|'moon' }. Вертикали на 4 событиях этапа
+   * + чередующийся фон между ними. Направление НЕ постулируется (чередование);
+   * проверяется Монте-Карло. Рисуется на ценовой панели. */
+  kc.registerIndicator({
+    name: 'MercSunCycle', shortName: 'Цикл ☿–☉', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const list = chart.getDataList(); if (list.length < 3 || !window.LunCycle) return true;
+      const cycle = (window.LUN_MASLOV && window.LUN_MASLOV.cycle) || 'merc';
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      const t0 = list[from].timestamp, t1 = list[Math.min(list.length - 1, to)].timestamp;
+      const ev = window.LunCycle.stages(cycle, t0, t1); if (!ev.length) return true;
+      const H = bounding.height, W = bounding.width;
+      // ts → дробный индекс → пиксель X
+      const xOf = (ts) => {
+        let i = from; while (i < to - 1 && list[i + 1].timestamp <= ts) i++;
+        const a = list[i].timestamp, b = list[Math.min(list.length - 1, i + 1)].timestamp;
+        const frac = b > a ? (ts - a) / (b - a) : 0; return xAxis.convertToPixel(i + frac);
+      };
+      const LAB = { retro: '☿ᴿ', direct: '☿ᴰ', inferior: '☿☌☉↓', superior: '☿☌☉↑', new: '🌑', fq: '🌓', full: '🌕', lq: '🌗' };
+      // чередующийся фон между событиями
+      for (let k = 0; k < ev.length - 1; k++) {
+        const x1 = xOf(ev[k].ts), x2 = xOf(ev[k + 1].ts);
+        ctx.fillStyle = (k % 2 === 0) ? 'rgba(38,166,154,0.05)' : 'rgba(239,83,80,0.05)';
+        ctx.fillRect(x1, 0, Math.max(0, x2 - x1), H);
+      }
+      ev.forEach((e) => {
+        const x = xOf(e.ts); const stage = (e.kind === 'retro' || e.kind === 'direct' || e.kind === 'inferior' || e.kind === 'superior');
+        ctx.strokeStyle = stage ? 'rgba(200,162,75,0.5)' : 'rgba(155,107,255,0.4)'; ctx.lineWidth = 1; ctx.setLineDash(stage ? [] : [3, 3]);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'center';
+        ctx.fillText(LAB[e.kind] || '', x, 2);
+      });
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+      ctx.fillText((cycle === 'moon' ? 'Цикл Луна–Солнце' : 'Цикл Меркурий–Солнце') + ' · чередование этапов (направление проверяйте МК)', 4, H - 2);
+      return true;
+    },
+  });
+
   /* ============ Прогностика: СБЧ (Сарватобхадра-чакра) ведха-скаляр ============
    * window.LUN_SBC = { janma, title, sunVedha }. Гладкий скаляр SBC(t) ≈ −5…+5
    * (как барометр): бенефик-ведхи в чувствительные накшатры инструмента +,
@@ -1111,7 +1153,21 @@
           const ts = list[i].timestamp;
           const la = window.LunAstro.lonOf(pr.a, ts, frame), lb = window.LunAstro.lonOf(pr.b, ts, frame);
           const s = sep(la, lb);
-          for (const A of ASPECTS) { const off = Math.abs(s - A.angle); if (off <= orb) { const x = xAxis.convertToPixel(i); const exact = off < 0.6; ctx.fillStyle = A.color; ctx.globalAlpha = exact ? 1 : 0.5; ctx.beginPath(); ctx.arc(x, yc, exact ? 3.6 : 2, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1; break; } }
+          for (const A of ASPECTS) {
+            const off = Math.abs(s - A.angle);
+            if (off <= orb) {
+              const x = xAxis.convertToPixel(i), exact = off < 0.6;
+              ctx.fillStyle = A.color; ctx.globalAlpha = exact ? 1 : 0.5; ctx.beginPath(); ctx.arc(x, yc, exact ? 3.6 : 2, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
+              // applying (растущий, сходится к точному) ▲ / separating (убывающий) ▼ — по Маслову
+              const la2 = window.LunAstro.lonOf(pr.a, ts + 86400000, frame), lb2 = window.LunAstro.lonOf(pr.b, ts + 86400000, frame);
+              const off2 = Math.abs(sep(la2, lb2) - A.angle), applying = off2 < off;
+              ctx.fillStyle = applying ? '#26a69a' : '#ef5350'; ctx.globalAlpha = 0.7; ctx.beginPath();
+              const ty = yc + (applying ? -6 : 6), d = 2.4;
+              if (applying) { ctx.moveTo(x, ty - d); ctx.lineTo(x - d, ty + d); ctx.lineTo(x + d, ty + d); } else { ctx.moveTo(x, ty + d); ctx.lineTo(x - d, ty - d); ctx.lineTo(x + d, ty - d); }
+              ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+              break;
+            }
+          }
         }
         ctx.fillStyle = '#c7d0e0'; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
         ctx.fillText(glyph(pr.a) + '–' + glyph(pr.b), 4, yc);

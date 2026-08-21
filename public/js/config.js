@@ -259,6 +259,10 @@ LUN.ASTROGANN = {
  *   'both'   — знаковая линия + фон полярностей. */
 LUN.SYN = { mode: 'both' };
 
+/* Каркас Маслова: какой цикл рисуем — 'merc' (Меркурий–Солнце, товары/акции)
+ * или 'moon' (Луна–Солнце, валюты). Индикатор читает window.LUN_MASLOV. */
+window.LUN_MASLOV = window.LUN_MASLOV || { cycle: 'merc' };
+
 LUN.NATAL = {
   exchanges: [
     { id: 'moex',    title: 'MOEX (ММВБ)',   date: '1992-01-09T10:00:00Z', note: 'первые торги ММВБ' },
