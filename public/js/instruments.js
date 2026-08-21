@@ -50,6 +50,8 @@
   .in-tk{font-weight:600;min-width:88px;color:#d7deea}
   .in-nm{color:#8b93a7;font-size:12px;flex:1}
   .in-badge{font-size:10px;color:#6b7280;border:1px solid #2a3242;border-radius:4px;padding:0 5px}
+  .in-star{cursor:pointer;font-size:16px;width:22px;text-align:center;color:#e0c040}
+  .in-star.off{color:#3a4150}
   .lun-modal h2{display:flex;align-items:center;gap:6px}
   .in-ex{display:inline-flex;gap:4px}`;
   let cssAdded = false;
@@ -57,7 +59,7 @@
 
   const prov = (id) => window.LunProviders && window.LunProviders.get(id);
 
-  async function open(onPick) {
+  async function open(onPick, fav) {
     addCss();
     const bg = document.createElement('div'); bg.className = 'lun-modal-bg';
     const modal = document.createElement('div'); modal.className = 'lun-modal'; modal.style.width = 'min(560px,94vw)';
@@ -90,8 +92,10 @@
       const shown = (ex === 'us' ? items : items.filter((x) => !q || (x.ticker || '').toLowerCase().includes(q) || (x.title || '').toLowerCase().includes(q))).slice(0, 300);
       if (!shown.length) { info(ex === 'us' && !q ? 'введите тикер (напр. NVDA, AAPL, SPY)…' : 'ничего не найдено'); return; }
       const bk = (x) => badge[x._kind] || badge[x.type] || '';
-      listEl.innerHTML = shown.map((x, i) => `<div class="in-row" data-i="${i}"><span class="in-tk">${x.ticker}</span><span class="in-nm">${x.title}</span><span class="in-badge">${bk(x)}</span></div>`).join('');
+      const star = (x) => fav ? `<span class="in-star${fav.isFav(x) ? '' : ' off'}" data-i="${shown.indexOf(x)}" title="избранное">${fav.isFav(x) ? '★' : '☆'}</span>` : '';
+      listEl.innerHTML = shown.map((x, i) => `<div class="in-row" data-i="${i}"><span class="in-tk">${x.ticker}</span><span class="in-nm">${x.title}</span><span class="in-badge">${bk(x)}</span>${star(x)}</div>`).join('');
       [...listEl.querySelectorAll('.in-row')].forEach((row) => { row.onclick = () => { close(); onPick(shown[+row.dataset.i]); }; });
+      if (fav) [...listEl.querySelectorAll('.in-star')].forEach((s) => { s.onclick = (e) => { e.stopPropagation(); fav.toggle(shown[+s.dataset.i]); draw(); }; });
     };
     const loadMoex = async () => {
       if (!cacheMoex[tab]) { info('загрузка списка…'); try { cacheMoex[tab] = tab === 'futures' ? await futures() : await stocks(); } catch (e) { info('не удалось: ' + e.message); return; } }

@@ -493,6 +493,19 @@
   let gannSpaceOn = false;
   function toggleGannSpace(on) {
     gannSpaceOn = on;
+    const c = state.chart;
+    if (on) {
+      // фикс поля 1×1: подгоняем ширину бара так, чтобы «цена на бар» (масштаб
+      // 1×1 из настроек — расчётное соотношение от первой волны) выглядела 45°.
+      try {
+        const list = c.getDataList(), range = c.getVisibleRange();
+        const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+        let hi = -Infinity, lo = Infinity; for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low; }
+        const cfg = window.LUN.GANNTOOLS.scale || {}, upb = cfg.unitPerBar || ((hi - lo) / Math.max(1, to - from));
+        const H = (state.cellEl && state.cellEl.clientHeight * 0.8) || 400;
+        if (hi > lo && upb > 0) { const pxPerPrice = H / (hi - lo); const bs = Math.max(1, pxPerPrice * upb); if (c.setBarSpace) c.setBarSpace(bs); }
+      } catch (e) {}
+    }
     slots.forEach((s) => { try { if (s.chart.setZoomEnabled) s.chart.setZoomEnabled(!on); } catch (e) {} try { if (s.chart.setPaneOptions) s.chart.setPaneOptions({ id: 'candle_pane', axis: { scrollZoomEnabled: !on } }); } catch (e) {} });
   }
   // единая форма для геометрии Ганна: Box (деления) или Квадрат-сетка N×N
@@ -1241,7 +1254,7 @@
   function captureWorkspace() {
     const s = state;
     return {
-      v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK,
+      v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
@@ -1277,6 +1290,7 @@
     applyingWs = true;
     try {
       if (ws.look) LOOK = Object.assign(LOOK, ws.look);
+      if (Array.isArray(ws.favs) && ws.favs.length) { window.LUN_FAVS = ws.favs; try { localStorage.setItem('lun_favs', JSON.stringify(ws.favs)); } catch (e) {} buildInstruments(); }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
@@ -1402,31 +1416,41 @@
     wrap.appendChild(b); return b;
   }
 
-  function buildUI() {
-    const insWrap = document.getElementById('instruments');
+  /* ---------- избранные инструменты (звёздочка) ---------- */
+  const favId = (ins) => ins.id || ((ins.provider || 'moex') + ':' + (ins.ticker || ins.symbol || ins.title));
+  function loadFavs() {
+    try { const s = JSON.parse(localStorage.getItem('lun_favs') || 'null'); if (Array.isArray(s) && s.length) { window.LUN_FAVS = s; return; } } catch (e) {}
+    window.LUN_FAVS = window.LUN.INSTRUMENTS.slice();
+  }
+  function saveFavs() { try { localStorage.setItem('lun_favs', JSON.stringify(window.LUN_FAVS || [])); } catch (e) {} if (typeof scheduleWsSave === 'function') scheduleWsSave(); }
+  const findFav = (id) => (window.LUN_FAVS || []).find((x) => favId(x) === id);
+  function addFav(ins) { const id = favId(ins); if (findFav(id)) return; const c = Object.assign({}, ins); if (!c.provider) c.provider = 'moex'; window.LUN_FAVS.push(c); saveFavs(); buildInstruments(); }
+  function removeFav(id) { window.LUN_FAVS = (window.LUN_FAVS || []).filter((x) => favId(x) !== id); saveFavs(); buildInstruments(); }
+  function favApi() { return { isFav: (x) => !!findFav(favId(x)), toggle: (x) => { const id = favId(x); if (findFav(id)) removeFav(id); else addFav(x); } }; }
+  function buildInstruments() {
+    const insWrap = document.getElementById('instruments'); if (!insWrap) return;
     const MARKET = { moex: 'MOEX', bybit: 'Крипта', binance: 'Крипта', yahoo: 'США' };
-    let curMarket = null;
+    insWrap.innerHTML = ''; let curMarket = null;
     const clearActive = () => [...insWrap.querySelectorAll('button')].forEach((x) => x.classList.remove('active'));
-    window.LUN.INSTRUMENTS.forEach((ins) => {
+    (window.LUN_FAVS || []).forEach((ins) => {
       const grp = MARKET[ins.provider || 'moex'] || 'Прочее';
       if (grp !== curMarket) { const h = document.createElement('div'); h.className = 'menu-sub'; h.textContent = grp; insWrap.appendChild(h); curMarket = grp; }
-      mkBtn(insWrap, ins.title, (b) => {
-        state.instrument = ins; load(); closeMenus();
-        clearActive(); b.classList.add('active');
-      }, ins === state.instrument, ins.title).dataset.sync = 'ins:' + ins.id;
+      const b = document.createElement('button'); b.style.cssText = 'display:flex;align-items:center;gap:8px;width:100%';
+      b.innerHTML = '<span style="flex:1;text-align:left">' + (ins.title || ins.id) + '</span><span class="fav-star" title="убрать из избранного" style="color:#e0c040">★</span>';
+      if (favId(ins) === favId(state.instrument)) b.classList.add('active');
+      b.onclick = () => { state.instrument = ins; load(); closeMenus(); clearActive(); b.classList.add('active'); };
+      b.querySelector('.fav-star').onclick = (e) => { e.stopPropagation(); removeFav(favId(ins)); };
+      insWrap.appendChild(b);
     });
-    // поиск любого инструмента MOEX (акции/фьючерсы)
-    const findBtn = mkBtn(insWrap, '🔍 Поиск инструмента…', () => { closeMenus(); window.LunInstruments.open((instr) => {
-      state.instrument = instr; load();
-      [...insWrap.children].forEach((x) => x.classList.remove('active'));
-    }); }, false, 'Поиск любой акции или фьючерса MOEX');
+    const findBtn = mkBtn(insWrap, '🔍 Поиск / добавить в избранное…', () => { closeMenus(); window.LunInstruments.open((instr) => { state.instrument = instr; load(); }, favApi()); }, false, 'Поиск инструмента; звёздочка ★ добавит в избранное');
     findBtn.classList.add('find-btn');
-    // 2-й график линией поверх активного: выбор через окно инструментов
     mkBtn(insWrap, '➕ 2-й график (линией)', () => { closeMenus(); window.LunInstruments.open((instr) => addCompare(instr)); }, false, 'Наложить второй инструмент линией на активный график');
     mkBtn(insWrap, '✕ убрать 2-й график', () => { closeMenus(); removeCompare(); }, false, 'Убрать наложение');
-    // арбитражные связки (синтетика + спред + z-score)
-    (window.LUN.ARB || []).forEach((bundle) => mkBtn(insWrap, '⚖ ' + bundle.title, () => { closeMenus(); buildArb(state, bundle); }, false, 'Арбитражная связка: синтетика, спред и z-score (на ТФ активного графика)'));
-    if ((window.LUN.ARB || []).length) mkBtn(insWrap, '✕ убрать спред', () => { closeMenus(); removeArb(state); }, false, 'Убрать панель спреда');
+  }
+
+  function buildUI() {
+    loadFavs();
+    buildInstruments();
 
     const tfWrap = document.getElementById('timeframes');
     window.LUN.TIMEFRAMES.forEach((tf, i) => {
@@ -1567,7 +1591,7 @@
         if (on) createBradleyPane(); else removeBradleyPane();
       }, false, 'Сидерограф: взвешенная сумма аспектов, экстремумы = даты разворота');
       mkBtn(gannWrap, '🜨 Космограмма…', () => { closeMenus(); cosmogramModal(); }, false, 'Колесо зодиака с планетами и аспектами на дату');
-      gsub('Timing Solutions');
+      gsub('Прогностика');
       mkBtn(gannWrap, '🎯 Астро-фит: что работает…', () => { closeMenus(); astroFitModal(); }, false, 'Ранжирование астро-событий по совпадению с разворотами ЭТОГО инструмента (нужна история — D1, 1–3 года)');
       mkBtn(gannWrap, '📈 Прогноз циклов (линия)', (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleProjection(on);
@@ -1619,24 +1643,16 @@
       const note = document.createElement('div'); note.className = 'menu-note'; note.textContent = 'Нужен вход в аккаунт (👤). Проверка — на сервере (cron).'; alWrap.appendChild(note);
     }
 
-    // Коннекторы — реалтайм-потоки
-    const conWrap = document.getElementById('connectors');
-    [['crypto', 'Крипто · Bybit realtime', 'Настоящий поток (WebSocket): последняя свеча тикает вживую'],
-     ['us', 'Америка · Yahoo (опрос)', 'Псевдо-реалтайм: опрос ~каждые 15–30с (без ключа Finnhub)'],
-     ['moex', 'MOEX · псевдо (~15м)', 'ISS без потока: опрос; истинный realtime у биржи платный']].forEach(([name, label, tip]) => {
-      connBtns[name] = mkBtn(conWrap, label, (b) => {
+    // Коннекторы — в Настройках, все ВКЛ по умолчанию (цена всегда движется)
+    const conSub = document.createElement('div'); conSub.className = 'menu-sub'; conSub.textContent = 'Коннекторы (реалтайм)'; conSub.style.marginTop = '6px'; setWrap.appendChild(conSub);
+    [['crypto', 'Крипта · Bybit', 'Настоящий поток (WebSocket)'],
+     ['us', 'Америка · Yahoo', 'Опрос ~15–30с'],
+     ['moex', 'MOEX · псевдо', 'Опрос (истинный realtime у биржи платный)']].forEach(([name, label, tip]) => {
+      connBtns[name] = mkBtn(setWrap, label, (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
         if (window.LunStream) window.LunStream.setConnector(name, on, slots);
-      }, false, tip);
+      }, true, tip);   // active по умолчанию
     });
-    // авто-коннектор: при выборе инструмента сам включает поток нужного рынка
-    autoConnBtn = mkBtn(conWrap, '🤖 Авто-коннектор', (b) => {
-      autoConnect = !b.classList.contains('active'); b.classList.toggle('active', autoConnect);
-      if (autoConnect) applyAutoConnect();
-    }, false, 'Автоматически включать реалтайм-поток под рынок открытого инструмента');
-    autoConnBtn.style.marginTop = '4px';
-    const stub = mkBtn(conWrap, '➕ Свой коннектор (Finam/MOEX API)', () => alert('Свой коннектор (Finam Trade / MOEX API с ключами) — задел на будущее. Здесь появится подключение брокерского потока и торговли.'), false, 'Задел на будущее');
-    stub.style.opacity = '0.6';
 
     // Экраны — сетка графиков
     const layWrap = document.getElementById('layouts');
@@ -1842,6 +1858,8 @@
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
     if (window.LunStream) window.LunStream.onStatus((txt, color) => { const el = document.getElementById('stream-status'); if (el) { el.textContent = txt; el.style.color = color; } });
     setLayout('1');       // создаёт график(и), панели и загрузку
+    // коннекторы — все включены по умолчанию (цена всегда движется)
+    if (window.LunStream) setTimeout(() => { ['crypto', 'us', 'moex'].forEach((n) => window.LunStream.setConnector(n, true, slots)); }, 1200);
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
     setInterval(() => scheduleWsSave(), 25000);   // страховочное авто-сохранение рабочего стола
