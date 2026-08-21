@@ -988,10 +988,13 @@
   });
 
   /* ============ Синастрия: динамика взаимоотношений (RI во времени) ============
-   * window.LUN_SYNASTRY = { points:[долготы обеих карт], title } — задаётся из
-   * блока «Личные данные». RI(t) = как транзитное небо активирует обе карты:
-   * гармония (60/120/☌) в плюс, напряжение (90/180) в минус. Пики/провалы —
-   * периоды особого «резонанса» пары. ЭКСПЕРИМЕНТ. */
+   * window.LUN_SYNASTRY = { points:[долготы обеих карт], title }.
+   * Режим LUN.SYN.mode: 'signed' — одна знаковая кривая (гармония+/напряжение−);
+   * 'polar' — две полярности (🟢 поддержка / 🔴 напряжение) по Свиридову;
+   * 'both' — знаковая линия + фон полярностей.
+   * Гейт Луны: на длинных горизонтах (> ~45 дней видимого окна) транзитная Луна
+   * исключается, иначе даёт «лунную рябь» с шагом ~2.5 дня.
+   * ВАЖНО: это НАПРЯЖЕНИЕ/ПОДДЕРЖКА, а НЕ направление цены. ЭКСПЕРИМЕНТ. */
   kc.registerIndicator({
     name: 'RelationshipDyn', shortName: 'Синастрия-динамика', series: 'normal', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
@@ -1004,24 +1007,41 @@
       const range = chart.getVisibleRange();
       const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
       if (to - from < 2) return true;
-      const pts = S.points, vals = []; let mx = 1e-9;
-      for (let i = from; i < to; i++) { const v = window.LunSynastry.riAt(list[i].timestamp, pts, 6); vals[i] = v; if (Math.abs(v) > mx) mx = Math.abs(v); }
+      const mode = (window.LUN.SYN && window.LUN.SYN.mode) || 'both';
+      const spanDays = (list[to - 1].timestamp - list[from].timestamp) / 86400000;
+      const noMoon = spanDays > 45;                     // гейт Луны на длинных окнах
+      const pts = S.points, sig = [], pos = [], neg = []; let mx = 1e-9, mxp = 1e-9;
+      for (let i = from; i < to; i++) {
+        const r = window.LunSynastry.riSplit(list[i].timestamp, pts, 6, noMoon);
+        pos[i] = r.pos; neg[i] = r.neg; sig[i] = r.pos - r.neg;
+        if (Math.abs(sig[i]) > mx) mx = Math.abs(sig[i]);
+        if (r.pos > mxp) mxp = r.pos; if (r.neg > mxp) mxp = r.neg;
+      }
       const H = bounding.height, mid = H / 2, W = bounding.width;
       ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
-      // заливка над/под нулём (гармония зелёная / напряжение красная)
-      ctx.strokeStyle = '#59c3d0'; ctx.lineWidth = 1.4; ctx.beginPath(); let started = false;
-      for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9; if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
-      ctx.stroke();
-      for (let i = from + 1; i < to - 1; i++) {
-        if ((vals[i] - vals[i - 1]) * (vals[i + 1] - vals[i]) < 0) {
-          const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9;
-          ctx.fillStyle = (vals[i] > 0) ? '#26a69a' : '#ef5350';
-          ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 6.283); ctx.fill();
-          ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.stroke();
+      const line = (arr, norm, refY, col, lw) => {
+        ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); let st = false;
+        for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = refY(arr[i], norm); if (!st) { ctx.moveTo(x, y); st = true; } else ctx.lineTo(x, y); }
+        ctx.stroke();
+      };
+      if (mode === 'polar' || mode === 'both') {
+        // две полярности от нуля вверх: зелёная (поддержка) и красная (напряжение)
+        line(pos, mxp, (v) => H - (v / mxp) * (H - 4), '#26a69a', 1.3);
+        line(neg, mxp, (v) => H - (v / mxp) * (H - 4), '#ef5350', 1.3);
+      }
+      if (mode === 'signed' || mode === 'both') {
+        line(sig, mx, (v) => mid - (v / mx) * mid * 0.9, '#59c3d0', mode === 'both' ? 1.0 : 1.5);
+        for (let i = from + 1; i < to - 1; i++) {
+          if ((sig[i] - sig[i - 1]) * (sig[i + 1] - sig[i]) < 0) {
+            const x = xAxis.convertToPixel(i), y = mid - (sig[i] / mx) * mid * 0.9;
+            ctx.fillStyle = (sig[i] > 0) ? '#26a69a' : '#ef5350';
+            ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 6.283); ctx.fill();
+            ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.stroke();
+          }
         }
       }
       ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-      ctx.fillText('Синастрия ' + (S.title || '') + ' (гео)', 4, 2);
+      ctx.fillText('Синастрия ' + (S.title || '') + ' · напряжение/поддержка, не направление' + (noMoon ? ' · без Луны' : ''), 4, 2);
       return true;
     },
   });

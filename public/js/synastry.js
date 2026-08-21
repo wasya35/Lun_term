@@ -23,11 +23,15 @@
     pairs.sort((u, v) => Math.abs(v.w) - Math.abs(u.w));
     return { pairs: pairs.slice(0, 24), score };
   }
-  // активация обеих карт транзитами неба на момент ts (гармония + / напряжение −)
-  function riAt(ts, points, orb) {
-    orb = orb || 6; const sky = natal(ts); let sum = 0;
-    PL.forEach((s) => points.forEach((n) => { const d = sep(sky[s], n); for (const x of ASP) { const off = Math.abs(d - x.a); if (off <= orb) { sum += x.s * (POT[s] || 1) * (1 - off / orb); break; } } }));
-    return sum;
+  // небо на момент ts (можно исключить Луну — на длинных горизонтах она «рябит»)
+  function sky(ts, noMoon) { const o = {}; PL.forEach((p) => { if (noMoon && p === 'Moon') return; o[p] = window.LunAstro.bodyInfo(p, ts, 'geo').lon; }); return o; }
+  // РАЗДЕЛЬНО: гармония (pos, зелёная) и напряжение (neg, красная) — по Свиридову
+  function riSplit(ts, points, orb, noMoon) {
+    orb = orb || 6; const s = sky(ts, noMoon); let pos = 0, neg = 0;
+    Object.keys(s).forEach((k) => points.forEach((n) => { const d = sep(s[k], n); for (const x of ASP) { const off = Math.abs(d - x.a); if (off <= orb) { const w = (POT[k] || 1) * (1 - off / orb); if (x.s > 0) pos += w; else neg += w; break; } } }));
+    return { pos: pos, neg: neg };
   }
-  window.LunSynastry = { PL, POT, G, natal, synastry, riAt };
+  // ЗНАКОВАЯ активация обеих карт транзитами (гармония + / напряжение −)
+  function riAt(ts, points, orb, noMoon) { const r = riSplit(ts, points, orb, noMoon); return r.pos - r.neg; }
+  window.LunSynastry = { PL, POT, G, natal, synastry, riAt, riSplit };
 })();

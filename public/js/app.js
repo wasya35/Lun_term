@@ -1360,7 +1360,7 @@
     const s = state;
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
-      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null,
+      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both',
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
@@ -1402,6 +1402,7 @@
       if (Array.isArray(ws.favs) && ws.favs.length) { window.LUN_FAVS = ws.favs; try { localStorage.setItem('lun_favs', JSON.stringify(ws.favs)); } catch (e) {} buildInstruments(); }
       if (ws.trader && ws.trader.ts) { window.LUN_TRADER = ws.trader; try { localStorage.setItem('lun_trader', JSON.stringify(ws.trader)); } catch (e) {} }
       if (ws.synastry && ws.synastry.points) window.LUN_SYNASTRY = ws.synastry;
+      if (ws.synMode) window.LUN.SYN.mode = ws.synMode;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
@@ -1620,6 +1621,12 @@
           <option value="ei">Биржа ↔ Инструмент</option>
           <option value="ti">Трейдер ↔ Инструмент</option>
         </select>
+        <b style="margin-left:8px">Кривая:</b>
+        <select id="syn-mode" style="padding:6px;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px">
+          <option value="signed">одна (знаковая)</option>
+          <option value="polar">две полярности 🟢🔴</option>
+          <option value="both">обе</option>
+        </select>
         <button id="syn-calc" style="padding:6px 12px;background:#1a2130;color:#d7deea;border:1px solid #232b3a;border-radius:6px;cursor:pointer">Рассчитать</button>
         <button id="syn-dyn" style="padding:6px 12px;background:#1c3a2a;color:#d7deea;border:1px solid #2a5a3a;border-radius:6px;cursor:pointer">📉 Динамика на график</button>
       </div>
@@ -1659,10 +1666,13 @@
       const [x, y] = selPair(); const A = pointsFor(x), B = pointsFor(y);
       const ts = readTrader(); if (ts) saveTrader({ ts, title: 'Трейдер' });
       if (!A || !B || !A.pts || !B.pts) { $('#syn-out').innerHTML = '<p style="color:#ef5350">Заполните обе даты пары.</p>'; return; }
+      window.LUN.SYN.mode = $('#syn-mode').value || 'both';
       window.LUN_SYNASTRY = { points: A.pts.concat(B.pts), title: A.title + '↔' + B.title, pair: $('#pair-sel').value };
       if (!state.synPane) createSynastryPane(); else { try { state.chart.removeIndicator({ paneId: state.synPane }); state.chart.createIndicator({ name: 'RelationshipDyn', paneId: state.synPane, shortName: 'Синастрия' }, false); } catch (e) {} }
       scheduleWsSave(); bg.remove(); closeMenus();
     };
+    try { $('#syn-mode').value = (window.LUN.SYN && window.LUN.SYN.mode) || 'both'; } catch (e) {}
+    $('#syn-mode').onchange = () => { window.LUN.SYN.mode = $('#syn-mode').value; if (state.synPane) { try { state.chart.removeIndicator({ paneId: state.synPane }); state.chart.createIndicator({ name: 'RelationshipDyn', paneId: state.synPane, shortName: 'Синастрия' }, false); } catch (e) {} } };
     $('#syn-calc').onclick = calc; $('#syn-dyn').onclick = dyn;
     if (traderTs()) calc();
   }
