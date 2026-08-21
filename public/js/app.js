@@ -806,6 +806,13 @@
     wishPane(state.bradleyPane, { height: 96, order: 41 });
   }
   function removeBradleyPane() { if (state.bradleyPane) { try { state.chart.removeIndicator({ paneId: state.bradleyPane }); } catch (e) {} state.bradleyPane = null; } }
+  // Синастрия-динамика: панель RI(t) взаимоотношений выбранной пары карт.
+  function createSynastryPane() {
+    state.synPane = 'pane_synastry';
+    state.chart.createIndicator({ name: 'RelationshipDyn', paneId: state.synPane, shortName: 'Синастрия' }, false);
+    wishPane(state.synPane, { height: 100, order: 42 });
+  }
+  function removeSynastryPane() { if (state.synPane) { try { state.chart.removeIndicator({ paneId: state.synPane }); } catch (e) {} state.synPane = null; } }
 
   // Космограмма: колесо зодиака с планетами и аспектами на выбранную дату.
   function cosmogramModal() {
@@ -1255,10 +1262,11 @@
     const s = state;
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
+      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null,
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
-        basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane,
+        basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane, syn: !!s.synPane,
         signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
         aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane,
       },
@@ -1277,6 +1285,7 @@
     try { if (ind.basis && !state.basisPane) rebuildBasis(state); } catch (e) {}
     try { if (ind.retro && !state.retroPane) createRetroPane(); } catch (e) {}
     try { if (ind.bradley && !state.bradleyPane) createBradleyPane(); } catch (e) {}
+    try { if (ind.syn && window.LUN_SYNASTRY && !state.synPane) createSynastryPane(); } catch (e) {}
     (ind.signs || []).forEach((b, i) => { if (state.signPanes[b]) return; try { if (b === 'Moon') toggleMoonSign(true); else createSignPane(b, 25 + i); } catch (e) {} });
     (ind.cycles || []).forEach((id, i) => { const cy = window.LUN.CYCLES.find((c) => c.id === id); if (cy && !state.cyclePanes[id]) try { createCyclePane(cy, 11 + i); } catch (e) {} });
     (ind.aspects || []).forEach((b, i) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === b); if (pl && !state.aspectPanes[b]) try { createSunAspect(pl, 15 + i); } catch (e) {} });
@@ -1291,6 +1300,8 @@
     try {
       if (ws.look) LOOK = Object.assign(LOOK, ws.look);
       if (Array.isArray(ws.favs) && ws.favs.length) { window.LUN_FAVS = ws.favs; try { localStorage.setItem('lun_favs', JSON.stringify(ws.favs)); } catch (e) {} buildInstruments(); }
+      if (ws.trader && ws.trader.ts) { window.LUN_TRADER = ws.trader; try { localStorage.setItem('lun_trader', JSON.stringify(ws.trader)); } catch (e) {} }
+      if (ws.synastry && ws.synastry.points) window.LUN_SYNASTRY = ws.synastry;
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
@@ -1448,7 +1459,134 @@
     mkBtn(insWrap, '✕ убрать 2-й график', () => { closeMenus(); removeCompare(); }, false, 'Убрать наложение');
   }
 
+  /* ---------- «Личные данные»: синастрия (трейдер ↔ биржа ↔ инструмент) ---------- */
+  function loadTrader() {
+    try { const s = JSON.parse(localStorage.getItem('lun_trader') || 'null'); if (s && s.ts) { window.LUN_TRADER = s; return; } } catch (e) {}
+    window.LUN_TRADER = null;
+  }
+  function saveTrader(t) { window.LUN_TRADER = t; try { localStorage.setItem('lun_trader', JSON.stringify(t)); } catch (e) {} if (typeof scheduleWsSave === 'function') scheduleWsSave(); }
+  // натальные точки (массив долгот 10 тел) из момента ts
+  const natalPoints = (ts) => { if (!window.LunSynastry || !isFinite(ts)) return null; const o = window.LunSynastry.natal(ts); return window.LunSynastry.PL.map((p) => o[p]); };
+  const traderTs = () => (window.LUN_TRADER && window.LUN_TRADER.ts) || null;
+  const exchangeTs = (exId) => { const e = (window.LUN.NATAL.exchanges || []).find((x) => x.id === exId); return e ? Date.parse(e.date) : null; };
+  // «рождение» инструмента — первая загруженная свеча (или вручную заданная)
+  function instrumentTs() {
+    if (window.LUN_INSTR_NATAL) return window.LUN_INSTR_NATAL;
+    try { const l = state.chart.getDataList(); if (l && l.length) return l[0].timestamp; } catch (e) {}
+    return null;
+  }
+  // авто-биржа под текущий инструмент
+  function defaultExchangeId() {
+    const ins = state.instrument || {}; const p = ins.provider || 'moex';
+    if (p === 'moex') return 'moex';
+    if (p === 'yahoo') return 'nyse';
+    if (p === 'bybit') return 'bybit';
+    if (p === 'binance') return 'binance';
+    return 'moex';
+  }
+
+  function synastryModal() {
+    if (!window.LunSynastry) { openModal('Синастрия', '<p>Модуль синастрии не загрузился.</p>'); return; }
+    const NAT = window.LUN.NATAL, G = window.LunSynastry.G;
+    const t = window.LUN_TRADER || {};
+    const bd = t.ts ? new Date(t.ts) : null;
+    const dstr = bd ? bd.toISOString().slice(0, 10) : '';
+    const tstr = bd ? bd.toISOString().slice(11, 16) : '12:00';
+    const exOpts = (NAT.exchanges || []).map((e) => `<option value="${e.id}"${e.id === defaultExchangeId() ? ' selected' : ''}>${e.title} (${e.note})</option>`).join('');
+    const insTs = instrumentTs();
+    const insDate = insTs ? new Date(insTs).toISOString().slice(0, 10) : '';
+    const insTitle = (state.instrument && (state.instrument.title || state.instrument.ticker || state.instrument.id)) || 'инструмент';
+    openModal('Личные данные · синастрия', `
+      <p style="color:#8b93a7">Сравнение «карт рождения»: у трейдера, биржи и инструмента есть дата старта. Синастрия — межаспекты двух карт (гармония +, напряжение −), а динамика во времени показывает, как небо активирует обе карты. <b>Эксперимент</b> финансовой астрологии.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:10px 0">
+        <div style="border:1px solid #232b3a;border-radius:8px;padding:10px">
+          <h3 style="margin:0 0 8px;color:#3aa0ff;font-size:13px">🧑 Трейдер</h3>
+          <label style="display:block;margin-bottom:6px">Дата рождения<br><input id="tr-date" type="date" value="${dstr}" style="width:100%;padding:6px;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px"></label>
+          <label style="display:block">Время (местное, прибл.)<br><input id="tr-time" type="time" value="${tstr}" style="width:100%;padding:6px;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px"></label>
+          <div style="color:#6b7280;font-size:11px;margin-top:6px">Без времени берётся полдень. Дома не учитываются — только долготы планет.</div>
+        </div>
+        <div style="border:1px solid #232b3a;border-radius:8px;padding:10px">
+          <h3 style="margin:0 0 8px;color:#3aa0ff;font-size:13px">🏛 Биржа / 📈 Инструмент</h3>
+          <label style="display:block;margin-bottom:6px">Биржа<br><select id="ex-sel" style="width:100%;padding:6px;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px">${exOpts}</select></label>
+          <label style="display:block">Дата старта инструмента «${insTitle}»<br><input id="ins-date" type="date" value="${insDate}" style="width:100%;padding:6px;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px"></label>
+          <div style="color:#6b7280;font-size:11px;margin-top:6px">По умолчанию — первая загруженная свеча. Углубите «Период», чтобы взять более раннюю дату.</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0">
+        <b>Пара:</b>
+        <select id="pair-sel" style="padding:6px;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px">
+          <option value="te">Трейдер ↔ Биржа</option>
+          <option value="ei">Биржа ↔ Инструмент</option>
+          <option value="ti">Трейдер ↔ Инструмент</option>
+        </select>
+        <button id="syn-calc" style="padding:6px 12px;background:#1a2130;color:#d7deea;border:1px solid #232b3a;border-radius:6px;cursor:pointer">Рассчитать</button>
+        <button id="syn-dyn" style="padding:6px 12px;background:#1c3a2a;color:#d7deea;border:1px solid #2a5a3a;border-radius:6px;cursor:pointer">📉 Динамика на график</button>
+      </div>
+      <div id="syn-out" style="margin-top:8px"></div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const $ = (s) => bg.querySelector(s);
+    const readTrader = () => {
+      const d = $('#tr-date').value, tm = $('#tr-time').value || '12:00';
+      if (!d) return null;
+      const ts = Date.parse(d + 'T' + tm + ':00');
+      return isFinite(ts) ? ts : null;
+    };
+    const pointsFor = (who) => {
+      if (who === 't') { const ts = readTrader(); return ts ? { ts, pts: natalPoints(ts), title: 'Трейдер' } : null; }
+      if (who === 'e') { const id = $('#ex-sel').value, ts = exchangeTs(id); const e = (NAT.exchanges || []).find((x) => x.id === id); return ts ? { ts, pts: natalPoints(ts), title: e ? e.title : 'Биржа' } : null; }
+      if (who === 'i') { const d = $('#ins-date').value; const ts = d ? Date.parse(d + 'T00:00:00Z') : null; return (ts && isFinite(ts)) ? { ts, pts: natalPoints(ts), title: insTitle } : null; }
+      return null;
+    };
+    const selPair = () => { const v = $('#pair-sel').value; return v === 'te' ? ['t', 'e'] : v === 'ei' ? ['e', 'i'] : ['t', 'i']; };
+    const calc = () => {
+      const [x, y] = selPair(); const A = pointsFor(x), B = pointsFor(y);
+      const ts = readTrader(); if (ts) saveTrader({ ts, title: 'Трейдер' });
+      if (!A || !B || !A.pts || !B.pts) { $('#syn-out').innerHTML = '<p style="color:#ef5350">Заполните обе даты пары.</p>'; return; }
+      const Aobj = {}, Bobj = {}; window.LunSynastry.PL.forEach((p, i) => { Aobj[p] = A.pts[i]; Bobj[p] = B.pts[i]; });
+      const r = window.LunSynastry.synastry(Aobj, Bobj, 6);
+      const verdict = r.score > 6 ? '<span style="color:#26a69a">гармоничная связь (+)</span>' : r.score < -6 ? '<span style="color:#ef5350">напряжённая связь (−)</span>' : '<span style="color:#e0c040">смешанная / нейтральная</span>';
+      const rows = r.pairs.map((p) => `<tr><td>${G(p.a)} ${p.a}</td><td style="text-align:center">${p.asp}</td><td>${G(p.b)} ${p.b}</td><td style="text-align:right;color:${p.sign > 0 ? '#26a69a' : '#ef5350'}">${p.w.toFixed(2)}</td></tr>`).join('');
+      $('#syn-out').innerHTML = `
+        <p><b>${A.title} ↔ ${B.title}</b> · интегральный балл <b style="font-size:15px">${r.score.toFixed(1)}</b> — ${verdict}</p>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead><tr style="color:#8b93a7;text-align:left"><th>Карта A</th><th style="text-align:center">Аспект</th><th>Карта B</th><th style="text-align:right">вес</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <p style="color:#6b7280;font-size:11px;margin-top:8px">☌ соединение · ⚹ секстиль · △ трин (гармония) · □ квадрат · ☍ оппозиция (напряжение). Вес = потенциалы планет × точность аспекта.</p>`;
+    };
+    const dyn = () => {
+      const [x, y] = selPair(); const A = pointsFor(x), B = pointsFor(y);
+      const ts = readTrader(); if (ts) saveTrader({ ts, title: 'Трейдер' });
+      if (!A || !B || !A.pts || !B.pts) { $('#syn-out').innerHTML = '<p style="color:#ef5350">Заполните обе даты пары.</p>'; return; }
+      window.LUN_SYNASTRY = { points: A.pts.concat(B.pts), title: A.title + '↔' + B.title, pair: $('#pair-sel').value };
+      if (!state.synPane) createSynastryPane(); else { try { state.chart.removeIndicator({ paneId: state.synPane }); state.chart.createIndicator({ name: 'RelationshipDyn', paneId: state.synPane, shortName: 'Синастрия' }, false); } catch (e) {} }
+      scheduleWsSave(); bg.remove(); closeMenus();
+    };
+    $('#syn-calc').onclick = calc; $('#syn-dyn').onclick = dyn;
+    if (traderTs()) calc();
+  }
+
+  function buildPersonal() {
+    const wrap = document.getElementById('personal'); if (!wrap) return;
+    wrap.innerHTML = '';
+    mkBtn(wrap, '👤 Синастрия (трейдер/биржа/инструмент)…', () => { closeMenus(); synastryModal(); }, false, 'Сравнение карт рождения трейдера, биржи и инструмента');
+    const dynBtn = mkBtn(wrap, '📉 Динамика взаимоотношений на графике', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) { if (!window.LUN_SYNASTRY) { synastryModal(); b.classList.remove('active'); } else if (!state.synPane) createSynastryPane(); }
+      else removeSynastryPane();
+      closeMenus();
+    }, false, 'Панель RI(t): динамика синастрии выбранной пары во времени');
+    dynBtn.dataset.sync = 'syn';
+    const note = document.createElement('div'); note.className = 'menu-note';
+    note.textContent = 'Идея из Vega Matrix (П. Свиридов). Эксперимент: карты трейдера ↔ биржи ↔ инструмента.';
+    wrap.appendChild(note);
+  }
+
   function buildUI() {
+    loadFavs();
+    loadTrader();
+    buildInstruments();
+    buildPersonal();
     loadFavs();
     buildInstruments();
 

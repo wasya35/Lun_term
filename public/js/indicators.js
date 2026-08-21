@@ -987,6 +987,45 @@
     },
   });
 
+  /* ============ Синастрия: динамика взаимоотношений (RI во времени) ============
+   * window.LUN_SYNASTRY = { points:[долготы обеих карт], title } — задаётся из
+   * блока «Личные данные». RI(t) = как транзитное небо активирует обе карты:
+   * гармония (60/120/☌) в плюс, напряжение (90/180) в минус. Пики/провалы —
+   * периоды особого «резонанса» пары. ЭКСПЕРИМЕНТ. */
+  kc.registerIndicator({
+    name: 'RelationshipDyn', shortName: 'Синастрия-динамика', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const S = window.LUN_SYNASTRY;
+      const list = chart.getDataList(); if (list.length < 3 || !window.LunSynastry || !S || !S.points || !S.points.length) {
+        ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+        ctx.fillText('Синастрия: задайте пару в «Личные данные»', 4, 2); return true;
+      }
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      const pts = S.points, vals = []; let mx = 1e-9;
+      for (let i = from; i < to; i++) { const v = window.LunSynastry.riAt(list[i].timestamp, pts, 6); vals[i] = v; if (Math.abs(v) > mx) mx = Math.abs(v); }
+      const H = bounding.height, mid = H / 2, W = bounding.width;
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+      // заливка над/под нулём (гармония зелёная / напряжение красная)
+      ctx.strokeStyle = '#59c3d0'; ctx.lineWidth = 1.4; ctx.beginPath(); let started = false;
+      for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9; if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
+      ctx.stroke();
+      for (let i = from + 1; i < to - 1; i++) {
+        if ((vals[i] - vals[i - 1]) * (vals[i + 1] - vals[i]) < 0) {
+          const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9;
+          ctx.fillStyle = (vals[i] > 0) ? '#26a69a' : '#ef5350';
+          ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 6.283); ctx.fill();
+          ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.stroke();
+        }
+      }
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.fillText('Синастрия ' + (S.title || '') + ' (гео)', 4, 2);
+      return true;
+    },
+  });
+
   /* ============ Астро-Ганн: веер долготы (Price & Longitude Angles) ============
    * Из пивота (свежий видимый экстремум) веер линий: цена движется со скоростью
    * долготы планеты — price = P0 ± scale·Δlon(накопл.). Ретро планеты дают изгиб. */
