@@ -950,7 +950,7 @@
    * к точному аспекту. Экстремумы кривой — потенциальные даты разворота. Это
    * композит «в стиле Bradley», а не проприетарная формула CRB. */
   kc.registerIndicator({
-    name: 'BradleyStrip', shortName: 'Bradley', series: 'normal', figures: [],
+    name: 'BradleyStrip', shortName: 'Барометр аспектов', series: 'normal', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis }) => {
       const list = chart.getDataList(); if (list.length < 3 || !window.LunAstro) return true;
@@ -982,7 +982,7 @@
           ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.stroke();
         }
       }
-      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText('Bradley (сидерограф, гео)', 4, 2);
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText('Барометр аспектов (гео)', 4, 2);
       return true;
     },
   });
@@ -1200,7 +1200,7 @@
     },
   });
 
-  /* ============ Timing Solutions: прогнозная линия из циклов ============
+  /* ============ Прогностика: прогнозная линия из циклов ============
    * Сумма доминирующих синусоид цены + тренд, продлённая вправо на projBars.
    * Тяжёлый расчёт кэшируется по длине/времени данных. */
   let projCache = null, projKey = '';
@@ -1225,7 +1225,7 @@
     },
   });
 
-  /* ============ Timing Solutions: метки выбранного астро-события ============ */
+  /* ============ Прогностика: метки выбранного астро-события ============ */
   kc.registerIndicator({
     name: 'AstroEventMarks', shortName: 'Астро-метки', series: 'price', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
