@@ -486,27 +486,81 @@
   // двойной клик в правый-нижний угол осей → последняя цена в центр экрана
   function recenterLastPrice(slot) {
     slot = slot || state; const c = slot.chart;
-    try { const l = c.getDataList(); if (!l.length) return; const w = (slot.cellEl && slot.cellEl.clientWidth) || 600; c.setOffsetRightDistance(Math.max(60, Math.round(w / 2))); if (c.scrollToRealTime) c.scrollToRealTime(); else if (c.scrollToTimestamp) c.scrollToTimestamp(l[l.length - 1].timestamp); } catch (e) {}
+    try { const l = c.getDataList(); if (!l.length) return; const w = (slot.cellEl && slot.cellEl.clientWidth) || 600; c.setOffsetRightDistance(Math.max(60, Math.round(w / 2))); if (c.scrollToRealTime) c.scrollToRealTime(); else if (c.scrollToTimestamp) c.scrollToTimestamp(l[l.length - 1].timestamp);
+      // в фикс-поле 1×1 — подвести последнюю цену к центру по вертикали
+      const g = slot.g11; if (g && g.on && g.baseCenter != null) { g.vOffset = l[l.length - 1].close - g.baseCenter; c.scrollByDistance(0); }
+    } catch (e) {}
   }
-  // «Ганн-режим»: фиксируем масштаб (колесо не искажает геометрию углов), пан
-  // остаётся. Полная фиксация 1×1 по вертикали — отдельный этап (нужна своя ось).
+  // ===== Фиксированное поле 1×1 (истинное: своя ось цены) =====================
+  // Ганн: 1×1 — расчётное соотношение «цена на бар» (первая N-волна после
+  // разворота). Фикс-поле держит ЭТО соотношение постоянным: и по X (ширина
+  // бара), и по Y (диапазон цены на пиксель) — геометрия углов не «разлетается»
+  // при прокрутке. Поле становится безразмерным: колесо — вертикальный пан,
+  // перетаскивание — горизонтальный; зум отключён. Реализовано через перехват
+  // диапазона оси цены (axis.createRange) вендора KLineChart.
   let gannSpaceOn = false;
+  // измерить текущий масштаб цены (px на 1 ед. цены) активной панели
+  function pxPerPriceOf(c) {
+    try {
+      const l = c.getDataList(); if (!l.length) return null;
+      const p0 = l[l.length - 1].close; const step = Math.max(Math.abs(p0) * 0.02, 1e-6);
+      const y0 = c.convertToPixel({ value: p0 }, { paneId: 'candle_pane' }).y;
+      const y1 = c.convertToPixel({ value: p0 + step }, { paneId: 'candle_pane' }).y;
+      if (!isFinite(y0) || !isFinite(y1) || y0 === y1) return null;
+      return Math.abs(y1 - y0) / step;
+    } catch (e) { return null; }
+  }
+  function applyGannField(slot, on) {
+    const c = slot.chart; if (!c) return;
+    if (on) {
+      const cfg = window.LUN.GANNTOOLS.scale || {};
+      let upb = cfg.unitPerBar;
+      if (!(upb > 0)) {                                   // авто: диапазон/бары видимого окна
+        try { const l = c.getDataList(), r = c.getVisibleRange(); const f = Math.max(0, r.from), t = Math.min(l.length, Math.ceil(r.to)); let hi = -Infinity, lo = Infinity; for (let i = f; i < t; i++) { if (l[i].high > hi) hi = l[i].high; if (l[i].low < lo) lo = l[i].low; } if (hi > lo) upb = (hi - lo) / Math.max(1, t - f); } catch (e) {}
+      }
+      const g = slot.g11 = { on: true, upb: upb, ppp: null, vOffset: 0, fixedSpan: null, baseCenter: null };
+      // перехват диапазона оси цены: на первом кадре замораживаем ТЕКУЩИЙ размах
+      // (масштаб) и центр; затем в том же кадре меряем px/цену и подгоняем ширину
+      // бара так, чтобы 1 бар = upb по цене (истинное 1×1). vOffset — верт. пан.
+      try {
+        c.setPaneOptions({ id: 'candle_pane', axis: { createRange: function (t) {
+          const dr = t.defaultRange;
+          if (g.fixedSpan == null) {
+            g.fixedSpan = dr.range; g.baseCenter = dr.from + dr.range / 2;
+            // измерить px/цену на этом же (ещё не тронутом) масштабе и выставить barSpace
+            setTimeout(() => { try { const ppp = pxPerPriceOf(c); if (ppp) { g.ppp = ppp; if (g.upb > 0 && c.setBarSpace) c.setBarSpace(Math.max(1, ppp * g.upb)); } } catch (er) {} }, 0);
+          }
+          const center = g.baseCenter + g.vOffset, span = g.fixedSpan;
+          const from = center - span / 2, to = center + span / 2;
+          return { from: from, to: to, range: span, realFrom: from, realTo: to, realRange: span, displayFrom: from, displayTo: to, displayRange: span };
+        } } });
+      } catch (e) {}
+      try { if (c.setZoomEnabled) c.setZoomEnabled(false); } catch (e) {}
+      try { c.setPaneOptions({ id: 'candle_pane', axis: { scrollZoomEnabled: false } }); } catch (e) {}
+      // колесо = вертикальный пан безразмерного поля
+      if (slot.cellEl && !slot._g11Wheel) {
+        slot._g11Wheel = (e) => {
+          const gg = slot.g11; if (!gg || !gg.on) return;
+          e.preventDefault(); e.stopPropagation();
+          const pricePerPx = (gg.ppp && gg.ppp > 0) ? 1 / gg.ppp : (gg.fixedSpan ? gg.fixedSpan / 400 : 1);
+          gg.vOffset += e.deltaY * pricePerPx;            // вниз колесо → поле вниз
+          try { c.scrollByDistance(0); } catch (er) {}
+        };
+        slot.cellEl.addEventListener('wheel', slot._g11Wheel, { passive: false, capture: true });
+      }
+      try { c.scrollByDistance(0); } catch (e) {}
+    } else {
+      if (slot.g11) slot.g11.on = false;
+      try { c.setPaneOptions({ id: 'candle_pane', axis: { createRange: function (t) { return t.defaultRange; }, scrollZoomEnabled: true } }); } catch (e) {}
+      try { if (c.setZoomEnabled) c.setZoomEnabled(true); } catch (e) {}
+      if (slot.cellEl && slot._g11Wheel) { slot.cellEl.removeEventListener('wheel', slot._g11Wheel, { capture: true }); slot._g11Wheel = null; }
+      slot.g11 = null;
+      try { c.scrollByDistance(0); } catch (e) {}
+    }
+  }
   function toggleGannSpace(on) {
     gannSpaceOn = on;
-    const c = state.chart;
-    if (on) {
-      // фикс поля 1×1: подгоняем ширину бара так, чтобы «цена на бар» (масштаб
-      // 1×1 из настроек — расчётное соотношение от первой волны) выглядела 45°.
-      try {
-        const list = c.getDataList(), range = c.getVisibleRange();
-        const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
-        let hi = -Infinity, lo = Infinity; for (let i = from; i < to; i++) { const b = list[i]; if (!b) continue; if (b.high > hi) hi = b.high; if (b.low < lo) lo = b.low; }
-        const cfg = window.LUN.GANNTOOLS.scale || {}, upb = cfg.unitPerBar || ((hi - lo) / Math.max(1, to - from));
-        const H = (state.cellEl && state.cellEl.clientHeight * 0.8) || 400;
-        if (hi > lo && upb > 0) { const pxPerPrice = H / (hi - lo); const bs = Math.max(1, pxPerPrice * upb); if (c.setBarSpace) c.setBarSpace(bs); }
-      } catch (e) {}
-    }
-    slots.forEach((s) => { try { if (s.chart.setZoomEnabled) s.chart.setZoomEnabled(!on); } catch (e) {} try { if (s.chart.setPaneOptions) s.chart.setPaneOptions({ id: 'candle_pane', axis: { scrollZoomEnabled: !on } }); } catch (e) {} });
+    slots.forEach((s) => { try { applyGannField(s, on); } catch (e) {} });
   }
   // единая форма для геометрии Ганна: Box (деления) или Квадрат-сетка N×N
   function gannGeomModal() {
@@ -1263,12 +1317,13 @@
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
       trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null,
+      aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
         basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane, syn: !!s.synPane,
         signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
-        aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane,
+        aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane,
       },
       drawings: Object.values(s.drawings || {}),
     };
@@ -1290,6 +1345,7 @@
     (ind.cycles || []).forEach((id, i) => { const cy = window.LUN.CYCLES.find((c) => c.id === id); if (cy && !state.cyclePanes[id]) try { createCyclePane(cy, 11 + i); } catch (e) {} });
     (ind.aspects || []).forEach((b, i) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === b); if (pl && !state.aspectPanes[b]) try { createSunAspect(pl, 15 + i); } catch (e) {} });
     try { if (ind.allAspect && !state.allAspectPane) createAllAspect(); } catch (e) {}
+    try { if (ind.aspsel && !state.aspSelPane && (window.LUN.ASPSEL.blocks || []).length) createAspSelPane(); } catch (e) {}
   }
   function applyWsDrawings(list) {
     (list || []).forEach((d) => { try { const id = state.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) state.drawings[oid] = d; } catch (e) {} });
@@ -1302,6 +1358,7 @@
       if (Array.isArray(ws.favs) && ws.favs.length) { window.LUN_FAVS = ws.favs; try { localStorage.setItem('lun_favs', JSON.stringify(ws.favs)); } catch (e) {} buildInstruments(); }
       if (ws.trader && ws.trader.ts) { window.LUN_TRADER = ws.trader; try { localStorage.setItem('lun_trader', JSON.stringify(ws.trader)); } catch (e) {} }
       if (ws.synastry && ws.synastry.points) window.LUN_SYNASTRY = ws.synastry;
+      if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
@@ -1685,9 +1742,9 @@
         else removeCandInd('GannSquaring');
       }, false, 'Линии 1×1 от пивота + отметки сквоузинга цены/времени');
       mkBtn(gannWrap, '⚖ Масштаб 1×1…', () => { closeMenus(); scaleModal(); }, false, 'Цена на 1 бар: авто или вручную');
-      mkBtn(gannWrap, '🔒 Ганн-режим (фикс масштаба)', (b) => {
+      mkBtn(gannWrap, '🔒 Фикс-поле 1×1 (безразмерное)', (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleGannSpace(on);
-      }, false, 'Колесо не искажает геометрию углов (масштаб зафиксирован). Двойной клик в правый-нижний угол осей — последняя цена в центр');
+      }, false, 'Истинное поле 1×1: масштаб цена/время зафиксирован (углы не искажаются). Колесо — вертикальный пан, тяга — горизонтальный, зум выкл. Двойной клик в правый-нижний угол осей — последняя цена в центр. Соотношение задаётся в «Масштаб 1×1».');
       gsub('Квадраты');
       mkBtn(gannWrap, '⊞ Калькулятор квадратов…', () => { closeMenus(); gannSquareModal(); }, false, 'Квадрат 9 / шестиугольник / круг 360° / натуральные — уровни поддержки и сопротивления');
       mkBtn(gannWrap, '✕ убрать уровни квадрата', () => { closeMenus(); removeCandInd('GannSquareLevels'); }, false, 'Убрать нанесённые уровни квадрата');
@@ -1923,6 +1980,74 @@
     }, !!state.uranusPane, 'Аспекты Урана ко всем планетам (U)');
     urBtn.dataset.sync = 'uranus';
     regHotkey('u', () => urBtn.click());
+    // пользовательский аспектариум: выбранные пары планет (и узлов) во времени
+    mkBtn(aspWrap, '⚙ Аспекты по выбору…', () => { closeMenus(); aspectSelectModal(); }, false, 'Свои пары планет/узлов: кто ↔ с кем (до 3), до 5 блоков. Узлы Луны ☊/☋ поддержаны');
+    const asBtn = mkBtn(aspWrap, '📶 Аспекты по выбору (лента)', (b) => {
+      const on = !b.classList.contains('active');
+      if (on) { if (!(window.LUN.ASPSEL.blocks || []).length) { aspectSelectModal(); b.classList.remove('active'); return; } b.classList.add('active'); createAspSelPane(); }
+      else { b.classList.remove('active'); removeAspSelPane(); }
+    }, false, 'Показать/скрыть ленту выбранных аспектов');
+    asBtn.dataset.sync = 'aspsel';
+  }
+  const ASPSEL_PANE = 'pane_aspsel';
+  function createAspSelPane() {
+    if (state.aspSelPane) { try { state.chart.removeIndicator({ paneId: state.aspSelPane }); } catch (e) {} }
+    state.chart.createIndicator({ name: 'AspectSelect', paneId: ASPSEL_PANE, shortName: 'Аспекты по выбору' }, false);
+    state.aspSelPane = ASPSEL_PANE;
+    const n = Math.max(2, Math.min(12, (window.LUN.ASPSEL.blocks || []).reduce((s, b) => s + ((b.whom || []).length), 0)));
+    wishPane(ASPSEL_PANE, { height: 26 + n * 18, minHeight: 26, order: 29 });
+  }
+  function removeAspSelPane() { if (state.aspSelPane) { try { state.chart.removeIndicator({ paneId: state.aspSelPane }); } catch (e) {} state.aspSelPane = null; } }
+  function aspectSelectModal() {
+    const SEL = window.LUN.ASPSEL, bodies = SEL.bodies || [];
+    if (!SEL.blocks) SEL.blocks = [];
+    if (!SEL.blocks.length) SEL.blocks = [{ who: 'Sun', whom: ['Moon'] }];
+    const opt = (sel) => bodies.map((b) => `<option value="${b.id}"${b.id === sel ? ' selected' : ''}>${b.g} ${b.id}</option>`).join('');
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 6px;font-size:13px';
+    openModal('Аспекты по выбору', `
+      <p style="color:#8b93a7">В каждом блоке: <b>кто</b> (1 планета/узел) ↔ <b>с кем</b> (до 3). До 5 блоков. Лента покажет дни, когда пара в мажорном аспекте (☌⚹□△☍), цвет = аспект, крупная точка = точный. Узлы Луны ☊/☋ доступны.</p>
+      <div id="as-blocks"></div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px">
+        <button id="as-add" style="padding:5px 10px;background:#1a2130;color:#d7deea;border:1px solid #232b3a;border-radius:6px;cursor:pointer">➕ блок</button>
+        <label>Орб <input id="as-orb" type="number" min="1" max="12" step="0.5" value="${SEL.orb || 5}" style="${ss};width:64px"></label>
+        <label>Система <select id="as-frame" style="${ss}"><option value="geo"${SEL.frame !== 'helio' ? ' selected' : ''}>гео</option><option value="helio"${SEL.frame === 'helio' ? ' selected' : ''}>гелио</option></select></label>
+        <span style="flex:1"></span>
+        <button id="as-apply" style="padding:6px 14px;background:#1c3a2a;color:#d7deea;border:1px solid #2a5a3a;border-radius:6px;cursor:pointer">Применить и показать</button>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const wrap = bg.querySelector('#as-blocks');
+    const render = () => {
+      wrap.innerHTML = '';
+      SEL.blocks.slice(0, 5).forEach((bl, bi) => {
+        if (!bl.whom) bl.whom = [];
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;border:1px solid #232b3a;border-radius:8px;padding:8px;margin-bottom:8px';
+        const whom = bl.whom.slice(0, 3);
+        row.innerHTML = `<b style="color:#3aa0ff">Блок ${bi + 1}</b>
+          <label>кто <select class="as-who" data-b="${bi}" style="${ss}">${opt(bl.who)}</select></label>
+          <span style="color:#8b93a7">↔ с кем:</span>
+          <span class="as-whom">${[0, 1, 2].map((wi) => `<select class="as-w" data-b="${bi}" data-w="${wi}" style="${ss};margin-right:4px"><option value="">—</option>${bodies.map((b) => `<option value="${b.id}"${whom[wi] === b.id ? ' selected' : ''}>${b.g} ${b.id}</option>`).join('')}</select>`).join('')}</span>
+          <button class="as-del" data-b="${bi}" title="удалить блок" style="margin-left:auto;background:#3a1a20;color:#ef8a8a;border:1px solid #5a2a30;border-radius:6px;padding:3px 8px;cursor:pointer">✕</button>`;
+        wrap.appendChild(row);
+      });
+      wrap.querySelectorAll('.as-who').forEach((s) => s.onchange = () => { SEL.blocks[+s.dataset.b].who = s.value; });
+      wrap.querySelectorAll('.as-w').forEach((s) => s.onchange = () => {
+        const bl = SEL.blocks[+s.dataset.b]; const arr = [0, 1, 2].map((wi) => (wrap.querySelector(`.as-w[data-b="${s.dataset.b}"][data-w="${wi}"]`) || {}).value).filter(Boolean);
+        bl.whom = arr;
+      });
+      wrap.querySelectorAll('.as-del').forEach((s) => s.onclick = () => { SEL.blocks.splice(+s.dataset.b, 1); if (!SEL.blocks.length) SEL.blocks = [{ who: 'Sun', whom: ['Moon'] }]; render(); });
+    };
+    render();
+    bg.querySelector('#as-add').onclick = () => { if (SEL.blocks.length < 5) { SEL.blocks.push({ who: 'Sun', whom: ['Moon'] }); render(); } };
+    bg.querySelector('#as-apply').onclick = () => {
+      SEL.orb = Math.max(1, Math.min(12, +bg.querySelector('#as-orb').value || 5));
+      SEL.frame = bg.querySelector('#as-frame').value === 'helio' ? 'helio' : 'geo';
+      SEL.blocks = SEL.blocks.filter((b) => b.who && (b.whom || []).length).slice(0, 5);
+      if (!SEL.blocks.length) { alert('Добавьте хотя бы одну пару.'); return; }
+      bg.remove(); createAspSelPane();
+      const asBtn = document.querySelector('#aspects [data-sync="aspsel"]'); if (asBtn) asBtn.classList.add('active');
+      scheduleWsSave();
+    };
   }
   const URANUS_PANE = 'pane_asp_uranus';
   function createUranusStrip() {

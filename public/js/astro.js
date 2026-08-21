@@ -20,7 +20,16 @@
 
   // frame: 'geo' (геоцентр, как видно с Земли — знаки зодиака) |
   //        'helio' (гелиоцентр; «Солнце» = позиция Земли, Луна — только гео)
+  // Средний узел Луны (Раху, восходящий) — попятный. Кету = Раху + 180°.
+  // Долгота даётся в тропическом зодиаке (как остальные тела здесь).
+  function meanNodeLon(date) {
+    const jd = date.getTime() / 86400000 + 2440587.5, T = (jd - 2451545.0) / 36525;
+    let om = 125.0445479 - 1934.1362891 * T + 0.0020754 * T * T + (T * T * T) / 467441 - (T * T * T * T) / 60616000;
+    return ((om % 360) + 360) % 360;
+  }
   function longitude(body, date, frame) {
+    if (body === 'NNode' || body === 'Rahu') return meanNodeLon(date);
+    if (body === 'SNode' || body === 'Ketu') return (meanNodeLon(date) + 180) % 360;
     let vec;
     if (frame === 'helio' && body !== 'Moon') {
       const b = (body === 'Sun') ? 'Earth' : body;      // гелио-«Солнце» = направление на Землю

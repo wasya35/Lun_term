@@ -1026,6 +1026,46 @@
     },
   });
 
+  /* ============ Аспекты по выбору (пользовательский аспектариум) ============
+   * window.LUN.ASPSEL.blocks = [{who, whom:[…до 3]}, …до 5]. Для каждой пары —
+   * своя лента: точки в дни, когда пара в мажорном аспекте (0/60/90/120/180) в
+   * пределах орба; цвет = аспект (LUN.ASPECT_COLORS), крупная точка = точный
+   * аспект. Узлы Луны (☊/☋) поддержаны. */
+  kc.registerIndicator({
+    name: 'AspectSelect', shortName: 'Аспекты по выбору', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const SEL = window.LUN.ASPSEL || {}, blocks = SEL.blocks || [];
+      const glyph = (id) => { const b = (SEL.bodies || []).find((x) => x.id === id); return b ? b.g : id; };
+      const list = chart.getDataList();
+      const pairs = [];
+      blocks.forEach((bl) => (bl.whom || []).forEach((w) => { if (bl.who && w && bl.who !== w) pairs.push({ a: bl.who, b: w }); }));
+      if (list.length < 2 || !window.LunAstro || !pairs.length) {
+        ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+        ctx.fillText('Аспекты по выбору: задайте пары (Астро → Аспекты по выбору)', 4, 2); return true;
+      }
+      const lanes = pairs.slice(0, 12);
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      const orb = SEL.orb || 5, frame = SEL.frame || 'geo';
+      const H = bounding.height, W = bounding.width, rowH = H / lanes.length;
+      const sep = (x, y) => { let d = Math.abs(x - y) % 360; return d > 180 ? 360 - d : d; };
+      lanes.forEach((pr, li) => {
+        const yc = li * rowH + rowH / 2;
+        ctx.strokeStyle = '#1c2230'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, yc); ctx.lineTo(W, yc); ctx.stroke();
+        for (let i = from; i < to; i++) {
+          const ts = list[i].timestamp;
+          const la = window.LunAstro.lonOf(pr.a, ts, frame), lb = window.LunAstro.lonOf(pr.b, ts, frame);
+          const s = sep(la, lb);
+          for (const A of ASPECTS) { const off = Math.abs(s - A.angle); if (off <= orb) { const x = xAxis.convertToPixel(i); const exact = off < 0.6; ctx.fillStyle = A.color; ctx.globalAlpha = exact ? 1 : 0.5; ctx.beginPath(); ctx.arc(x, yc, exact ? 3.6 : 2, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1; break; } }
+        }
+        ctx.fillStyle = '#c7d0e0'; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+        ctx.fillText(glyph(pr.a) + '–' + glyph(pr.b), 4, yc);
+      });
+      return true;
+    },
+  });
+
   /* ============ Астро-Ганн: веер долготы (Price & Longitude Angles) ============
    * Из пивота (свежий видимый экстремум) веер линий: цена движется со скоростью
    * долготы планеты — price = P0 ± scale·Δlon(накопл.). Ретро планеты дают изгиб. */
