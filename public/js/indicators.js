@@ -1046,6 +1046,40 @@
     },
   });
 
+  /* ============ Прогностика: СБЧ (Сарватобхадра-чакра) ведха-скаляр ============
+   * window.LUN_SBC = { janma, title, sunVedha }. Гладкий скаляр SBC(t) ≈ −5…+5
+   * (как барометр): бенефик-ведхи в чувствительные накшатры инструмента +,
+   * малефик −. НЕ сигнал — проверяется Монте-Карло. Сидерика (Лахири). */
+  kc.registerIndicator({
+    name: 'SBCStrip', shortName: 'СБЧ', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const S = window.LUN_SBC, list = chart.getDataList();
+      if (list.length < 3 || !window.LunSBC || !S || !S.janma) {
+        ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+        ctx.fillText('СБЧ: задайте инструмент в «Прогностика → СБЧ»', 4, 2); return true;
+      }
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      const cfg = { janma: S.janma, sunVedha: S.sunVedha || 'all3' };
+      const vals = []; let mx = 1e-9;
+      for (let i = from; i < to; i++) { const v = window.LunSBC.scoreAt(list[i].timestamp, cfg); vals[i] = v; if (Math.abs(v) > mx) mx = Math.abs(v); }
+      const H = bounding.height, mid = H / 2, W = bounding.width;
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+      ctx.strokeStyle = '#c8a24b'; ctx.lineWidth = 1.4; ctx.beginPath(); let st = false;
+      for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9; if (!st) { ctx.moveTo(x, y); st = true; } else ctx.lineTo(x, y); }
+      ctx.stroke();
+      // экстремумы (|score|>3) — крупные точки
+      for (let i = from; i < to; i++) {
+        if (Math.abs(vals[i]) > 3) { const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9; ctx.fillStyle = vals[i] > 0 ? '#26a69a' : '#ef5350'; ctx.beginPath(); ctx.arc(x, y, 3, 0, 6.283); ctx.fill(); }
+      }
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.fillText('СБЧ ' + (S.title || '') + ' · джанма ' + S.janma + ' · не сигнал, проверьте Монте-Карло', 4, 2);
+      return true;
+    },
+  });
+
   /* ============ Аспекты по выбору (пользовательский аспектариум) ============
    * window.LUN.ASPSEL.blocks = [{who, whom:[…до 3]}, …до 5]. Для каждой пары —
    * своя лента: точки в дни, когда пара в мажорном аспекте (0/60/90/120/180) в

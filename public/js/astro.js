@@ -112,5 +112,16 @@
   // «сырая» долгота на момент (для расчётов без объекта bodyInfo)
   const lonOf = (body, tsMillis, frame) => longitude(body, new Date(tsMillis), frame || 'geo');
 
-  window.LunAstro = { bodyInfo, moonInfo, zoneOf, nextAspect, eclipsesBetween, lonOf };
+  // Аянамша Лахири (Читрапакша): смещение тропического зодиака к сидерическому.
+  // На J2000 ≈ 23.8523°, прецессия ~50.2388″/год. sid = trop − ayanamsha.
+  function ayanamsha(tsMillis) {
+    const jd = tsMillis / 86400000 + 2440587.5;
+    return 23.8523 + (50.2388 / 3600) * ((jd - 2451545.0) / 365.25);
+  }
+  const sidLonOf = (body, tsMillis, frame) => { const l = longitude(body, new Date(tsMillis), frame || 'geo') - ayanamsha(tsMillis); return ((l % 360) + 360) % 360; };
+  // накшатра (0..26) и пада (1..4) по сидерической долготе
+  const NAK = 360 / 27;                                  // 13°20′
+  const nakshatraOf = (sidLon) => { const n = Math.floor((((sidLon % 360) + 360) % 360) / NAK); return { index: n, pada: Math.floor(((sidLon % NAK) / (NAK / 4))) + 1 }; };
+
+  window.LunAstro = { bodyInfo, moonInfo, zoneOf, nextAspect, eclipsesBetween, lonOf, ayanamsha, sidLonOf, nakshatraOf };
 })();

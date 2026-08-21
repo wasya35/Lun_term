@@ -769,6 +769,109 @@
     setTimeout(run, 30);
   }
 
+  /* ---------- СБЧ (Сарватобхадра-чакра) ---------- */
+  const SBC_PANE = 'pane_sbc';
+  function createSBCPane() {
+    if (state.sbcPane) { try { state.chart.removeIndicator({ paneId: state.sbcPane }); } catch (e) {} }
+    state.chart.createIndicator({ name: 'SBCStrip', paneId: SBC_PANE, shortName: 'СБЧ' }, false);
+    state.sbcPane = SBC_PANE; wishPane(SBC_PANE, { height: 100, order: 43 });
+  }
+  function removeSBCPane() { if (state.sbcPane) { try { state.chart.removeIndicator({ paneId: state.sbcPane }); } catch (e) {} state.sbcPane = null; } }
+  function sbcModal() {
+    if (!window.LunSBC) { openModal('СБЧ', '<p>Модуль СБЧ не загрузился.</p>'); return; }
+    const insTs = instrumentTs();
+    const natTs = (window.LUN_SBC && window.LUN_SBC.natalTs) || insTs || Date.now();
+    const natDate = new Date(natTs).toISOString().slice(0, 10);
+    const insTitle = (state.instrument && (state.instrument.title || state.instrument.ticker || state.instrument.id)) || 'инструмент';
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:5px 8px;font-size:13px';
+    openModal('🕉 СБЧ — Сарватобхадра-чакра (сидерика, джйотиш)', `
+      <p style="color:#8b93a7">Ведха-скаляр: активация чувствительных накшатр инструмента транзитными планетами (бенефик +, малефик −), сила по достоинству/скорости. <b>Джанма</b> = накшатра натальной Луны инструмента. Выход — гладкий ряд ≈ −5…+5, это <b>не сигнал ЛОНГ/ШОРТ</b>, а ряд для проверки Монте-Карло. Сидерика — аянамша Лахири.</p>
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:8px 0">
+        <label>Дата рождения «${insTitle}»<br><input id="sbc-date" type="date" value="${natDate}" style="${ss}"></label>
+        <label>Солнце-ведха<br><select id="sbc-sun" style="${ss}"><option value="all3">все 3 (Агра+Пара+Приштха)</option><option value="agra">только Агра</option></select></label>
+        <button id="sbc-show" style="padding:6px 12px;background:#1c3a2a;color:#d7deea;border:1px solid #2a5a3a;border-radius:6px;cursor:pointer">Показать панель</button>
+      </div>
+      <div id="sbc-out" style="color:#8b93a7;font-size:12px"></div>
+      <p style="color:#6b7280;font-size:11px;margin-top:8px">Дата рождения инструмента/биржи задаётся один раз и обосновывается (первые торги, генезис-блок и т.п.). Base rate у ведх высокий — проверяема лишь узкая гипотеза: экстремумы. Прогоняйте через Монте-Карло.</p>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const upd = () => {
+      const d = bg.querySelector('#sbc-date').value; const ts = d ? Date.parse(d + 'T00:00:00Z') : natTs;
+      const janma = window.LunSBC.janmaOf(ts);
+      bg.querySelector('#sbc-out').innerHTML = 'Джанма-накшатра: <b>' + window.LunSBC.NAK[(janma - 1) % 27] + '</b> (№' + janma + ')';
+      return { ts, janma };
+    };
+    bg.querySelector('#sbc-date').onchange = upd; upd();
+    bg.querySelector('#sbc-show').onclick = () => {
+      const d = bg.querySelector('#sbc-date').value; const ts = d ? Date.parse(d + 'T00:00:00Z') : natTs;
+      const janma = window.LunSBC.janmaOf(ts);
+      window.LUN_SBC = { janma, natalTs: ts, sunVedha: bg.querySelector('#sbc-sun').value, title: insTitle };
+      createSBCPane(); scheduleWsSave(); bg.remove(); closeMenus();
+    };
+  }
+
+  /* ---------- Монте-Карло: проверка гипотезы ---------- */
+  function mcModal() {
+    if (!window.LunMC) { openModal('Монте-Карло', '<p>Движок не загрузился.</p>'); return; }
+    let bars = []; try { bars = state.chart.getDataList() || []; } catch (e) {}
+    if (bars.length < 120) { alert('Мало истории. Поставьте период больше (D1, 2–5 лет) в «🗓 Период».'); return; }
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:5px 8px;font-size:13px';
+    const sources = [];
+    if (window.LunSBC && window.LUN_SBC && window.LUN_SBC.janma) sources.push(['sbc', 'Экстремумы СБЧ (текущий инструмент)']);
+    if (window.LunSynastry && window.LUN_SYNASTRY && window.LUN_SYNASTRY.points) sources.push(['syn', 'Экстремумы синастрии']);
+    if (window.LunSBC) sources.push(['merc', 'Меркурий ретроградный']);
+    if (!sources.length) { openModal('🎲 Монте-Карло', '<p>Сначала включите ряд: СБЧ или синастрию (в «Прогностика» / «Личные данные»).</p>'); return; }
+    openModal('🎲 Монте-Карло — проверка гипотезы', `
+      <p style="color:#8b93a7">Вопрос: цена разворачивается у дат события чаще, чем при случайности? <b>lift</b> = P(разворот|окно)/P(разворот), <b>p</b> = доля из 2000 случайных выборок с lift ≥ наблюдаемого. p≥0.05 — «не отличается от шума». Лучше на D1.</p>
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin:8px 0">
+        <label>Событие<br><select id="mc-src" style="${ss}">${sources.map((s) => `<option value="${s[0]}">${s[1]}</option>`).join('')}</select></label>
+        <label>Разворот ≥ %<br><input id="mc-pct" type="number" step="0.5" min="1" value="4" style="${ss};width:80px"></label>
+        <label>Окно ±бар<br><input id="mc-win" type="number" min="0" max="10" value="2" style="${ss};width:70px"></label>
+        <label>Доля событий<br><input id="mc-frac" type="number" step="0.05" min="0.02" max="0.5" value="0.1" style="${ss};width:80px"></label>
+        <button id="mc-run" style="padding:6px 12px;background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;cursor:pointer">Прогнать</button>
+      </div>
+      <div id="mc-out" style="color:#8b93a7;font-size:13px;line-height:1.6">…</div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const spanDays = (bars[bars.length - 1].timestamp - bars[0].timestamp) / 86400000;
+    const noMoon = spanDays > 45;
+    const run = () => {
+      const src = bg.querySelector('#mc-src').value;
+      const pct = parseFloat(bg.querySelector('#mc-pct').value) || 4;
+      const win = Math.max(0, parseInt(bg.querySelector('#mc-win').value) || 2);
+      const frac = Math.min(0.5, Math.max(0.02, parseFloat(bg.querySelector('#mc-frac').value) || 0.1));
+      const out = bg.querySelector('#mc-out'); out.innerHTML = 'Считаю…';
+      setTimeout(() => {
+        const piv = window.LunMC.detectPivots(bars, pct); const near = window.LunMC.nearMask(bars.length, piv, win);
+        let series = null, eventIdx = null, ctrl = '';
+        if (src === 'sbc') series = bars.map((b) => window.LunSBC.scoreAt(b.timestamp, { janma: window.LUN_SBC.janma, sunVedha: window.LUN_SBC.sunVedha }));
+        else if (src === 'syn') series = bars.map((b) => window.LunSynastry.riAt(b.timestamp, window.LUN_SYNASTRY.points, 6, noMoon));
+        else if (src === 'merc') { eventIdx = []; bars.forEach((b, i) => { if (window.LunSBC.planet(b.timestamp, 'Mercury').speed < 0) eventIdx.push(i); }); }
+        let R;
+        if (eventIdx) R = window.LunMC.liftTest(bars.length, eventIdx, near, 2000);
+        else { const ev = window.LunMC.eventsFromSeries(series, frac, true); R = window.LunMC.liftTest(bars.length, ev, near, 2000); }
+        // контроль «рандомная натальная карта» для СБЧ/синастрии
+        if (src === 'sbc' || src === 'syn') {
+          const K = 20; let beat = 0; const realLift = R.lift || 0;
+          for (let k = 0; k < K; k++) {
+            let s2;
+            if (src === 'sbc') { const rj = 1 + Math.floor(Math.random() * 27); s2 = bars.map((b) => window.LunSBC.scoreAt(b.timestamp, { janma: rj, sunVedha: window.LUN_SBC.sunVedha })); }
+            else { const rp = []; for (let z = 0; z < 10; z++) rp.push(Math.random() * 360); s2 = bars.map((b) => window.LunSynastry.riAt(b.timestamp, rp, 6, noMoon)); }
+            const ev2 = window.LunMC.eventsFromSeries(s2, frac, true); const r2 = window.LunMC.liftTest(bars.length, ev2, near, 300);
+            if ((r2.lift || 0) >= realLift) beat++;
+          }
+          ctrl = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid #232b3a">Контроль «случайная карта»: из ${K} случайных ${src === 'sbc' ? 'джанм' : 'натальных карт'} <b>${beat}</b> дали lift ≥ реального. ${beat > K * 0.3 ? '<span style="color:#ef5350">Карта, похоже, не важна — работают сами транзиты.</span>' : '<span style="color:#26a69a">Реальная карта выделяется на фоне случайных.</span>'}</div>`;
+        }
+        if (R.lift == null) { out.innerHTML = 'Недостаточно данных (пивотов/событий).'; return; }
+        const good = R.p < 0.05 && R.lift > 1;
+        out.innerHTML = `Пивотов: ${piv.length} · событий: <b>${R.n}</b> · базовая ставка: ${(R.base * 100).toFixed(1)}%<br>`
+          + `lift = <b style="font-size:16px;color:${good ? '#26a69a' : '#e0c040'}">${R.lift.toFixed(2)}×</b> · p = <b style="color:${good ? '#26a69a' : '#ef5350'}">${R.p.toFixed(3)}</b> `
+          + (good ? '<span style="color:#26a69a">— отличается от шума (на этой выборке)</span>' : '<span style="color:#8b93a7">— не отличается от случайности</span>')
+          + ctrl
+          + `<p style="color:#6b7280;font-size:11px;margin-top:8px">Одна выборка/период — не доказательство. Проверяйте на разных инструментах и вне выборки; помните про поправку на множественные сравнения.</p>`;
+      }, 30);
+    };
+    bg.querySelector('#mc-run').onclick = run; setTimeout(run, 40);
+  }
+
   // прогнозная линия из циклов: тумблер (двигает офсет вправо, чтобы влезла проекция)
   function toggleProjection(on) {
     if (on) {
@@ -1360,14 +1463,14 @@
     const s = state;
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
-      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both',
+      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null,
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
         basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane, syn: !!s.synPane,
         signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
-        aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane,
+        aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane, sbc: !!s.sbcPane,
       },
       drawings: Object.values(s.drawings || {}),
     };
@@ -1390,6 +1493,7 @@
     (ind.aspects || []).forEach((b, i) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === b); if (pl && !state.aspectPanes[b]) try { createSunAspect(pl, 15 + i); } catch (e) {} });
     try { if (ind.allAspect && !state.allAspectPane) createAllAspect(); } catch (e) {}
     try { if (ind.aspsel && !state.aspSelPane && (window.LUN.ASPSEL.blocks || []).length) createAspSelPane(); } catch (e) {}
+    try { if (ind.sbc && !state.sbcPane && window.LUN_SBC && window.LUN_SBC.janma) createSBCPane(); } catch (e) {}
   }
   function applyWsDrawings(list) {
     (list || []).forEach((d) => { try { const id = state.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) state.drawings[oid] = d; } catch (e) {} });
@@ -1403,6 +1507,7 @@
       if (ws.trader && ws.trader.ts) { window.LUN_TRADER = ws.trader; try { localStorage.setItem('lun_trader', JSON.stringify(ws.trader)); } catch (e) {} }
       if (ws.synastry && ws.synastry.points) window.LUN_SYNASTRY = ws.synastry;
       if (ws.synMode) window.LUN.SYN.mode = ws.synMode;
+      if (ws.sbc && ws.sbc.janma) window.LUN_SBC = ws.sbc;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
@@ -1847,6 +1952,8 @@
       }, false, 'Прогнозная линия из доминирующих циклов цены, продлённая вперёд');
       mkBtn(gannWrap, '📊 Композит по астро-состоянию…', () => { closeMenus(); compositeModal(); }, false, 'Среднее движение вперёд по фазе Луны / знаку планеты (сезонность)');
       mkBtn(gannWrap, '⚖ Астро-факторы на экстремумах…', () => { closeMenus(); farModal(); }, false, 'Взвешенные астро-факторы на вершинах/основаниях волны (по фильтрованной волне)');
+      mkBtn(gannWrap, '🕉 СБЧ (Сарватобхадра-чакра)…', () => { closeMenus(); sbcModal(); }, false, 'Ведха-скаляр в сидерике (джйотиш): активация чувствительных накшатр инструмента. Не сигнал — проверяется Монте-Карло');
+      mkBtn(gannWrap, '🎲 Монте-Карло: проверка гипотезы…', () => { closeMenus(); mcModal(); }, false, 'lift + перестановочный p: разворачивается ли цена у дат события чаще случайного');
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
       gnote.textContent = 'Инструменты Ганна: геометрия · квадраты · циклы · астро-Ганн';
       gannWrap.appendChild(gnote);
