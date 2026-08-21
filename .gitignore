@@ -3,3 +3,5 @@ node_modules/
 .DS_Store
 shot.png
 lun_term_site.zip
+public/lun_data/
+lun_data/

@@ -145,6 +145,59 @@ function fetch_front($asset, $today) {
   return pick_front(iss_get_all_pages($base, 'securities'), $asset, $today);
 }
 
+/* --------------------- защита: IP, кэш, лимит, CORS ----------------------- */
+
+// реальный IP клиента (за Cloudflare — CF-Connecting-IP; иначе REMOTE_ADDR).
+// XFF намеренно НЕ доверяем (спуфится) — только доверенный заголовок CF.
+function client_ip() {
+  if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) return $_SERVER['HTTP_CF_CONNECTING_IP'];
+  return $_SERVER['REMOTE_ADDR'] ?? '0';
+}
+
+function lun_priv_dir($sub) {
+  $d = __DIR__ . '/lun_data/' . $sub;
+  if (!is_dir($d)) @mkdir($d, 0770, true);
+  return $d;
+}
+
+// серверный кэш ответов (файловый). Ключ — строка запроса, TTL — секунды.
+function cache_get($key, $ttl) {
+  $f = lun_priv_dir('cache') . '/' . md5($key);
+  if (is_file($f) && (time() - filemtime($f) < $ttl)) { $v = @file_get_contents($f); if ($v !== false) return $v; }
+  return null;
+}
+function cache_put($key, $val) {
+  @file_put_contents(lun_priv_dir('cache') . '/' . md5($key), $val, LOCK_EX);
+  // раз в ~50 запросов подчищаем протухшее (>1ч), чтобы папка не пухла.
+  if (mt_rand(1, 50) === 1) { foreach (glob(lun_priv_dir('cache') . '/*') ?: [] as $g) { if (time() - filemtime($g) > 3600) @unlink($g); } }
+}
+
+// rate-limit по IP (фикс. окно). true = можно, false = превышено.
+function rate_ok($bucket, $max, $win) {
+  $d = lun_priv_dir('rl');
+  $ip = client_ip();
+  $winId = intdiv(time(), $win);
+  $f = $d . '/' . md5($bucket . '|' . $ip . '|' . $winId);
+  $n = is_file($f) ? (int)@file_get_contents($f) : 0;
+  $n++;
+  @file_put_contents($f, (string)$n, LOCK_EX);
+  if (mt_rand(1, 50) === 1) { foreach (glob($d . '/*') ?: [] as $g) { if (time() - filemtime($g) > 2 * $win) @unlink($g); } }
+  return $n <= $max;
+}
+
+// CORS: отвечаем ТОЛЬКО своему источнику (same-origin). Чужие сайты не смогут
+// читать прокси из браузера. Свой фронтенд ходит same-origin — ему ок.
+function send_cors() {
+  $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+  if ($origin !== '') {
+    $oHost = strtolower((string)parse_url($origin, PHP_URL_HOST));
+    $host = strtolower($_SERVER['HTTP_HOST'] ?? '');
+    if ($oHost !== '' && $oHost === $host) { header('Access-Control-Allow-Origin: ' . $origin); header('Vary: Origin'); }
+  }
+}
+
+function too_many() { http_response_code(429); header('Retry-After: 30'); header('Content-Type: application/json'); echo json_encode(['error' => 'rate limited']); exit; }
+
 /* ------------------------------- диспетчер ------------------------------- */
 
 if (!defined('LUN_NO_DISPATCH')) {
@@ -152,33 +205,48 @@ if (!defined('LUN_NO_DISPATCH')) {
   // RSS-прокси новостей: тянет ленту на сервере (без CORS у клиента). Хосты —
   // по белому списку, чтобы не быть открытым прокси.
   if ($fn === 'rss') {
-    header('Access-Control-Allow-Origin: *');
+    send_cors();
+    if (!rate_ok('rss', 40, 60)) too_many();
     $url = $_GET['url'] ?? '';
     $allow = ['rbc.ru', 'ria.ru', '1prime.ru', 'lenta.ru', 'finam.ru', 'investing.com', 'oilprice.com', 'mining.com', 'coindesk.com', 'cointelegraph.com', 'finance.yahoo.com'];
     $host = strtolower(parse_url($url, PHP_URL_HOST) ?? '');
     $ok = false; foreach ($allow as $h) { if ($host === $h || substr($host, -(strlen($h) + 1)) === '.' . $h) { $ok = true; break; } }
     if (!$ok) { http_response_code(400); header('Content-Type: application/json'); echo json_encode(['error' => 'host not allowed']); exit; }
-    try { $body = http_get($url); header('Content-Type: application/xml; charset=utf-8'); echo $body; }
+    $ck = 'rss|' . $url;
+    $hit = cache_get($ck, 300);                       // ленты кэшируем на 5 мин
+    if ($hit !== null) { header('Content-Type: application/xml; charset=utf-8'); echo $hit; exit; }
+    try { $body = http_get($url); cache_put($ck, $body); header('Content-Type: application/xml; charset=utf-8'); echo $body; }
     catch (Exception $e) { http_response_code(502); header('Content-Type: application/json'); echo json_encode(['error' => $e->getMessage()]); }
     exit;
   }
   header('Content-Type: application/json; charset=utf-8');
-  header('Access-Control-Allow-Origin: *');
+  send_cors();
+  if (!rate_ok('api', 120, 60)) too_many();           // 120 запросов/мин на IP
   try {
     if ($fn === 'front') {
       $asset = $_GET['asset'] ?? '';
       if ($asset === '') { http_response_code(400); echo json_encode(['error' => 'bad params']); exit; }
       $today = gmdate('Y-m-d');
+      $ck = 'front|' . $asset . '|' . $today;
+      $hit = cache_get($ck, 3600);                    // ближний контракт меняется редко → 1ч
+      if ($hit !== null) { echo $hit; exit; }
       $list = fetch_front($asset, $today);
       if (!$list) { http_response_code(404); echo json_encode(['error' => 'no front contract for ' . $asset]); exit; }
-      echo json_encode(['ticker' => $list[0]['ticker'], 'lastDelDate' => $list[0]['lastDelDate'], 'contracts' => $list]);
+      $out = json_encode(['ticker' => $list[0]['ticker'], 'lastDelDate' => $list[0]['lastDelDate'], 'contracts' => $list]);
+      cache_put($ck, $out); echo $out;
     } elseif ($fn === 'candles') {
       $secid = $_GET['secid'] ?? ''; $iss = $_GET['iss'] ?? '';
       $from = $_GET['from'] ?? ''; $till = $_GET['till'] ?? '';
       if ($secid === '' || $iss === '' || $from === '' || $till === '') { http_response_code(400); echo json_encode(['error' => 'bad params']); exit; }
+      // TTL: интрадей — коротко (реалтайм догрузит поток), дневки — длиннее.
+      $ttl = ($iss === '24') ? 900 : (($iss === '60') ? 120 : 45);
+      $ck = 'candles|' . $secid . '|' . $iss . '|' . $from . '|' . $till;
+      $hit = cache_get($ck, $ttl);
+      if ($hit !== null) { echo $hit; exit; }
       if ($iss === '5' || $iss === '15') $bars = aggregate_bars(fetch_candles($secid, '1', $from, $till), (int)$iss);
       else $bars = fetch_candles($secid, $iss, $from, $till);
-      echo json_encode($bars);
+      $out = json_encode($bars);
+      cache_put($ck, $out); echo $out;
     } else {
       http_response_code(400); echo json_encode(['error' => 'unknown fn']);
     }
