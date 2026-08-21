@@ -483,6 +483,18 @@
   function removeCandInd(name) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {} delete state.candleInds[name]; }
   // запустить рисование оверлея (первый клик = пивот/угол, второй = охват)
   const defOvStyle = () => Object.assign({}, window.LUN_OVERLAY_DEF_STYLE || { color: '#f0c040', size: 1.4, dash: 'solid', fill: false, fillColor: 'rgba(240,192,64,0.14)' });
+  // двойной клик в правый-нижний угол осей → последняя цена в центр экрана
+  function recenterLastPrice(slot) {
+    slot = slot || state; const c = slot.chart;
+    try { const l = c.getDataList(); if (!l.length) return; const w = (slot.cellEl && slot.cellEl.clientWidth) || 600; c.setOffsetRightDistance(Math.max(60, Math.round(w / 2))); if (c.scrollToRealTime) c.scrollToRealTime(); else if (c.scrollToTimestamp) c.scrollToTimestamp(l[l.length - 1].timestamp); } catch (e) {}
+  }
+  // «Ганн-режим»: фиксируем масштаб (колесо не искажает геометрию углов), пан
+  // остаётся. Полная фиксация 1×1 по вертикали — отдельный этап (нужна своя ось).
+  let gannSpaceOn = false;
+  function toggleGannSpace(on) {
+    gannSpaceOn = on;
+    slots.forEach((s) => { try { if (s.chart.setZoomEnabled) s.chart.setZoomEnabled(!on); } catch (e) {} try { if (s.chart.setPaneOptions) s.chart.setPaneOptions({ id: 'candle_pane', axis: { scrollZoomEnabled: !on } }); } catch (e) {} });
+  }
   // единая форма для геометрии Ганна: Box (деления) или Квадрат-сетка N×N
   function gannGeomModal() {
     const S = window.LUN.GANNTOOLS.boxChoice || (window.LUN.GANNTOOLS.boxChoice = { type: 'box', divisions: 8 });
@@ -956,9 +968,21 @@
   function overlayEvents() {
     const sel = (event) => { const ov = ovOf(event); if (ov) { state.selectedOverlayId = ov.id; state.selectedOverlay = ov; showStylePanel(ov); } return false; };
     const rec = (event) => { const ov = ovOf(event); if (ov) recordOverlay(ov); return false; };
+    // при перетаскивании т2 у линии Ганна с фикс-углом — пересчитываем угол по
+    // новому положению, чтобы т2 всегда лежала на луче, а поле угла совпадало.
+    const moveEnd = (event) => {
+      const ov = ovOf(event); if (!ov) return false;
+      if (ov.name === 'lun_gann' && ov.extendData && typeof ov.extendData === 'object' && typeof ov.extendData.gannAngle === 'number') {
+        const a = gannAngleOf(ov);
+        if (a != null) { ov.extendData = Object.assign({}, ov.extendData, { gannAngle: a }); try { state.chart.overrideOverlay({ id: ov.id, extendData: ov.extendData }); } catch (e) {} }
+      }
+      recordOverlay(ov);
+      if (state.selectedOverlay && state.selectedOverlay.id === ov.id) showStylePanel(ov);
+      return false;
+    };
     return {
       onSelected: sel, onClick: sel,
-      onDrawEnd: rec, onPressedMoveEnd: rec,
+      onDrawEnd: rec, onPressedMoveEnd: moveEnd,
       onRemoved: (event) => { const ov = ovOf(event); if (ov) forgetOverlay(ov.id); return false; },
       onDeselected: () => { state.selectedOverlayId = null; state.selectedOverlay = null; hideStylePanel(); return false; },
       onPressedMoveStart: (event) => {
@@ -1063,9 +1087,21 @@
     const id = state.selectedOverlayId, ov = state.selectedOverlay; if (!id || !ov || !stylePanelEl) return;
     const v = stylePanelEl.querySelector('#sp-angle').value.trim();
     const ed = Object.assign({}, (ov.extendData && typeof ov.extendData === 'object') ? ov.extendData : {});
-    if (v === '' || !(+v > 0)) delete ed.gannAngle; else ed.gannAngle = +v;
-    ov.extendData = ed;
-    try { state.chart.overrideOverlay({ id, extendData: ed }); } catch (e) {}
+    const pts = (ov.points || []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value }));
+    let newPoints = null;
+    if (v === '' || !(+v > 0)) { delete ed.gannAngle; }
+    else {
+      ed.gannAngle = +v;
+      // т2 ДВИГАЕТСЯ вслед за углом: ставим её значение точно на луч от т1.
+      if (pts.length >= 2 && pts[0].value != null && pts[0].dataIndex != null && pts[1].dataIndex != null) {
+        const dir = (pts[1].value != null && pts[1].value < pts[0].value) ? -1 : 1;
+        const bars = Math.abs(pts[1].dataIndex - pts[0].dataIndex) || 1;
+        pts[1].value = pts[0].value + dir * (+v) * bars;
+        newPoints = pts;
+      }
+    }
+    ov.extendData = ed; if (newPoints) ov.points = newPoints;
+    try { state.chart.overrideOverlay(newPoints ? { id, extendData: ed, points: newPoints } : { id, extendData: ed }); } catch (e) {}
     recordOverlay(ov);
   }
   function hideStylePanel() { if (stylePanelEl) stylePanelEl.style.display = 'none'; }
@@ -1487,6 +1523,9 @@
         else removeCandInd('GannSquaring');
       }, false, 'Линии 1×1 от пивота + отметки сквоузинга цены/времени');
       mkBtn(gannWrap, '⚖ Масштаб 1×1…', () => { closeMenus(); scaleModal(); }, false, 'Цена на 1 бар: авто или вручную');
+      mkBtn(gannWrap, '🔒 Ганн-режим (фикс масштаба)', (b) => {
+        const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleGannSpace(on);
+      }, false, 'Колесо не искажает геометрию углов (масштаб зафиксирован). Двойной клик в правый-нижний угол осей — последняя цена в центр');
       gsub('Квадраты');
       mkBtn(gannWrap, '⊞ Калькулятор квадратов…', () => { closeMenus(); gannSquareModal(); }, false, 'Квадрат 9 / шестиугольник / круг 360° / натуральные — уровни поддержки и сопротивления');
       mkBtn(gannWrap, '✕ убрать уровни квадрата', () => { closeMenus(); removeCandInd('GannSquareLevels'); }, false, 'Убрать нанесённые уровни квадрата');
@@ -1698,6 +1737,7 @@
       else { slot.instrument = window.LUN.INSTRUMENTS[Math.min(i, window.LUN.INSTRUMENTS.length - 1)]; slot.tf = DEFAULT_TF; }
       slot.chart = kc.init(cell, { styles: THEME });
       cell.addEventListener('mousedown', () => activateSlot(i));
+      cell.addEventListener('dblclick', (e) => { const r = cell.getBoundingClientRect(); if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); } });
       slots.push(slot);
       if (L.cells > 1) wireSync(slot);
     }
