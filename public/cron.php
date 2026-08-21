@@ -21,8 +21,11 @@ require __DIR__ . '/api.php';            // http_get()
 $dir = __DIR__ . '/lun_data';
 $isCli = (php_sapi_name() === 'cli');
 $keyFile = $dir . '/cron_key.txt';
-if (!$isCli && file_exists($keyFile)) {
-  if (($_GET['key'] ?? '') !== trim(@file_get_contents($keyFile))) { http_response_code(403); exit('forbidden'); }
+// HTTP-вызов разрешён ТОЛЬКО с верным ключом. Если ключа нет — закрыто наглухо
+// (fail-closed): иначе любой мог бы дёргать рассылку алертов. CLI — без ключа.
+if (!$isCli) {
+  $key = file_exists($keyFile) ? trim(@file_get_contents($keyFile)) : '';
+  if ($key === '' || !hash_equals($key, (string)($_GET['key'] ?? ''))) { http_response_code(403); exit('forbidden'); }
 }
 
 try { $pdo = new PDO('sqlite:' . $dir . '/users.db'); $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION); }

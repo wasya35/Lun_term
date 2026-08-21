@@ -1,9 +1,79 @@
-# Красивые пути /api/* → api.php (если на хостинге включён mod_rewrite).
-# Если mod_rewrite нет — ничего страшного: фронтенд сам зовёт api.php?fn=...
+# ============================================================================
+#  Lun_term — конфигурация Apache (безопасность + красивые пути).
+#  Работает на большинстве шаред-хостингов. Директивы обёрнуты в <IfModule>,
+#  чтобы отсутствие модуля не роняло сайт (500).
+# ============================================================================
+
+DirectoryIndex index.html
+
+# --- 1. Запрет листинга директорий -----------------------------------------
+Options -Indexes
+
+# --- 2. Красивые пути /api/* → api.php (если есть mod_rewrite) --------------
 <IfModule mod_rewrite.c>
   RewriteEngine On
+
+  # 2a. Закрыть служебные данные наглухо (БД, секреты, дот-файлы, git).
+  #     Отдаём 403 ещё до любой обработки. Важнее вложенного lun_data/.htaccess.
+  RewriteRule ^lun_data(/|$)      - [F,L]
+  RewriteRule (^|/)\.git(/|$)     - [F,L]
+  RewriteRule (^|/)\.(?!well-known) - [F,L]
+
+  # 2b. Красивые эндпоинты.
   RewriteRule ^api/front$   api.php?fn=front   [QSA,L]
   RewriteRule ^api/candles$ api.php?fn=candles [QSA,L]
 </IfModule>
 
-DirectoryIndex index.html
+# --- 3. Запрет прямого доступа к чувствительным файлам ----------------------
+#     (БД SQLite, журналы, токены, ключи, конфиги). robots.txt НЕ трогаем.
+<FilesMatch "\.(db|db-journal|sqlite|sqlite3|log|ini|key|pem|bak|sql)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Точечно — секретные текстовые файлы (их имена фиксированы).
+<FilesMatch "^(tg_token|cron_key)\.txt$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Примечание: cron.php намеренно НЕ закрыт — на шаред-хостинге его часто
+# дёргают по HTTP (wget/curl по расписанию). Он сам требует cron_key
+# (lun_data/cron_key.txt) — это и есть его защита.
+
+# --- 4. Заголовки безопасности ---------------------------------------------
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+  Header always set Cross-Origin-Opener-Policy "same-origin"
+  # Не отдавать серверные версии/подпись, где можно.
+  Header unset X-Powered-By
+  Header always unset X-Powered-By
+</IfModule>
+<IfModule mod_php.c>
+  php_flag expose_php Off
+</IfModule>
+
+# --- 5. Кэш статики (снижает нагрузку при наплыве) --------------------------
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType text/css            "access plus 7 days"
+  ExpiresByType application/javascript "access plus 7 days"
+  ExpiresByType image/svg+xml       "access plus 30 days"
+  ExpiresByType image/png           "access plus 30 days"
+  ExpiresByType image/x-icon        "access plus 30 days"
+  # HTML не кэшируем жёстко (там ?v= для JS всё равно).
+  ExpiresByType text/html           "access plus 0 seconds"
+</IfModule>

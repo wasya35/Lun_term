@@ -40,7 +40,10 @@ function db() {
   if ($pdo) return $pdo;
   $dir = __DIR__ . '/lun_data';
   if (!is_dir($dir)) @mkdir($dir, 0770, true);
-  if (!file_exists($dir . '/.htaccess')) @file_put_contents($dir . '/.htaccess', "Require all denied\nDeny from all\n");
+  if (!file_exists($dir . '/.htaccess')) @file_put_contents($dir . '/.htaccess',
+    "Options -Indexes\n" .
+    "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n" .
+    "<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
   try {
     $pdo = new PDO('sqlite:' . $dir . '/users.db');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);

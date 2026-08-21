@@ -1,0 +1,36 @@
+# Lun_term — правила для поисковых роботов.
+# Главная открыта для индексации (нужно для продвижения), а серверные
+# эндпоинты и данные — закрыты. Честные боты это соблюдают; парсеры-нарушители
+# всё равно игнорируют robots.txt — от них защищает Cloudflare / rate-limit.
+
+User-agent: *
+Allow: /$
+Allow: /index.html
+Disallow: /api.php
+Disallow: /auth.php
+Disallow: /cron.php
+Disallow: /lun_data/
+Crawl-delay: 5
+
+# Явно отсекаем известных агрессивных парсеров/скраперов и AI-краулеры,
+# которые создают нагрузку без пользы.
+User-agent: AhrefsBot
+Disallow: /
+
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: MJ12bot
+Disallow: /
+
+User-agent: DotBot
+Disallow: /
+
+User-agent: PetalBot
+Disallow: /
+
+User-agent: DataForSeoBot
+Disallow: /
+
+User-agent: Bytespider
+Disallow: /
