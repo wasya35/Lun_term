@@ -1975,6 +1975,18 @@
         if (state.candleInds.MercSunCycle) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'MercSunCycle' }); state.chart.createIndicator({ name: 'MercSunCycle', paneId: 'candle_pane' }, true); } catch (e) {} }
         closeMenus();
       }, false, 'Переключить каркас: Меркурий–Солнце (товары/акции) ↔ Луна–Солнце (валюты, фазы Луны)');
+      const hzBtn = mkBtn(gannWrap, '🔭 Прогноз каркаса: выкл', (b) => {
+        window.LUN_MASLOV = window.LUN_MASLOV || { cycle: 'merc' };
+        const cur = window.LUN_MASLOV.horizonQ || 0; const next = cur === 0 ? 1 : (cur === 1 ? 2 : 0);
+        window.LUN_MASLOV.horizonQ = next;
+        b.textContent = '🔭 Прогноз каркаса: ' + (next === 0 ? 'выкл' : next + ' кв.');
+        // раздвинуть поле вправо, чтобы будущие этапы влезли
+        try { const bs = state.chart.getBarSpace().bar || 6; state.chart.setOffsetRightDistance(next ? Math.max(80, next * 62 * bs) : 80); } catch (e) {}
+        if (state.candleInds.MercSunCycle) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'MercSunCycle' }); state.chart.createIndicator({ name: 'MercSunCycle', paneId: 'candle_pane' }, true); } catch (e) {} }
+        try { state.chart.resize(); } catch (e) {}
+        closeMenus();
+      }, false, 'Показать ближайшие этапы цикла вперёд: 1 или 2 квартала (даты будущих стоянок/соединений)');
+      hzBtn.dataset.sync = 'maslovHz';
       const gnote = document.createElement('div'); gnote.className = 'menu-note';
       gnote.textContent = 'Инструменты Ганна: геометрия · квадраты · циклы · астро-Ганн';
       gannWrap.appendChild(gnote);

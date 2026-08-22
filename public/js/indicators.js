@@ -1054,36 +1054,51 @@
     name: 'MercSunCycle', shortName: 'Цикл ☿–☉', series: 'price', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis }) => {
-      const list = chart.getDataList(); if (list.length < 3 || !window.LunCycle) return true;
+      const list = chart.getDataList(); const n = list.length; if (n < 3 || !window.LunCycle) return true;
       const cycle = (window.LUN_MASLOV && window.LUN_MASLOV.cycle) || 'merc';
-      const range = chart.getVisibleRange();
-      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
-      if (to - from < 2) return true;
-      const t0 = list[from].timestamp, t1 = list[Math.min(list.length - 1, to)].timestamp;
-      const ev = window.LunCycle.stages(cycle, t0, t1); if (!ev.length) return true;
+      const horizonQ = (window.LUN_MASLOV && window.LUN_MASLOV.horizonQ) || 0;   // кварталы прогноза вперёд
       const H = bounding.height, W = bounding.width;
-      // ts → дробный индекс → пиксель X
+      const firstTs = list[0].timestamp, lastTs = list[n - 1].timestamp;
+      const tfMs = (lastTs - firstTs) / Math.max(1, n - 1);                       // мс на бар
+      let barSpace = 6; try { barSpace = chart.getBarSpace().bar || 6; } catch (e) {}
+      // Этапы считаем по ПОЛНОМУ диапазону данных (+ прогноз) — границы стабильны
+      // при любом зуме (раньше считались по видимому окну и «плыли» у краёв).
+      const t1 = lastTs + horizonQ * 91 * 86400000;
+      const ev = window.LunCycle.stages(cycle, firstTs, t1); if (!ev.length) return true;
+      // ts → пиксель X (прошлое — по индексу бара; будущее — экстраполяция по barSpace)
       const xOf = (ts) => {
-        let i = from; while (i < to - 1 && list[i + 1].timestamp <= ts) i++;
-        const a = list[i].timestamp, b = list[Math.min(list.length - 1, i + 1)].timestamp;
-        const frac = b > a ? (ts - a) / (b - a) : 0; return xAxis.convertToPixel(i + frac);
+        if (ts <= lastTs) {
+          let lo = 0, hi = n - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (list[m].timestamp < ts) lo = m + 1; else hi = m; }
+          const i = Math.max(1, lo), a = list[i - 1].timestamp, b = list[i].timestamp;
+          const frac = b > a ? (ts - a) / (b - a) : 0; return xAxis.convertToPixel(i - 1 + frac);
+        }
+        return xAxis.convertToPixel(n - 1) + ((ts - lastTs) / tfMs) * barSpace;
       };
       const LAB = { retro: '☿ᴿ', direct: '☿ᴰ', inferior: '☿☌☉↓', superior: '☿☌☉↑', new: '🌑', fq: '🌓', full: '🌕', lq: '🌗' };
-      // чередующийся фон между событиями
+      // номер этапа сегмента ПОСЛЕ события (по Маслову этапы 1–4)
+      const STAGE_AFTER = { retro: 1, inferior: 2, direct: 3, superior: 4 };
+      const CIRC = ['', '①', '②', '③', '④'];
+      // чередующийся фон + номер этапа + подсветка текущего
       for (let k = 0; k < ev.length - 1; k++) {
-        const x1 = xOf(ev[k].ts), x2 = xOf(ev[k + 1].ts);
-        ctx.fillStyle = (k % 2 === 0) ? 'rgba(38,166,154,0.05)' : 'rgba(239,83,80,0.05)';
+        const x1 = xOf(ev[k].ts), x2 = xOf(ev[k + 1].ts); if (x2 < 0 || x1 > W) continue;
+        const cur = ev[k].ts <= lastTs && lastTs < ev[k + 1].ts;                 // текущий этап
+        ctx.fillStyle = (k % 2 === 0) ? 'rgba(38,166,154,0.06)' : 'rgba(239,83,80,0.06)';
         ctx.fillRect(x1, 0, Math.max(0, x2 - x1), H);
+        if (cur) { ctx.fillStyle = 'rgba(240,192,64,0.10)'; ctx.fillRect(x1, 0, Math.max(0, x2 - x1), H); }
+        const st = STAGE_AFTER[ev[k].kind]; const mid = (Math.max(0, x1) + Math.min(W, x2)) / 2;
+        if (st && cycle !== 'moon' && (x2 - x1) > 24) { ctx.fillStyle = cur ? '#f0c040' : '#5a6274'; ctx.font = (cur ? 'bold ' : '') + '18px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.fillText(CIRC[st], mid, H / 2); }
       }
       ev.forEach((e) => {
-        const x = xOf(e.ts); const stage = (e.kind === 'retro' || e.kind === 'direct' || e.kind === 'inferior' || e.kind === 'superior');
-        ctx.strokeStyle = stage ? 'rgba(200,162,75,0.5)' : 'rgba(155,107,255,0.4)'; ctx.lineWidth = 1; ctx.setLineDash(stage ? [] : [3, 3]);
+        const x = xOf(e.ts); if (x < -20 || x > W + 20) return;
+        const isStage = e.kind in STAGE_AFTER;
+        const future = e.ts > lastTs;
+        ctx.strokeStyle = isStage ? 'rgba(200,162,75,0.6)' : 'rgba(155,107,255,0.45)'; ctx.lineWidth = future ? 1.6 : 1; ctx.setLineDash(future ? [2, 3] : (isStage ? [] : [3, 3]));
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'center';
+        ctx.fillStyle = future ? '#e0a030' : '#c7d0e0'; ctx.font = 'bold 17px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'center';
         ctx.fillText(LAB[e.kind] || '', x, 2);
       });
-      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
-      ctx.fillText((cycle === 'moon' ? 'Цикл Луна–Солнце' : 'Цикл Меркурий–Солнце') + ' · чередование этапов (направление проверяйте МК)', 4, H - 2);
+      ctx.fillStyle = '#8b93a7'; ctx.font = '13px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
+      ctx.fillText((cycle === 'moon' ? 'Цикл Луна–Солнце (валюты)' : 'Цикл Меркурий–Солнце') + ' · этапы 1–4' + (horizonQ ? ' · прогноз ' + horizonQ + ' кв.' : '') + ' · направление проверяйте МК', 4, H - 2);
       return true;
     },
   });
@@ -1157,19 +1172,21 @@
             const off = Math.abs(s - A.angle);
             if (off <= orb) {
               const x = xAxis.convertToPixel(i), exact = off < 0.6;
-              ctx.fillStyle = A.color; ctx.globalAlpha = exact ? 1 : 0.5; ctx.beginPath(); ctx.arc(x, yc, exact ? 3.6 : 2, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
+              ctx.fillStyle = A.color; ctx.globalAlpha = exact ? 1 : 0.5; ctx.beginPath(); ctx.arc(x, yc, exact ? 4 : 2.4, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
+              // знак аспекта над точным аспектом (☌⚹□△☍)
+              if (exact) { ctx.fillStyle = A.color; ctx.font = 'bold 15px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'center'; ctx.fillText(A.sym, x, yc - 4); }
               // applying (растущий, сходится к точному) ▲ / separating (убывающий) ▼ — по Маслову
               const la2 = window.LunAstro.lonOf(pr.a, ts + 86400000, frame), lb2 = window.LunAstro.lonOf(pr.b, ts + 86400000, frame);
               const off2 = Math.abs(sep(la2, lb2) - A.angle), applying = off2 < off;
-              ctx.fillStyle = applying ? '#26a69a' : '#ef5350'; ctx.globalAlpha = 0.7; ctx.beginPath();
-              const ty = yc + (applying ? -6 : 6), d = 2.4;
+              ctx.fillStyle = applying ? '#26a69a' : '#ef5350'; ctx.globalAlpha = 0.75; ctx.beginPath();
+              const ty = yc + (applying ? -7 : 7), d = 3;
               if (applying) { ctx.moveTo(x, ty - d); ctx.lineTo(x - d, ty + d); ctx.lineTo(x + d, ty + d); } else { ctx.moveTo(x, ty + d); ctx.lineTo(x - d, ty - d); ctx.lineTo(x + d, ty - d); }
               ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
               break;
             }
           }
         }
-        ctx.fillStyle = '#c7d0e0'; ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+        ctx.fillStyle = '#c7d0e0'; ctx.font = 'bold 15px system-ui, sans-serif'; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
         ctx.fillText(glyph(pr.a) + '–' + glyph(pr.b), 4, yc);
       });
       return true;
