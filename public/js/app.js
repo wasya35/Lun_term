@@ -1021,6 +1021,15 @@
     wishPane(state.synPane, { height: 100, order: 42 });
   }
   function removeSynastryPane() { if (state.synPane) { try { state.chart.removeIndicator({ paneId: state.synPane }); } catch (e) {} state.synPane = null; } }
+  // убрать нижнюю панель индикатора по её paneId (двойной клик по панели) + чистка трекеров
+  function removePaneById(pid) {
+    const s = state;
+    if (s.markovPanes && s.markovPanes.indexOf(pid) >= 0) { try { removeMarkov(); } catch (e) {} syncToolbar(); return; }
+    try { s.chart.removeIndicator({ paneId: pid }); } catch (e) {}
+    ['volumePane', 'deltaPane', 'oiPane', 'basisPane', 'retroPane', 'bradleyPane', 'synPane', 'sbcPane', 'aspSelPane', 'uranusPane', 'allAspectPane', 'signPane', 'arbPane'].forEach((k) => { if (s[k] === pid) s[k] = null; });
+    ['signPanes', 'cyclePanes', 'aspectPanes'].forEach((mk) => { const m = s[mk]; if (m) Object.keys(m).forEach((kk) => { if (m[kk] === pid) delete m[kk]; }); });
+    try { syncToolbar(); } catch (e) {}
+  }
 
   // Космограмма: колесо зодиака с планетами и аспектами на выбранную дату.
   function cosmogramModal() {
@@ -1121,6 +1130,16 @@
   async function load(slot) {
     slot = slot || state;
     const c = slot.chart, ins = slot.instrument, tf = slot.tf;
+    // рисунки — ПЕР-ИНСТРУМЕНТ: при смене инструмента прячем текущие в хранилище,
+    // очищаем поле, а рисунки нового инструмента восстанавливаем после загрузки.
+    const insId = favId(ins);
+    if (slot._loadedInsId && slot._loadedInsId !== insId) {
+      slot.drawStore = slot.drawStore || {};
+      slot.drawStore[slot._loadedInsId] = Object.values(slot.drawings || {}).map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }));
+      Object.keys(slot.drawings || {}).forEach((id) => { try { c.removeOverlay(id); } catch (e) {} });
+      slot.drawings = {};
+    }
+    slot._loadedInsId = insId;
     const ticker = await window.LunData.resolveTicker(ins);
     // старый лоадер помечаем stale ДО setSymbol/setPeriod: их getBars идут на него
     // и не должны загрузить/перетереть прошлый ТФ (гонка «соскока» на пред. ТФ).
@@ -1148,6 +1167,14 @@
     if (slot.arbBundle) setTimeout(() => buildArb(slot, slot.arbBundle), 1000);
     // пересчитать базис к споту
     if (slot.basisPane) setTimeout(() => rebuildBasis(slot), 1100);
+    // восстановить рисунки нового инструмента (после подгрузки истории)
+    if (slot.drawStore && slot.drawStore[insId] && slot.drawStore[insId].length) {
+      setTimeout(() => {
+        (slot.drawStore[insId] || []).forEach((d) => {
+          try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = d; } catch (e) {}
+        });
+      }, 950);
+    }
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
   }
 
@@ -1470,7 +1497,7 @@
     const s = state;
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
-      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null,
+      trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null, barMode: (window.LUN.BAR && window.LUN.BAR.mode) || 'signed',
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
@@ -1516,6 +1543,7 @@
       if (ws.synMode) window.LUN.SYN.mode = ws.synMode;
       if (ws.sbc && ws.sbc.janma) window.LUN_SBC = ws.sbc;
       if (ws.maslov && ws.maslov.cycle) window.LUN_MASLOV = ws.maslov;
+      if (ws.barMode) window.LUN.BAR.mode = ws.barMode;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
@@ -1952,6 +1980,12 @@
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
         if (on) createBradleyPane(); else removeBradleyPane();
       }, false, 'Сидерограф: взвешенная сумма аспектов, экстремумы = даты разворота');
+      const barModeBtn = mkBtn(gannWrap, '↕ Барометр: 1 линия / 2 полярности', () => {
+        window.LUN.BAR.mode = window.LUN.BAR.mode === 'polar' ? 'signed' : 'polar';
+        if (state.bradleyPane) { try { state.chart.removeIndicator({ paneId: state.bradleyPane }); state.chart.createIndicator({ name: 'BradleyStrip', paneId: state.bradleyPane }, false); } catch (e) {} }
+        closeMenus();
+      }, false, '1 знаковая линия ↔ 2 полярности (🟢 поддержка / 🔴 напряжение), как у П. Свиридова');
+      barModeBtn.dataset.sync = 'barMode';
       mkBtn(gannWrap, '🜨 Космограмма…', () => { closeMenus(); cosmogramModal(); }, false, 'Колесо зодиака с планетами и аспектами на дату');
       gsub('Прогностика');
       mkBtn(gannWrap, '🎯 Астро-фит: что работает…', () => { closeMenus(); astroFitModal(); }, false, 'Ранжирование астро-событий по совпадению с разворотами ЭТОГО инструмента (нужна история — D1, 1–3 года)');
@@ -2157,7 +2191,15 @@
       else { slot.instrument = window.LUN.INSTRUMENTS[Math.min(i, window.LUN.INSTRUMENTS.length - 1)]; slot.tf = DEFAULT_TF; }
       slot.chart = kc.init(cell, { styles: THEME });
       cell.addEventListener('mousedown', () => activateSlot(i));
-      cell.addEventListener('dblclick', (e) => { const r = cell.getBoundingClientRect(); if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); } });
+      // отслеживаем панель под курсором (для удаления двойным кликом)
+      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; }); } catch (e) {}
+      cell.addEventListener('dblclick', (e) => {
+        const r = cell.getBoundingClientRect();
+        if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
+        // двойной клик по нижней панели индикатора — убрать её
+        const pid = slots[i].hoverPaneId;
+        if (pid && pid !== 'candle_pane' && pid !== 'x_axis' && pid.indexOf('candle') < 0) { activateSlot(i); removePaneById(pid); }
+      });
       slots.push(slot);
       if (L.cells > 1) wireSync(slot);
     }

@@ -259,6 +259,9 @@ LUN.ASTROGANN = {
  *   'both'   — знаковая линия + фон полярностей. */
 LUN.SYN = { mode: 'both' };
 
+/* Барометр аспектов: 'signed' (1 знаковая линия) | 'polar' (2 полярности, Свиридов). */
+LUN.BAR = { mode: 'signed' };
+
 /* Каркас Маслова: какой цикл рисуем — 'merc' (Меркурий–Солнце, товары/акции)
  * или 'moon' (Луна–Солнце, валюты). Индикатор читает window.LUN_MASLOV. */
 window.LUN_MASLOV = window.LUN_MASLOV || { cycle: 'merc' };

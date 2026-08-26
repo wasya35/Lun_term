@@ -958,31 +958,37 @@
       const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
       if (to - from < 2) return true;
       const SIGNED = [{ a: 0, s: 1 }, { a: 60, s: 1 }, { a: 90, s: -1 }, { a: 120, s: 1 }, { a: 180, s: -1 }];
+      // раздельно: гармония (pos, зелёная) и напряжение (neg, красная) — по Свиридову
       const val = (ts) => {
         const lon = {}; B.planets.forEach((p) => { lon[p] = window.LunAstro.bodyInfo(p, ts, 'geo').lon; });
-        let sum = 0;
+        let pos = 0, neg = 0;
         for (let i = 0; i < B.planets.length; i++) for (let j = i + 1; j < B.planets.length; j++) {
           const a = B.planets[i], b = B.planets[j]; let d = Math.abs(lon[a] - lon[b]) % 360; if (d > 180) d = 360 - d;
-          for (const A of SIGNED) { const off = Math.abs(d - A.a); if (off <= B.orb) { sum += A.s * ((B.pot[a] || 1) + (B.pot[b] || 1)) * (1 - off / B.orb); break; } }
+          for (const A of SIGNED) { const off = Math.abs(d - A.a); if (off <= B.orb) { const w = ((B.pot[a] || 1) + (B.pot[b] || 1)) * (1 - off / B.orb); if (A.s > 0) pos += w; else neg += w; break; } }
         }
-        return sum;
+        return { pos: pos, neg: neg, sig: pos - neg };
       };
-      const vals = []; let mx = 1e-9;
-      for (let i = from; i < to; i++) { const v = val(list[i].timestamp); vals[i] = v; if (Math.abs(v) > mx) mx = Math.abs(v); }
+      const mode = (window.LUN.BAR && window.LUN.BAR.mode) || 'signed';
+      const P = [], N = [], S = []; let mx = 1e-9, mxp = 1e-9;
+      for (let i = from; i < to; i++) { const v = val(list[i].timestamp); P[i] = v.pos; N[i] = v.neg; S[i] = v.sig; if (Math.abs(v.sig) > mx) mx = Math.abs(v.sig); if (v.pos > mxp) mxp = v.pos; if (v.neg > mxp) mxp = v.neg; }
       const H = bounding.height, mid = H / 2, W = bounding.width;
       ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
-      ctx.strokeStyle = '#e0c040'; ctx.lineWidth = 1.4; ctx.beginPath(); let started = false;
-      for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9; if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
-      ctx.stroke();
-      for (let i = from + 1; i < to - 1; i++) {
-        if ((vals[i] - vals[i - 1]) * (vals[i + 1] - vals[i]) < 0) {
-          const x = xAxis.convertToPixel(i), y = mid - (vals[i] / mx) * mid * 0.9;
-          ctx.fillStyle = (vals[i] > vals[i - 1]) ? '#ef5350' : '#26a69a';
-          ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.283); ctx.fill();
-          ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.stroke();
+      const line = (arr, yfn, col, lw) => { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath(); let st = false; for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = yfn(arr[i]); if (!st) { ctx.moveTo(x, y); st = true; } else ctx.lineTo(x, y); } ctx.stroke(); };
+      if (mode === 'polar') {
+        // две полярности от нуля вверх (поддержка 🟢 / напряжение 🔴), как у Свиридова
+        line(P, (v) => H - (v / mxp) * (H - 4), '#26a69a', 1.4);
+        line(N, (v) => H - (v / mxp) * (H - 4), '#ef5350', 1.4);
+      } else {
+        line(S, (v) => mid - (v / mx) * mid * 0.9, '#e0c040', 1.4);
+        for (let i = from + 1; i < to - 1; i++) {
+          if ((S[i] - S[i - 1]) * (S[i + 1] - S[i]) < 0) {
+            const x = xAxis.convertToPixel(i), y = mid - (S[i] / mx) * mid * 0.9;
+            ctx.fillStyle = (S[i] > S[i - 1]) ? '#ef5350' : '#26a69a';
+            ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.283); ctx.fill(); ctx.strokeStyle = '#0b0e14'; ctx.lineWidth = 1; ctx.stroke();
+          }
         }
       }
-      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText('Барометр аспектов (гео)', 4, 2);
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left'; ctx.fillText('Барометр аспектов (гео)' + (mode === 'polar' ? ' · 2 полярности' : ' · 1 линия'), 4, 2);
       return true;
     },
   });
@@ -1175,13 +1181,6 @@
               ctx.fillStyle = A.color; ctx.globalAlpha = exact ? 1 : 0.5; ctx.beginPath(); ctx.arc(x, yc, exact ? 4 : 2.4, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1;
               // знак аспекта над точным аспектом (☌⚹□△☍)
               if (exact) { ctx.fillStyle = A.color; ctx.font = 'bold 15px system-ui, sans-serif'; ctx.textBaseline = 'bottom'; ctx.textAlign = 'center'; ctx.fillText(A.sym, x, yc - 4); }
-              // applying (растущий, сходится к точному) ▲ / separating (убывающий) ▼ — по Маслову
-              const la2 = window.LunAstro.lonOf(pr.a, ts + 86400000, frame), lb2 = window.LunAstro.lonOf(pr.b, ts + 86400000, frame);
-              const off2 = Math.abs(sep(la2, lb2) - A.angle), applying = off2 < off;
-              ctx.fillStyle = applying ? '#26a69a' : '#ef5350'; ctx.globalAlpha = 0.75; ctx.beginPath();
-              const ty = yc + (applying ? -7 : 7), d = 3;
-              if (applying) { ctx.moveTo(x, ty - d); ctx.lineTo(x - d, ty + d); ctx.lineTo(x + d, ty + d); } else { ctx.moveTo(x, ty + d); ctx.lineTo(x - d, ty - d); ctx.lineTo(x + d, ty - d); }
-              ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
               break;
             }
           }
