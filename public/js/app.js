@@ -1950,9 +1950,20 @@
       if (on) createSignPane(body, order); else if (state.signPanes[body]) { state.chart.removeIndicator({ paneId: state.signPanes[body] }); delete state.signPanes[body]; }
     }, false, `Положение ${BODY_LABEL[body]} в знаках`).dataset.sync = 'sign:' + body; });
 
+    // краткая подсказка «как пользоваться» по индикаторам
+    const indNote = document.createElement('div'); indNote.className = 'menu-note';
+    indNote.innerHTML = 'Как пользоваться:<br>• <b>Объём / Δ дельта</b> — поток и давление покупателей/продавцов.<br>• <b>VWAP</b> — средняя по объёму ±σ: зоны «дорого/дёшево».<br>• <b>Сильбары</b> — всплеск объёма ≥2× = импульс «умных денег».<br>• <b>Сессии</b> — Азия/Лондон/Нью-Йорк фоном (интрадей).<br>• <b>Марков</b> (M) — режим BEAR/SIDE/BULL + матрица переходов.<br>• <b>ОИ физ/юр</b> — позиции физлиц/юрлиц (фьючерсы MOEX); экстремум юриков = контр-сигнал.<br>• <b>Базис к споту</b> — фьюч−спот + z: керри/хедж-давление.<br>• <b>Узлы ☾ · ☿/☉ знак</b> — астро-положения на цене.';
+    indWrap.appendChild(indNote);
+
     buildAspectButtons();
+    const aspNote = document.createElement('div'); aspNote.className = 'menu-note';
+    aspNote.innerHTML = 'Как пользоваться:<br>• Глифы планет — полоса аспектов к Солнцу (жёсткие □☍ = разворот, мягкие ⚹△ = продолжение).<br>• <b>∀ все</b> — сводная полоса всех пар.<br>• <b>⚙ Аспекты по выбору</b> — свои пары «кто↔с кем», знаки на точных аспектах.';
+    document.getElementById('aspects').appendChild(aspNote);
 
     buildCycleButtons();
+    const cycNote = document.createElement('div'); cycNote.className = 'menu-note';
+    cycNote.innerHTML = 'Как пользоваться:<br>• <b>☾ Луна в знаках</b> — верхняя лента настроения.<br>• <b>Циклы 1–6</b> — зоны лонг/шорт по долготе тела (фон-фильтр).<br>• <b>🗓 Астро-календарь</b> — события на 90 дней вперёд.';
+    document.getElementById('cycles').appendChild(cycNote);
 
     // ---- меню «📐 Ганн» ----
     const gannWrap = document.getElementById('gann');
@@ -2062,6 +2073,9 @@
       regHotkey(t.key, () => startDraw(t.id));
     });
     mkBtn(drawWrap, '✕ очистить всё', () => { closeMenus(); state.chart.removeOverlay(); }).className = 'danger';
+    const drawNote = document.createElement('div'); drawNote.className = 'menu-note';
+    drawNote.innerHTML = 'Как пользоваться:<br>• Выбери инструмент → клики по графику ставят точки (2 клика — линия/угол).<br>• <b>Ган 1×1</b> — от разворота; угол правится в свойствах.<br>• <b>Луч ⨯N</b> — до N-го пересечения уровня.<br>• <b>Вертикаль (дата)</b> — метка времени на графике.<br>• Клик по объекту — выделить, Delete — удалить, Ctrl+C/V — копия.<br>• Рисунки хранятся отдельно для каждого инструмента.';
+    drawWrap.appendChild(drawNote);
     regHotkey('+', () => zoomChart(true)); regHotkey('=', () => zoomChart(true)); regHotkey('-', () => zoomChart(false));   // зум +/−
 
     const setWrap = document.getElementById('settings');
