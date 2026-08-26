@@ -36,6 +36,35 @@
     const close = () => bg.remove();
     m.querySelector('.x').onclick = close; bg.onclick = (e) => { if (e.target === bg) close(); };
   }
+  // Справочник: список статей по инструментам (window.LUN_HELP)
+  function helpArticlesModal(openId) {
+    const arts = window.LUN_HELP || [];
+    if (!arts.length) { openModal('Справочник', '<p>Справочник не загрузился.</p>'); return; }
+    const cats = []; arts.forEach((a) => { if (cats.indexOf(a.cat) < 0) cats.push(a.cat); });
+    const listHtml = cats.map((c) => '<div class="hlp-sub">' + c + '</div>' + arts.filter((a) => a.cat === c).map((a) => `<button class="hlp-item" data-id="${a.id}">${a.title}</button>`).join('')).join('');
+    openModal('📖 Справочник', `
+      <style>
+        .hlp-wrap{display:flex;gap:14px}
+        .hlp-list{flex:0 0 240px;max-height:64vh;overflow:auto;border-right:1px solid #232b3a;padding-right:8px}
+        .hlp-sub{color:#8b93a7;font-size:10px;text-transform:uppercase;letter-spacing:.5px;padding:10px 4px 3px}
+        .hlp-item{display:block;width:100%;text-align:left;background:transparent;color:#d7deea;border:0;border-radius:6px;padding:6px 8px;cursor:pointer;font-size:13px}
+        .hlp-item:hover,.hlp-item.active{background:#1a2130}
+        .hlp-body{flex:1;max-height:64vh;overflow:auto;line-height:1.6}
+        .hlp-body h4{color:#3aa0ff;margin:12px 0 3px;font-size:13px}
+        .hlp-body p{margin:5px 0}
+        @media(max-width:700px){.hlp-wrap{flex-direction:column}.hlp-list{flex:none;border-right:0;border-bottom:1px solid #232b3a;padding-right:0;max-height:none}}
+      </style>
+      <div class="hlp-wrap"><div class="hlp-list">${listHtml}</div><div class="hlp-body" id="hlp-body"></div></div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const show = (id) => {
+      const a = arts.find((x) => x.id === id) || arts[0];
+      bg.querySelector('#hlp-body').innerHTML = '<h3 style="margin:2px 0 8px;font-size:15px">' + a.title + '</h3>' + a.body
+        + '<p style="color:#6b7280;font-size:11px;margin-top:14px;border-top:1px solid #232b3a;padding-top:8px">Исследовательский материал. Терминал не обещает доход — даёт данные и методы для проверки.</p>';
+      bg.querySelectorAll('.hlp-item').forEach((b) => b.classList.toggle('active', b.dataset.id === a.id));
+    };
+    bg.querySelectorAll('.hlp-item').forEach((b) => { b.onclick = () => show(b.dataset.id); });
+    show(openId || arts[0].id);
+  }
   function helpModal() {
     const h = (t) => `<h3 style="margin:14px 0 4px;color:#3aa0ff;font-size:13px">${t}</h3>`;
     openModal('Справка — как работают инструменты', `
@@ -2053,6 +2082,7 @@
     regHotkey('b', () => btBtn.click());
     mkBtn(setWrap, '🔬 Исследование сигналов', () => { closeMenus(); researchModal(); }, false, 'Выбираемый бэктест: объём, EMA, пробой, RSI, лунные зоны — на текущих данных');
     mkBtn(setWrap, '📰 Новости по инструменту', () => { closeMenus(); toggleNews(!newsOpen); }, false, 'Правая колонка новостей по текущему инструменту (СМИ как контр-индикатор)');
+    mkBtn(setWrap, '📖 Справочник (статьи по инструментам)', () => { closeMenus(); helpArticlesModal(); }, false, 'Короткие статьи: что это, принцип, как читать и использовать — по каждому блоку');
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '📚 Как пользоваться', () => { closeMenus(); guideModal(); }, false, 'Пошагово: Астро, Ганн, Бэктест');
     mkBtn(setWrap, '🌗 Тема: тёмная/светлая', () => { closeMenus(); setTheme(LOOK.theme === 'dark' ? 'light' : 'dark'); }, false, 'Переключить оформление');
