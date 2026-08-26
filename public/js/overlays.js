@@ -117,6 +117,25 @@
     },
   });
 
+  /* --- вертикальная линия времени (полная высота панели) + дата/время --- */
+  kc.registerOverlay({
+    name: 'lun_vline', totalStep: 2, needDefaultPointFigure: false,
+    createPointFigures: ({ coordinates, overlay, bounding }) => {
+      if (!coordinates.length) return [];
+      const p0 = coordinates[0], st = styleOf(overlay);
+      const pt = overlay.points && overlay.points[0];
+      const ts = pt && pt.timestamp;
+      const pad = (x) => (x < 10 ? '0' + x : '' + x);
+      let label = '';
+      if (ts) { const d = new Date(ts); label = pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+      const H = bounding.height;
+      return [
+        { type: 'line', attrs: { coordinates: [{ x: p0.x, y: 0 }, { x: p0.x, y: H }] }, styles: lineStyle(st) },
+        { type: 'text', attrs: { x: p0.x, y: H - 1, text: label, baseline: 'bottom', align: 'center' }, ignoreEvent: true, styles: { color: '#0b0e14', backgroundColor: st.color, size: 11, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, borderRadius: 3 } },
+      ];
+    },
+  });
+
   /* --- профиль объёма (горизонтальный объём) по диапазону --- */
   kc.registerOverlay({
     name: 'lun_vprofile', totalStep: 3, needDefaultPointFigure: true,

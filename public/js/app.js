@@ -1021,14 +1021,13 @@
     wishPane(state.synPane, { height: 100, order: 42 });
   }
   function removeSynastryPane() { if (state.synPane) { try { state.chart.removeIndicator({ paneId: state.synPane }); } catch (e) {} state.synPane = null; } }
-  // убрать нижнюю панель индикатора по её paneId (двойной клик по панели) + чистка трекеров
-  function removePaneById(pid) {
-    const s = state;
-    if (s.markovPanes && s.markovPanes.indexOf(pid) >= 0) { try { removeMarkov(); } catch (e) {} syncToolbar(); return; }
-    try { s.chart.removeIndicator({ paneId: pid }); } catch (e) {}
-    ['volumePane', 'deltaPane', 'oiPane', 'basisPane', 'retroPane', 'bradleyPane', 'synPane', 'sbcPane', 'aspSelPane', 'uranusPane', 'allAspectPane', 'signPane', 'arbPane'].forEach((k) => { if (s[k] === pid) s[k] = null; });
-    ['signPanes', 'cyclePanes', 'aspectPanes'].forEach((mk) => { const m = s[mk]; if (m) Object.keys(m).forEach((kk) => { if (m[kk] === pid) delete m[kk]; }); });
-    try { syncToolbar(); } catch (e) {}
+  // спрятать/показать весь подвал: разворачиваем ценовую панель на весь экран
+  // (state:'maximize' сворачивает остальные панели в 0), индикаторы НЕ удаляются.
+  function togglePanesHidden(slot) {
+    slot = slot || state; const c = slot.chart; if (!c) return;
+    slot.panesHidden = !slot.panesHidden;
+    try { c.setPaneOptions({ id: 'candle_pane', state: slot.panesHidden ? 'maximize' : 'normal' }); } catch (e) {}
+    try { c.resize(); } catch (e) {}
   }
 
   // Космограмма: колесо зодиака с планетами и аспектами на выбранную дату.
@@ -1209,6 +1208,7 @@
     { id: 'lun_text',               label: 'Текст',         key: 'x' },
     { id: 'lun_gann',               label: 'Ган 1×1',       key: 'g' },
     { id: 'lun_hray',               label: 'Луч ⨯N',        key: 'h' },
+    { id: 'lun_vline',              label: 'Вертикаль (дата)', key: 'v' },
     { id: 'lun_vprofile',           label: 'Об.профиль',    key: 'd' },
   ];
   /* Ctrl + перетаскивание = скопировать оверлей: в начале переноса при зажатом
@@ -2196,9 +2196,9 @@
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
         if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
-        // двойной клик по нижней панели индикатора — убрать её
+        // двойной клик по ПОЛЮ ЦЕНЫ — спрятать/показать весь подвал (как в Tiger Trade)
         const pid = slots[i].hoverPaneId;
-        if (pid && pid !== 'candle_pane' && pid !== 'x_axis' && pid.indexOf('candle') < 0) { activateSlot(i); removePaneById(pid); }
+        if (!pid || pid === 'candle_pane') { activateSlot(i); togglePanesHidden(slots[i]); }
       });
       slots.push(slot);
       if (L.cells > 1) wireSync(slot);

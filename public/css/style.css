@@ -91,3 +91,22 @@ body {
 }
 .statusbar b { color: var(--text); }
 .spacer { flex: 1 1 auto; }
+
+/* ---- мобильная раскладка ---------------------------------------------------
+ * Узкий экран: верхнее меню прокручивается ГОРИЗОНТАЛЬНО само по себе (свайп),
+ * а не расширяет страницу и не сдвигает график. Открытая выпадашка — фикс.
+ * панель во всю ширину (не обрезается прокруткой меню и не двигает график). */
+html, body { overflow-x: hidden; }
+@media (max-width: 820px) {
+  .menubar {
+    flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  }
+  .menubar .spacer { display: none; }         /* не растягиваем панель вправо */
+  .menu-btn { padding: 6px 9px; font-size: 13px; }
+  .menu.open > .menu-drop {
+    position: fixed; left: 6px; right: 6px; top: 46px; margin-top: 0;
+    min-width: 0; max-height: 78vh; overflow-y: auto; z-index: 200;
+  }
+  #layouts-drop { left: 6px; right: 6px; }
+}
