@@ -136,6 +136,36 @@
     },
   });
 
+  /* --- позиция (как в TradingView): вход → цель, стоп по R:R --- */
+  kc.registerOverlay({
+    name: 'lun_pos', totalStep: 3, needDefaultPointFigure: true,
+    createPointFigures: ({ coordinates, overlay, bounding }) => {
+      if (coordinates.length < 2) return [];
+      const [p0, p1] = coordinates, pts = overlay.points || [], ed = overlay.extendData || {};
+      const e = pts[0] ? pts[0].value : null, tp = pts[1] ? pts[1].value : null;
+      if (e == null || tp == null || !(e > 0)) return [{ type: 'line', attrs: { coordinates: [p0, p1] }, styles: { color: '#8b93a7' } }];
+      const rr = ed.rr || (window.LUN.POS && window.LUN.POS.rr) || 2;
+      const long = tp >= e;
+      const sl = e - (tp - e) / rr;                 // риск = вознаграждение / R:R
+      const yPerPrice = (tp - e) !== 0 ? (p1.y - p0.y) / (tp - e) : 0;
+      const slY = p0.y + yPerPrice * (sl - e);
+      const right = bounding.width, x0 = p0.x;
+      const rewardPct = (tp - e) / e * 100, riskPct = (sl - e) / e * 100;
+      const green = 'rgba(38,166,154,0.14)', red = 'rgba(239,83,80,0.14)';
+      const dir = long ? 'ЛОНГ' : 'ШОРТ';
+      return [
+        { type: 'rect', attrs: { x: x0, y: Math.min(p0.y, p1.y), width: right - x0, height: Math.abs(p1.y - p0.y) }, styles: { style: 'fill', color: green } },
+        { type: 'rect', attrs: { x: x0, y: Math.min(p0.y, slY), width: right - x0, height: Math.abs(slY - p0.y) }, styles: { style: 'fill', color: red } },
+        { type: 'line', attrs: { coordinates: [{ x: x0, y: p0.y }, { x: right, y: p0.y }] }, styles: { color: '#c7d0e0', size: 1 } },
+        { type: 'line', attrs: { coordinates: [{ x: x0, y: p1.y }, { x: right, y: p1.y }] }, styles: { color: '#26a69a', size: 1, style: 'dashed' } },
+        { type: 'line', attrs: { coordinates: [{ x: x0, y: slY }, { x: right, y: slY }] }, styles: { color: '#ef5350', size: 1, style: 'dashed' } },
+        { type: 'text', attrs: { x: x0 + 4, y: p0.y - 2, text: dir + ' вход ' + e.toFixed(2) + ' · R:R ' + rr.toFixed(1), baseline: 'bottom' }, ignoreEvent: true, styles: { color: '#0b0e14', backgroundColor: long ? '#26a69a' : '#ef5350', size: 11, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, borderRadius: 3 } },
+        { type: 'text', attrs: { x: right - 4, y: p1.y - 2, text: 'TP ' + tp.toFixed(2) + ' (' + (rewardPct >= 0 ? '+' : '') + rewardPct.toFixed(2) + '%)', baseline: 'bottom', align: 'right' }, ignoreEvent: true, styles: { color: '#26a69a', size: 11 } },
+        { type: 'text', attrs: { x: right - 4, y: slY + 2, text: 'SL ' + sl.toFixed(2) + ' (' + riskPct.toFixed(2) + '%)', baseline: 'top', align: 'right' }, ignoreEvent: true, styles: { color: '#ef5350', size: 11 } },
+      ];
+    },
+  });
+
   /* --- профиль объёма (горизонтальный объём) по диапазону --- */
   kc.registerOverlay({
     name: 'lun_vprofile', totalStep: 3, needDefaultPointFigure: true,

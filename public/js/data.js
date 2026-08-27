@@ -164,12 +164,21 @@
     // ТФ, если его запрос вернётся последним. Поэтому проверяем stale до и после
     // загрузки.
     const loader = {
-      pushBar: null, stale: false,
+      pushBar: null, stale: false, replayBuffer: null,
       getBars: async ({ type, symbol, period, callback }) => {
         if (loader.stale || type !== 'init') { callback([], false); return; }
         const tf = window.LUN.TIMEFRAMES.find((t) => t.span === period.span && t.type === period.type) || { iss: 60 };
-        const bars = await loadCandles(symbol, tf);
+        let bars = await loadCandles(symbol, tf);
         if (loader.stale) { callback([], false); return; }   // ТФ уже сменили — не перетираем
+        // РЕПЛЕЙ: отдаём только прошлое до cutoff, будущее прячем в буфер —
+        // шаг вперёд «доливает» бары через realtime-колбэк (см. app.js).
+        loader.replayBuffer = null;
+        const R = window.LUN_REPLAY;
+        if (bars && bars.length && R && R.on && R.at) {
+          const past = [], fut = [];
+          for (const b of bars) (b.timestamp <= R.at ? past : fut).push(b);
+          loader.replayBuffer = fut; bars = past;
+        }
         callback(bars || demoBars(symbol, period), false);
         if (bars) console.info('[data]', window.LUN_DATA_SOURCE);
         else console.warn('[data] демо-режим:', window.LUN_DATA_ERROR);

@@ -1181,10 +1181,12 @@
     c.setPeriod({ span: tf.span, type: tf.type });
     c.setDataLoader(slot.loader);
     if (slot === state) document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
-    // подключить/переподключить поток после подгрузки истории
-    if (window.LunStream) setTimeout(() => window.LunStream.attach(slot), 700);
+    // подключить/переподключить поток после подгрузки истории (НЕ в реплее —
+    // иначе живые бары «настоящего» перебьют симуляцию прошлого)
+    const replaying = window.LUN_REPLAY && window.LUN_REPLAY.on;
+    if (window.LunStream && !replaying) setTimeout(() => window.LunStream.attach(slot), 700);
     // авто-коннектор: включить поток нужного рынка для активного графика
-    if (slot === state) setTimeout(applyAutoConnect, 750);
+    if (slot === state && !replaying) setTimeout(applyAutoConnect, 750);
     // новости: обновить список/метку настроения под новый инструмент
     if (slot === state && (newsOpen || newsMoodEnabled)) setTimeout(() => loadNews(), 400);
     // обновить наложение 2-го графика под новый ТФ/инструмент
@@ -1207,6 +1209,89 @@
   }
 
   function reloadAllSlots() { slots.forEach((s) => load(s)); }
+
+  /* ---------- РЕПЛЕЙ (симуляция: откат к периоду + шаг вперёд) ----------------
+   * Идея: cutoff по времени (window.LUN_REPLAY.at). data.js отдаёт бары только
+   * до cutoff, остальное прячет в loader.replayBuffer. Шаг вперёд «доливает»
+   * следующие бары через realtime-колбэк (pushBar) — без перезагрузки. Работает
+   * на ВСЕХ слотах/ТФ сразу, астро/Ганн считаются на момент cutoff. */
+  window.LUN_REPLAY = window.LUN_REPLAY || { on: false, at: 0 };
+  let replayTimer = null;
+  const REPLAY_PERIOD_MS = { minute: 60000, hour: 3600000, day: 86400000 };
+  const tfMsOf = (tf) => (REPLAY_PERIOD_MS[tf.type] || 3600000) * (tf.span || 1);
+  function startReplay(atTs) {
+    if (!atTs) return;
+    try { if (window.LunStream) window.LunStream.detachAll(); } catch (e) {}   // глушим живой поток
+    window.LUN_REPLAY = { on: true, at: atTs };
+    reloadAllSlots();                       // getBars обрежет до cutoff и заполнит буферы
+    showReplayBar(); updateReplayBar();
+  }
+  function flushReplaySlots() {
+    slots.forEach((s) => {
+      const buf = s.loader && s.loader.replayBuffer; if (!buf || !buf.length) return;
+      let n = 0;
+      while (buf.length && buf[0].timestamp <= window.LUN_REPLAY.at) { const bar = buf.shift(); try { if (s.loader.pushBar) s.loader.pushBar(bar); } catch (e) {} if (++n > 5000) break; }
+    });
+    if (typeof simMarkStep === 'function') simMarkStep();   // отметить позиции (paper) — если модуль включён
+  }
+  function stepReplay(nBars) {
+    if (!window.LUN_REPLAY.on) return;
+    const step = tfMsOf(state.tf) * (nBars || 1);
+    window.LUN_REPLAY.at += step;
+    flushReplaySlots(); updateReplayBar();
+    // если буферы активного слота пусты — дошли до конца истории
+    if (state.loader && state.loader.replayBuffer && !state.loader.replayBuffer.length) pauseReplay();
+  }
+  let replaySpeed = 700;
+  function playReplay() { if (replayTimer) return; replayTimer = setInterval(() => stepReplay(1), replaySpeed); updateReplayBar(); }
+  function pauseReplay() { if (replayTimer) { clearInterval(replayTimer); replayTimer = null; } updateReplayBar(); }
+  function stopReplay() { pauseReplay(); window.LUN_REPLAY = { on: false, at: 0 }; reloadAllSlots(); hideReplayBar(); }
+
+  let replayBarEl = null;
+  function showReplayBar() {
+    if (replayBarEl) { replayBarEl.style.display = 'flex'; return; }
+    const el = document.createElement('div'); el.id = 'replay-bar';
+    el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:34px;z-index:300;display:flex;align-items:center;gap:6px;background:#121722;border:1px solid #2a3a4f;border-radius:10px;padding:6px 10px;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:13px;color:#d7deea';
+    const mk = (t, title, fn) => { const b = document.createElement('button'); b.textContent = t; b.title = title; b.style.cssText = 'background:#1a2130;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:14px'; b.onclick = fn; el.appendChild(b); return b; };
+    mk('⏭', 'шаг вперёд (1 бар)', () => stepReplay(1));
+    mk('⏩', 'вперёд 10 баров', () => stepReplay(10));
+    el._play = mk('▶', 'играть/пауза', () => { if (replayTimer) pauseReplay(); else playReplay(); });
+    const spd = document.createElement('select'); spd.style.cssText = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:3px'; [['0.3с', 300], ['0.7с', 700], ['1.5с', 1500]].forEach(([l, v]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === replaySpeed) o.selected = true; spd.appendChild(o); }); spd.onchange = () => { replaySpeed = +spd.value; if (replayTimer) { pauseReplay(); playReplay(); } }; el.appendChild(spd);
+    el._time = document.createElement('span'); el._time.style.cssText = 'color:#8b93a7;min-width:130px;text-align:center'; el.appendChild(el._time);
+    mk('■', 'выйти из реплея', () => stopReplay()).style.borderColor = '#5a2a30';
+    document.body.appendChild(el); replayBarEl = el;
+  }
+  function hideReplayBar() { if (replayBarEl) replayBarEl.style.display = 'none'; }
+  function updateReplayBar() {
+    if (!replayBarEl) return;
+    if (replayBarEl._play) replayBarEl._play.textContent = replayTimer ? '⏸' : '▶';
+    const d = new Date(window.LUN_REPLAY.at); const p = (x) => (x < 10 ? '0' + x : x);
+    if (replayBarEl._time) replayBarEl._time.textContent = window.LUN_REPLAY.on ? (p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())) : '';
+  }
+  function replayStartModal() {
+    const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
+    const btn = 'background:#1c3a2a;color:#d7deea;border:1px solid #2a5a3a;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
+    let def = new Date(Date.now() - 90 * 86400000);
+    try { const l = state.chart.getDataList(); if (l && l.length) def = new Date(l[Math.floor(l.length * 0.6)].timestamp); } catch (e) {}
+    const ds = def.toISOString().slice(0, 10);
+    openModal('🧪 Откат к периоду (реплей)', `
+      <p style="color:#8b93a7">График откатится к выбранной дате; кнопками ⏭/▶ идёшь вперёд по барам. Работают <b>все ТФ, все астро и Ганн-инструменты</b> на момент отката — как реальная торговля в прошлом. Нужна загруженная история (углуби «Период»).</p>
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-top:8px">
+        <label>Дата отката<br><input id="rp-date" type="date" value="${ds}" style="${inp}"></label>
+        <button id="rp-go" style="${btn}">Начать реплей</button>
+      </div>
+      <p style="color:#6b7280;font-size:11px;margin-top:8px">Шаг = один бар активного ТФ. Позиции (paper) добавим отдельным инструментом.</p>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#rp-go').onclick = () => { const v = bg.querySelector('#rp-date').value; const ts = v ? Date.parse(v + 'T00:00:00') : 0; if (!ts) { alert('Укажите дату.'); return; } bg.remove(); startReplay(ts); };
+  }
+  function buildSim() {
+    const wrap = document.getElementById('sim'); if (!wrap) return; wrap.innerHTML = '';
+    mkBtn(wrap, '⏪ Откат к периоду (реплей)…', () => { closeMenus(); replayStartModal(); }, false, 'Откатить график к дате и идти вперёд по барам — тест стратегий на всех ТФ с астро/Ганн');
+    mkBtn(wrap, '■ Выйти из реплея', () => { closeMenus(); stopReplay(); }, false, 'Вернуть полные данные');
+    const note = document.createElement('div'); note.className = 'menu-note';
+    note.innerHTML = 'Реплей: график откатывается к дате, ⏭/▶ — вперёд по барам. Все ТФ и все астро/Ганн-инструменты работают на момент отката.<br>Позиции: «Рисование → Позиция ⇅» — клик вход, клик цель (вверх=лонг, вниз=шорт), стоп по R:R. Зелёная зона — цель, красная — риск.';
+    wrap.appendChild(note);
+  }
   // модалка выбора диапазона дат «от–до»
   function historyModal(onApply) {
     const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
@@ -1238,6 +1323,7 @@
     { id: 'lun_gann',               label: 'Ган 1×1',       key: 'g' },
     { id: 'lun_hray',               label: 'Луч ⨯N',        key: 'h' },
     { id: 'lun_vline',              label: 'Вертикаль (дата)', key: 'v' },
+    { id: 'lun_pos',                label: 'Позиция ⇅ (вход→цель)', key: 'p' },
     { id: 'lun_vprofile',           label: 'Об.профиль',    key: 'd' },
   ];
   /* Ctrl + перетаскивание = скопировать оверлей: в начале переноса при зажатом
@@ -1868,6 +1954,7 @@
     loadTrader();
     buildInstruments();
     buildPersonal();
+    buildSim();
     loadFavs();
     buildInstruments();
 
