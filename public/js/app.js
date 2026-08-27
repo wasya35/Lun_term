@@ -1247,18 +1247,122 @@
   function pauseReplay() { if (replayTimer) { clearInterval(replayTimer); replayTimer = null; } updateReplayBar(); }
   function stopReplay() { pauseReplay(); window.LUN_REPLAY = { on: false, at: 0 }; reloadAllSlots(); hideReplayBar(); }
 
+  /* ---------- Paper-трейдинг: сделки, авто-закрытие по TP/SL, PnL ---------- */
+  const SIM = { open: [], trades: [], settings: { rr: 2, riskPct: 1 } };
+  function simOpen(dir) {
+    if (!slots[activeIdx]) return;
+    const c = state.chart; let l; try { l = c.getDataList(); } catch (e) { return; }
+    if (!l.length) { alert('Нет данных для сделки.'); return; }
+    const bar = l[l.length - 1], entry = bar.close, ts = bar.timestamp;
+    const risk = entry * (SIM.settings.riskPct / 100);
+    const sl = dir === 'long' ? entry - risk : entry + risk;
+    const tp = dir === 'long' ? entry + risk * SIM.settings.rr : entry - risk * SIM.settings.rr;
+    let ovId = null;
+    try { const id = c.createOverlay(Object.assign({ name: 'lun_pos', points: [{ timestamp: ts, value: entry }, { timestamp: ts, value: tp }], extendData: { rr: SIM.settings.rr, style: defOvStyle() } }, overlayEvents())); ovId = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); } catch (e) {}
+    SIM.open.push({ dir, entry, sl, tp, ts, ins: (state.instrument.title || state.instrument.id), slot: activeIdx, lastIdx: l.length - 1, ovId, rr: SIM.settings.rr });
+    updateReplayBar();
+  }
+  function closeTrade(pos, exit, ts, reason) {
+    const pnlPct = (pos.dir === 'long' ? (exit - pos.entry) / pos.entry : (pos.entry - exit) / pos.entry) * 100;
+    const rMult = SIM.settings.riskPct ? pnlPct / SIM.settings.riskPct : 0;   // в R (TP=+rr, SL=−1)
+    SIM.trades.push({ dir: pos.dir, ins: pos.ins, entry: pos.entry, exit, ts: pos.ts, exitTs: ts, reason, pnlPct, rMult });
+    if (pos.ovId) { try { state.chart.removeOverlay(pos.ovId); } catch (e) {} }
+  }
+  // проверка открытых позиций против новых баров (вызывается на каждом шаге реплея)
+  function simMarkStep() {
+    if (!SIM.open.length) return;
+    SIM.open = SIM.open.filter((pos) => {
+      const s = slots[pos.slot]; if (!s) return true;
+      let l; try { l = s.chart.getDataList(); } catch (e) { return true; }
+      for (let i = pos.lastIdx + 1; i < l.length; i++) {
+        const b = l[i]; pos.lastIdx = i;
+        const hitSl = pos.dir === 'long' ? b.low <= pos.sl : b.high >= pos.sl;
+        const hitTp = pos.dir === 'long' ? b.high >= pos.tp : b.low <= pos.tp;
+        if (hitSl) { closeTrade(pos, pos.sl, b.timestamp, 'SL'); return false; }   // консервативно: стоп раньше цели
+        if (hitTp) { closeTrade(pos, pos.tp, b.timestamp, 'TP'); return false; }
+      }
+      return true;
+    });
+    updateReplayBar();
+  }
+  function simCloseAll() {
+    SIM.open.forEach((pos) => {
+      const s = slots[pos.slot]; let l; try { l = s.chart.getDataList(); } catch (e) { l = null; }
+      const b = l && l.length ? l[l.length - 1] : null; if (!b) return;
+      closeTrade(pos, b.close, b.timestamp, 'закрыто');
+    });
+    SIM.open = []; updateReplayBar();
+  }
+  function simResultsModal() {
+    const T = SIM.trades;
+    const wins = T.filter((t) => t.pnlPct > 0).length, wr = T.length ? (wins / T.length * 100) : 0;
+    const sumR = T.reduce((a, t) => a + t.rMult, 0), sumPnl = T.reduce((a, t) => a + t.pnlPct, 0);
+    const rows = T.map((t, i) => {
+      const d = new Date(t.exitTs); const dd = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + d.getFullYear();
+      const c = t.pnlPct >= 0 ? '#26a69a' : '#ef5350';
+      return `<tr><td>${i + 1}</td><td>${t.ins}</td><td style="color:${t.dir === 'long' ? '#26a69a' : '#ef5350'}">${t.dir === 'long' ? 'ЛОНГ' : 'ШОРТ'}</td><td style="text-align:right">${t.entry.toFixed(2)}</td><td style="text-align:right">${t.exit.toFixed(2)}</td><td style="text-align:center">${t.reason}</td><td style="text-align:right;color:${c}">${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}%</td><td style="text-align:right;color:${c}">${t.rMult >= 0 ? '+' : ''}${t.rMult.toFixed(2)}R</td><td style="text-align:right">${dd}</td></tr>`;
+    }).join('') || '<tr><td colspan="9" style="color:#6b7280;padding:8px">Сделок пока нет. Открывай Лонг/Шорт в панели симулятора.</td></tr>';
+    openModal('📊 Результаты симуляции', `
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px">
+        <div><div style="color:#8b93a7;font-size:11px">Сделок</div><b style="font-size:16px">${T.length}</b></div>
+        <div><div style="color:#8b93a7;font-size:11px">Винрейт</div><b style="font-size:16px;color:${wr >= 50 ? '#26a69a' : '#e0c040'}">${wr.toFixed(0)}%</b></div>
+        <div><div style="color:#8b93a7;font-size:11px">Сумма PnL</div><b style="font-size:16px;color:${sumPnl >= 0 ? '#26a69a' : '#ef5350'}">${sumPnl >= 0 ? '+' : ''}${sumPnl.toFixed(2)}%</b></div>
+        <div><div style="color:#8b93a7;font-size:11px">Сумма R</div><b style="font-size:16px;color:${sumR >= 0 ? '#26a69a' : '#ef5350'}">${sumR >= 0 ? '+' : ''}${sumR.toFixed(2)}R</b></div>
+        <div style="flex:1"></div>
+        <button id="sim-clear" style="align-self:center;background:#3a1a20;color:#ef8a8a;border:1px solid #5a2a30;border-radius:6px;padding:5px 10px;cursor:pointer">Очистить журнал</button>
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:300px">
+          <div style="color:#3aa0ff;font-size:12px;margin-bottom:4px">Кривая доходности (R, накопительно)</div>
+          <canvas id="sim-eq" width="460" height="200" style="width:100%;max-width:460px;background:#0b0e14;border:1px solid #232b3a;border-radius:6px"></canvas>
+        </div>
+        <div style="flex:1;min-width:320px;max-height:230px;overflow:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead><tr style="color:#8b93a7;text-align:left;position:sticky;top:0;background:#121722"><th>#</th><th>Инстр</th><th>Напр</th><th style="text-align:right">Вход</th><th style="text-align:right">Выход</th><th>Итог</th><th style="text-align:right">PnL</th><th style="text-align:right">R</th><th style="text-align:right">Дата</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>
+      <p style="color:#6b7280;font-size:11px;margin-top:8px">Авто-закрытие: касание TP/SL внутри бара (при совпадении в одном баре — сначала стоп). R:R и риск задаются в панели симулятора. Исследовательский тест — не гарантия результата.</p>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#sim-clear').onclick = () => { SIM.trades = []; bg.remove(); updateReplayBar(); };
+    // equity-кривая
+    const cv = bg.querySelector('#sim-eq'); if (cv && cv.getContext) {
+      const ctx = cv.getContext('2d'), W = cv.width, Hh = cv.height;
+      let cum = 0; const pts = [0]; T.forEach((t) => { cum += t.rMult; pts.push(cum); });
+      const mn = Math.min(0, ...pts), mx = Math.max(0.5, ...pts), rng = (mx - mn) || 1;
+      const x = (i) => 6 + i * (W - 12) / Math.max(1, pts.length - 1), y = (v) => Hh - 6 - (v - mn) / rng * (Hh - 12);
+      ctx.strokeStyle = '#2a3242'; ctx.beginPath(); ctx.moveTo(0, y(0)); ctx.lineTo(W, y(0)); ctx.stroke();
+      ctx.strokeStyle = cum >= 0 ? '#26a69a' : '#ef5350'; ctx.lineWidth = 1.8; ctx.beginPath();
+      pts.forEach((v, i) => { const px = x(i), py = y(v); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }); ctx.stroke();
+    }
+  }
+
   let replayBarEl = null;
   function showReplayBar() {
     if (replayBarEl) { replayBarEl.style.display = 'flex'; return; }
     const el = document.createElement('div'); el.id = 'replay-bar';
-    el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:34px;z-index:300;display:flex;align-items:center;gap:6px;background:#121722;border:1px solid #2a3a4f;border-radius:10px;padding:6px 10px;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:13px;color:#d7deea';
-    const mk = (t, title, fn) => { const b = document.createElement('button'); b.textContent = t; b.title = title; b.style.cssText = 'background:#1a2130;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 9px;cursor:pointer;font-size:14px'; b.onclick = fn; el.appendChild(b); return b; };
+    el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:34px;z-index:300;display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:center;max-width:96vw;background:#121722;border:1px solid #2a3a4f;border-radius:10px;padding:6px 10px;box-shadow:0 8px 30px rgba(0,0,0,.5);font-size:13px;color:#d7deea';
+    const mk = (t, title, fn, bg, bc) => { const b = document.createElement('button'); b.textContent = t; b.title = title; b.style.cssText = 'background:' + (bg || '#1a2130') + ';color:#d7deea;border:1px solid ' + (bc || '#2a3242') + ';border-radius:6px;padding:4px 9px;cursor:pointer;font-size:13px'; b.onclick = fn; el.appendChild(b); return b; };
+    const sep = () => { const s = document.createElement('span'); s.textContent = '·'; s.style.color = '#3a4150'; el.appendChild(s); };
+    // время
     mk('⏭', 'шаг вперёд (1 бар)', () => stepReplay(1));
-    mk('⏩', 'вперёд 10 баров', () => stepReplay(10));
+    mk('⏩', '+10 баров', () => stepReplay(10));
     el._play = mk('▶', 'играть/пауза', () => { if (replayTimer) pauseReplay(); else playReplay(); });
-    const spd = document.createElement('select'); spd.style.cssText = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:3px'; [['0.3с', 300], ['0.7с', 700], ['1.5с', 1500]].forEach(([l, v]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === replaySpeed) o.selected = true; spd.appendChild(o); }); spd.onchange = () => { replaySpeed = +spd.value; if (replayTimer) { pauseReplay(); playReplay(); } }; el.appendChild(spd);
-    el._time = document.createElement('span'); el._time.style.cssText = 'color:#8b93a7;min-width:130px;text-align:center'; el.appendChild(el._time);
-    mk('■', 'выйти из реплея', () => stopReplay()).style.borderColor = '#5a2a30';
+    const spd = document.createElement('select'); spd.title = 'скорость'; spd.style.cssText = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:3px'; [['0.3с', 300], ['0.7с', 700], ['1.5с', 1500]].forEach(([l, v]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === replaySpeed) o.selected = true; spd.appendChild(o); }); spd.onchange = () => { replaySpeed = +spd.value; if (replayTimer) { pauseReplay(); playReplay(); } }; el.appendChild(spd);
+    el._time = document.createElement('span'); el._time.style.cssText = 'color:#8b93a7;min-width:118px;text-align:center'; el.appendChild(el._time);
+    sep();
+    // сделки: R:R, риск, лонг/шорт/закрыть
+    const rr = document.createElement('select'); rr.title = 'R:R (риск:вознаграждение)'; rr.style.cssText = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:3px'; [['1:1', 1], ['1:2', 2], ['1:3', 3], ['1:5', 5]].forEach(([l, v]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === SIM.settings.rr) o.selected = true; rr.appendChild(o); }); rr.onchange = () => { SIM.settings.rr = +rr.value; }; el.appendChild(rr);
+    const risk = document.createElement('input'); risk.type = 'number'; risk.step = '0.1'; risk.min = '0.1'; risk.value = SIM.settings.riskPct; risk.title = 'риск, % (расстояние до стопа)'; risk.style.cssText = 'width:52px;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:3px'; risk.onchange = () => { SIM.settings.riskPct = Math.max(0.1, +risk.value || 1); }; el.appendChild(risk);
+    const rlab = document.createElement('span'); rlab.textContent = '% риск'; rlab.style.color = '#8b93a7'; el.appendChild(rlab);
+    mk('🟢 Лонг', 'открыть лонг по последней цене', () => simOpen('long'), '#123a2a', '#2a5a3a');
+    mk('🔴 Шорт', 'открыть шорт по последней цене', () => simOpen('short'), '#3a1a20', '#5a2a30');
+    mk('✕', 'закрыть все открытые по рынку', () => simCloseAll());
+    el._pos = document.createElement('span'); el._pos.style.cssText = 'color:#8b93a7;font-size:12px'; el.appendChild(el._pos);
+    sep();
+    mk('📊 Результаты', 'таблица сделок + кривая доходности', () => simResultsModal(), '#1f2b3d', '#3aa0ff');
+    mk('■', 'выйти из реплея', () => stopReplay(), '#2a1418', '#5a2a30');
     document.body.appendChild(el); replayBarEl = el;
   }
   function hideReplayBar() { if (replayBarEl) replayBarEl.style.display = 'none'; }
@@ -1267,6 +1371,7 @@
     if (replayBarEl._play) replayBarEl._play.textContent = replayTimer ? '⏸' : '▶';
     const d = new Date(window.LUN_REPLAY.at); const p = (x) => (x < 10 ? '0' + x : x);
     if (replayBarEl._time) replayBarEl._time.textContent = window.LUN_REPLAY.on ? (p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())) : '';
+    if (replayBarEl._pos) replayBarEl._pos.textContent = 'откр: ' + SIM.open.length + ' · закр: ' + SIM.trades.length;
   }
   function replayStartModal() {
     const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
@@ -1287,9 +1392,10 @@
   function buildSim() {
     const wrap = document.getElementById('sim'); if (!wrap) return; wrap.innerHTML = '';
     mkBtn(wrap, '⏪ Откат к периоду (реплей)…', () => { closeMenus(); replayStartModal(); }, false, 'Откатить график к дате и идти вперёд по барам — тест стратегий на всех ТФ с астро/Ганн');
+    mkBtn(wrap, '📊 Результаты (журнал + доходность)', () => { closeMenus(); simResultsModal(); }, false, 'Таблица сделок, винрейт, сумма R и кривая доходности');
     mkBtn(wrap, '■ Выйти из реплея', () => { closeMenus(); stopReplay(); }, false, 'Вернуть полные данные');
     const note = document.createElement('div'); note.className = 'menu-note';
-    note.innerHTML = 'Реплей: график откатывается к дате, ⏭/▶ — вперёд по барам. Все ТФ и все астро/Ганн-инструменты работают на момент отката.<br>Позиции: «Рисование → Позиция ⇅» — клик вход, клик цель (вверх=лонг, вниз=шорт), стоп по R:R. Зелёная зона — цель, красная — риск.';
+    note.innerHTML = 'Внизу — панель симулятора: ⏭/⏩/▶ шаг вперёд, дата периода, R:R и % риска, 🟢 Лонг / 🔴 Шорт (открыть по последней цене), 📊 Результаты.<br>Сделки закрываются <b>автоматически</b> по касанию TP/SL; итог — в «Результаты» (таблица + кривая доходности в R).';
     wrap.appendChild(note);
   }
   // модалка выбора диапазона дат «от–до»
