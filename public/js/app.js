@@ -147,6 +147,8 @@
         ${row('F', 'прогноз шкал вперёд')}${row('M', 'марковский режим')}
         ${row('U', 'аспекты Урана ко всем')}
         ${row('S', 'настройки')}${row('B', 'бэктест')}
+        ${row('W', 'симуляция (реплей) вкл/выкл')}${row('K', 'играть / пауза')}
+        ${row('N', 'реплей: +1 бар')}${row('J', 'реплей: +10 баров')}
       </table>`);
   }
 
@@ -1229,10 +1231,13 @@
   function flushReplaySlots() {
     slots.forEach((s) => {
       const buf = s.loader && s.loader.replayBuffer; if (!buf || !buf.length) return;
-      let n = 0;
-      while (buf.length && buf[0].timestamp <= window.LUN_REPLAY.at) { const bar = buf.shift(); try { if (s.loader.pushBar) s.loader.pushBar(bar); } catch (e) {} if (++n > 5000) break; }
+      let n = 0, pushed = false;
+      while (buf.length && buf[0].timestamp <= window.LUN_REPLAY.at) { const bar = buf.shift(); try { if (s.loader.pushBar) { s.loader.pushBar(bar); pushed = true; } } catch (e) {} if (++n > 5000) break; }
+      // прокрутка к правому краю — иначе новые бары «доливаются» за экраном (было
+      // ощущение, что реплей не двигается)
+      if (pushed) { try { if (s.chart.scrollToRealTime) s.chart.scrollToRealTime(); } catch (e) {} }
     });
-    if (typeof simMarkStep === 'function') simMarkStep();   // отметить позиции (paper) — если модуль включён
+    if (typeof simMarkStep === 'function') simMarkStep();   // отметить позиции (paper)
   }
   function stepReplay(nBars) {
     if (!window.LUN_REPLAY.on) return;
@@ -1257,16 +1262,22 @@
     const risk = entry * (SIM.settings.riskPct / 100);
     const sl = dir === 'long' ? entry - risk : entry + risk;
     const tp = dir === 'long' ? entry + risk * SIM.settings.rr : entry - risk * SIM.settings.rr;
+    const dayMs = tfMsOf(state.tf);                 // ширина коробки = 1 бар мин.
     let ovId = null;
-    try { const id = c.createOverlay(Object.assign({ name: 'lun_pos', points: [{ timestamp: ts, value: entry }, { timestamp: ts, value: tp }], extendData: { rr: SIM.settings.rr, style: defOvStyle() } }, overlayEvents())); ovId = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); } catch (e) {}
+    try { const id = c.createOverlay(Object.assign({ name: 'lun_pos', points: [{ timestamp: ts, value: entry }, { timestamp: ts + Math.max(86400000, dayMs), value: tp }], extendData: { rr: SIM.settings.rr, style: defOvStyle() } }, overlayEvents())); ovId = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); } catch (e) {}
     SIM.open.push({ dir, entry, sl, tp, ts, ins: (state.instrument.title || state.instrument.id), slot: activeIdx, lastIdx: l.length - 1, ovId, rr: SIM.settings.rr });
     updateReplayBar();
+  }
+  // подвинуть правый край коробки позиции ко времени endTs (продление до закрытия)
+  function posExtend(pos, endTs) {
+    if (!pos.ovId) return; const s = slots[pos.slot]; if (!s) return;
+    try { s.chart.overrideOverlay({ id: pos.ovId, points: [{ timestamp: pos.ts, value: pos.entry }, { timestamp: Math.max(endTs, pos.ts + 86400000), value: pos.tp }] }); } catch (e) {}
   }
   function closeTrade(pos, exit, ts, reason) {
     const pnlPct = (pos.dir === 'long' ? (exit - pos.entry) / pos.entry : (pos.entry - exit) / pos.entry) * 100;
     const rMult = SIM.settings.riskPct ? pnlPct / SIM.settings.riskPct : 0;   // в R (TP=+rr, SL=−1)
     SIM.trades.push({ dir: pos.dir, ins: pos.ins, entry: pos.entry, exit, ts: pos.ts, exitTs: ts, reason, pnlPct, rMult });
-    if (pos.ovId) { try { state.chart.removeOverlay(pos.ovId); } catch (e) {} }
+    posExtend(pos, ts);                              // закрепляем коробку до даты закрытия (оставляем на графике)
   }
   // проверка открытых позиций против новых баров (вызывается на каждом шаге реплея)
   function simMarkStep() {
@@ -1281,6 +1292,7 @@
         if (hitSl) { closeTrade(pos, pos.sl, b.timestamp, 'SL'); return false; }   // консервативно: стоп раньше цели
         if (hitTp) { closeTrade(pos, pos.tp, b.timestamp, 'TP'); return false; }
       }
+      if (l.length) posExtend(pos, l[l.length - 1].timestamp);   // тянем коробку до текущего бара
       return true;
     });
     updateReplayBar();
@@ -1395,8 +1407,13 @@
     mkBtn(wrap, '📊 Результаты (журнал + доходность)', () => { closeMenus(); simResultsModal(); }, false, 'Таблица сделок, винрейт, сумма R и кривая доходности');
     mkBtn(wrap, '■ Выйти из реплея', () => { closeMenus(); stopReplay(); }, false, 'Вернуть полные данные');
     const note = document.createElement('div'); note.className = 'menu-note';
-    note.innerHTML = 'Внизу — панель симулятора: ⏭/⏩/▶ шаг вперёд, дата периода, R:R и % риска, 🟢 Лонг / 🔴 Шорт (открыть по последней цене), 📊 Результаты.<br>Сделки закрываются <b>автоматически</b> по касанию TP/SL; итог — в «Результаты» (таблица + кривая доходности в R).';
+    note.innerHTML = 'Внизу — панель симулятора: ⏭/⏩/▶ шаг вперёд, дата периода, R:R и % риска, 🟢 Лонг / 🔴 Шорт (открыть по последней цене), 📊 Результаты.<br>Сделки закрываются <b>автоматически</b> по касанию TP/SL; итог — в «Результаты» (таблица + кривая доходности в R).<br>Клавиши: <b>W</b> — реплей вкл/выкл · <b>K</b> — играть/пауза · <b>N</b> — +1 бар · <b>J</b> — +10 баров.';
     wrap.appendChild(note);
+    // горячие клавиши симулятора
+    regHotkey('w', () => { if (window.LUN_REPLAY.on) stopReplay(); else replayStartModal(); });
+    regHotkey('k', () => { if (window.LUN_REPLAY.on) { if (replayTimer) pauseReplay(); else playReplay(); } });
+    regHotkey('n', () => { if (window.LUN_REPLAY.on) stepReplay(1); });
+    regHotkey('j', () => { if (window.LUN_REPLAY.on) stepReplay(10); });
   }
   // модалка выбора диапазона дат «от–до»
   function historyModal(onApply) {
