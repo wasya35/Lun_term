@@ -773,13 +773,14 @@
       if (!(hi > lo)) return true;
       prec = hi < 10 ? 4 : (hi < 1000 ? 2 : 1);
       const cfg = (window.LUN.GANNTOOLS && window.LUN.GANNTOOLS.retr) || { levels: [12.5, 25, 37.5, 50, 62.5, 75, 87.5] };
+      const GS = window.LUN.GSTYLE || {}, tsz = GS.textSize || 10, lw = GS.lineWidth || 1, lc = GS.levelColor || '#e0d060', dashed = GS.lineStyle === 'dashed';
       const W = bounding.width;
       const drawLvl = (pct, price, strong) => {
         const y = yAxis.convertToPixel(price); if (y < 0 || y > bounding.height) return;
-        ctx.strokeStyle = strong ? 'rgba(224,208,96,0.55)' : 'rgba(120,150,200,0.28)';
-        ctx.lineWidth = 1; ctx.setLineDash(strong ? [] : [4, 3]);
+        ctx.strokeStyle = strong ? lc : 'rgba(120,150,200,0.28)';
+        ctx.lineWidth = lw; ctx.setLineDash((strong && !dashed) ? [] : [4, 3]);
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = strong ? '#e0d060' : '#8aa0c8'; ctx.font = '10px system-ui, sans-serif';
+        ctx.fillStyle = strong ? lc : '#8aa0c8'; ctx.font = tsz + 'px system-ui, sans-serif';
         ctx.textBaseline = 'bottom'; ctx.textAlign = 'left';
         ctx.fillText(pct + '%  ' + price.toFixed(prec), 4, y - 1);
       };
@@ -799,17 +800,18 @@
     draw: ({ ctx, chart, bounding, yAxis, indicator }) => {
       const ed = indicator.extendData || {}, lv = ed.levels; if (!lv || !lv.length) return true;
       const prec = ed.prec != null ? ed.prec : 1, W = bounding.width, H = bounding.height;
+      const GS = window.LUN.GSTYLE || {}, tsz = GS.textSize || 10, lw = GS.lineWidth || 1, dashed = GS.lineStyle === 'dashed';
       if (ed.anchor != null) {
         const y = yAxis.convertToPixel(ed.anchor);
-        if (y >= 0 && y <= H) { ctx.strokeStyle = 'rgba(224,208,96,0.85)'; ctx.setLineDash([2, 2]); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]); }
+        if (y >= 0 && y <= H) { ctx.strokeStyle = GS.levelColor || 'rgba(224,208,96,0.85)'; ctx.setLineDash([2, 2]); ctx.lineWidth = lw; ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]); }
       }
       lv.forEach((L) => {
         const y = yAxis.convertToPixel(L.price); if (y < 0 || y > H) return;
         const card = (L.deg % 90 === 0);
         ctx.strokeStyle = card ? 'rgba(239,83,80,0.55)' : 'rgba(58,160,255,0.40)';
-        ctx.lineWidth = card ? 1.2 : 1; ctx.setLineDash(card ? [] : [5, 3]);
+        ctx.lineWidth = card ? Math.max(lw, 1.2) : lw; ctx.setLineDash((card && !dashed) ? [] : [5, 3]);
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = card ? '#ef8a88' : '#7fb2ff'; ctx.font = '10px system-ui, sans-serif';
+        ctx.fillStyle = card ? '#ef8a88' : '#7fb2ff'; ctx.font = tsz + 'px system-ui, sans-serif';
         ctx.textBaseline = 'bottom'; ctx.textAlign = 'right';
         ctx.fillText((L.tag || (L.deg + '°')) + '  ' + L.price.toFixed(prec), W - 4, y - 1);
       });

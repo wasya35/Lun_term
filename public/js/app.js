@@ -263,6 +263,35 @@
   }
   function setTheme(t) { LOOK.theme = t; applyChartLook(); }
   function setCandleType(c) { LOOK.candle = c; applyChartLook(); }
+  // единое окно оформления: тема · тип свечей · коннекторы · горизонт прогноза
+  function appearanceModal() {
+    const cur = LOOK;
+    const on = (n) => { try { return window.LunStream ? window.LunStream.isOn(n) : true; } catch (e) { return true; } };
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
+    openModal('🎨 Оформление, коннекторы, прогноз', `
+      <div style="display:flex;flex-direction:column;gap:16px;font-size:14px">
+        <div><b>Тема</b><br>
+          <label><input type="radio" name="ap-th" value="dark"${cur.theme !== 'light' ? ' checked' : ''}> тёмная</label>
+          <label style="margin-left:16px"><input type="radio" name="ap-th" value="light"${cur.theme === 'light' ? ' checked' : ''}> светлая</label></div>
+        <div><b>Тип свечей</b><br>
+          <label><input type="radio" name="ap-cd" value="candle_solid"${cur.candle !== 'ohlc' ? ' checked' : ''}> свечи</label>
+          <label style="margin-left:16px"><input type="radio" name="ap-cd" value="ohlc"${cur.candle === 'ohlc' ? ' checked' : ''}> бары (OHLC)</label></div>
+        <div><b>Коннекторы (реалтайм)</b> <span style="color:#8b93a7;font-size:11px">— все вкл по умолчанию, цена всегда движется</span><br>
+          <label><input type="checkbox" id="ap-crypto"${on('crypto') ? ' checked' : ''}> Крипта · Bybit (WebSocket, настоящий поток)</label><br>
+          <label><input type="checkbox" id="ap-us"${on('us') ? ' checked' : ''}> Америка · Yahoo (опрос ~15–30с)</label><br>
+          <label><input type="checkbox" id="ap-moex"${on('moex') ? ' checked' : ''}> MOEX · псевдо (опрос; истинный realtime у биржи платный)</label></div>
+        <div><b>Прогноз вперёд</b><br>
+          <select id="ap-fc" style="${ss}"><option value="1">1 квартал</option><option value="2">2 квартала</option></select>
+          <span style="color:#8b93a7;font-size:11px">на сколько продлевать поле кнопкой «🔮 Прогноз» (в Астро)</span></div>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelectorAll('[name=ap-th]').forEach((r) => r.onchange = () => { if (r.checked) setTheme(r.value); });
+    bg.querySelectorAll('[name=ap-cd]').forEach((r) => r.onchange = () => { if (r.checked) setCandleType(r.value); });
+    const cw = (id, name) => { const el = bg.querySelector(id); el.onchange = () => { if (window.LunStream) window.LunStream.setConnector(name, el.checked, slots); }; };
+    cw('#ap-crypto', 'crypto'); cw('#ap-us', 'us'); cw('#ap-moex', 'moex');
+    const fc = bg.querySelector('#ap-fc'); fc.value = String((window.LUN.FORECAST && window.LUN.FORECAST.quarters) || 1);
+    fc.onchange = () => { window.LUN.FORECAST.quarters = +fc.value; if (state.forecastOn) setForecast(true); };
+  }
 
   /* ---------- панели ----------
    * KLineChart раскладывает новую панель асинхронно, поэтому setPaneOptions
@@ -638,6 +667,26 @@
     slots.forEach((s) => { try { applyGannField(s, on); } catch (e) {} });
   }
   // единая форма для геометрии Ганна: Box (деления) или Квадрат-сетка N×N
+  // Настройки стиля инструментов Ганна: размер текста/цифр, толщина/тип линии, цвет уровней
+  function gannStyleModal() {
+    const G = window.LUN.GSTYLE || (window.LUN.GSTYLE = { textSize: 11, lineWidth: 1, lineStyle: 'solid', levelColor: '#e0d060' });
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
+    openModal('⚙ Стиль инструментов Ганна', `
+      <p style="color:#8b93a7">Общие настройки отрисовки уровней/линий Ганна (ретрейсменты, квадрат, мастер-циклы). Меняются вживую.</p>
+      <div style="display:flex;flex-direction:column;gap:14px;font-size:14px">
+        <label>Размер подписей и цифр уровней: <input id="gs-text" type="range" min="8" max="22" value="${G.textSize || 11}" style="vertical-align:middle"> <span id="gs-text-v">${G.textSize || 11}px</span></label>
+        <label>Толщина линий: <input id="gs-lw" type="range" min="1" max="5" step="0.5" value="${G.lineWidth || 1}" style="vertical-align:middle"> <span id="gs-lw-v">${G.lineWidth || 1}</span></label>
+        <label>Тип линии: <select id="gs-ls" style="${ss}"><option value="solid"${G.lineStyle !== 'dashed' ? ' selected' : ''}>сплошная</option><option value="dashed"${G.lineStyle === 'dashed' ? ' selected' : ''}>пунктир</option></select></label>
+        <label>Цвет уровней: <input id="gs-col" type="color" value="${G.levelColor || '#e0d060'}" style="vertical-align:middle;width:44px;height:26px;background:#0b0e14;border:1px solid #2a3242;border-radius:6px"></label>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const refresh = () => { slots.forEach((s) => { try { s.chart.resize(); } catch (e) {} }); };
+    const t = bg.querySelector('#gs-text'), lw = bg.querySelector('#gs-lw');
+    t.oninput = () => { G.textSize = +t.value; bg.querySelector('#gs-text-v').textContent = t.value + 'px'; refresh(); };
+    lw.oninput = () => { G.lineWidth = +lw.value; bg.querySelector('#gs-lw-v').textContent = lw.value; refresh(); };
+    bg.querySelector('#gs-ls').onchange = (e) => { G.lineStyle = e.target.value; refresh(); };
+    bg.querySelector('#gs-col').oninput = (e) => { G.levelColor = e.target.value; refresh(); };
+  }
   function gannGeomModal() {
     const S = window.LUN.GANNTOOLS.boxChoice || (window.LUN.GANNTOOLS.boxChoice = { type: 'box', divisions: 8 });
     const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
@@ -1207,7 +1256,19 @@
         });
       }, 950);
     }
+    if (!replaying) setTimeout(() => setInitialView(slot), 900);   // дефолт-обзор по ТФ
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
+  }
+  // стартовый обзор: сколько истории показать по ТФ (D1 ≈ 3 мес, H1 ≈ 1 мес)
+  function setInitialView(slot) {
+    if (window.LUN_REPLAY && window.LUN_REPLAY.on) return;
+    if (slot.g11 && slot.g11.on) return;              // фикс-поле 1×1 масштабирует само
+    const c = slot.chart; let l; try { l = c.getDataList(); } catch (e) { return; } if (!l || !l.length) return;
+    const tf = slot.tf;
+    const bars = tf.type === 'day' ? 66 : tf.type === 'hour' ? 360 : (tf.span >= 15 ? 400 : 300);
+    const w = (slot.cellEl && slot.cellEl.clientWidth) || 900;
+    try { c.setBarSpace(Math.max(2, Math.min(18, w / bars))); } catch (e) {}
+    try { if (!slot.forecastOn) c.setOffsetRightDistance(80); if (c.scrollToRealTime) c.scrollToRealTime(); } catch (e) {}
   }
 
   function reloadAllSlots() { slots.forEach((s) => load(s)); }
@@ -1866,25 +1927,27 @@
     }
   }
 
-  /* прогноз вперёд: продлить астро-полосы до следующего аспекта ☉–♅ */
+  /* прогноз вперёд: продлить поле на 1–2 квартала (астро-полосы и цикл проецируются) */
   function setForecast(on, btn) {
     const c = state.chart, list = c.getDataList();
+    const quarters = (window.LUN.FORECAST && window.LUN.FORECAST.quarters) || 1;
     if (on && list && list.length) {
-      const F = window.LUN.FORECAST || { bodyA: 'Sun', bodyB: 'Uranus', frame: 'helio', maxBars: 500 };
       const lastTs = list[list.length - 1].timestamp;
-      const until = window.LunAstro.nextAspect(F.bodyA, F.bodyB, lastTs, F.frame);
-      if (!until) { if (btn) btn.classList.remove('active'); alert('Ближайший аспект ' + F.bodyA + '–' + F.bodyB + ' не найден в горизонте.'); return; }
+      const horizonMs = quarters * 91 * 86400000;
       const stepMs = periodMillis(state.tf);
-      const extra = Math.min(F.maxBars || 500, Math.max(1, Math.ceil((until - lastTs) / stepMs)));
-      window.LUN_FORECAST = { enabled: true, untilTs: until, stepMs, maxBars: F.maxBars || 500 };
+      const extra = Math.min(3000, Math.max(1, Math.ceil(horizonMs / stepMs)));
+      window.LUN_FORECAST = { enabled: true, untilTs: lastTs + horizonMs, stepMs, maxBars: extra };
       try { const bar = c.getBarSpace().bar || 6; c.setOffsetRightDistance(Math.max(80, extra * bar)); } catch (e) {}
+      window.LUN_MASLOV = window.LUN_MASLOV || { cycle: 'merc' }; window.LUN_MASLOV.horizonQ = quarters;   // цикл тоже вперёд
       state.forecastOn = true;
-      if (btn) btn.title = 'Прогноз до аспекта ☉–♅: ' + new Date(until).toISOString().slice(0, 10) + ' (F)';
+      if (btn) btn.title = 'Прогноз вперёд: ' + quarters + ' кв. (F)';
     } else {
       window.LUN_FORECAST = { enabled: false };
+      if (window.LUN_MASLOV) window.LUN_MASLOV.horizonQ = 0;
       state.forecastOn = false;
       try { c.setOffsetRightDistance(80); } catch (e) {}
     }
+    if (state.candleInds && state.candleInds.MercSunCycle) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'MercSunCycle' }); c.createIndicator({ name: 'MercSunCycle', paneId: 'candle_pane' }, true); } catch (e) {} }
     try { c.resize(); } catch (e) {}
   }
 
@@ -2171,6 +2234,11 @@
     document.getElementById('aspects').appendChild(aspNote);
 
     buildCycleButtons();
+    const fcBtn = mkBtn(document.getElementById('cycles'), '🔮 Прогноз вперёд (1–2 кв.)', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on); setForecast(on, b); closeMenus();
+    }, false, 'Продлить поле вперёд на 1–2 квартала: астро-полосы и цикл проецируются (горизонт — в «Оформление»). Клавиша F');
+    fcBtn.dataset.sync = 'forecast';
+    regHotkey('f', () => fcBtn.click());
     const cycNote = document.createElement('div'); cycNote.className = 'menu-note';
     cycNote.innerHTML = 'Как пользоваться:<br>• <b>☾ Луна в знаках</b> — верхняя лента настроения.<br>• <b>Циклы 1–6</b> — зоны лонг/шорт по долготе тела (фон-фильтр).<br>• <b>🗓 Астро-календарь</b> — события на 90 дней вперёд.';
     document.getElementById('cycles').appendChild(cycNote);
@@ -2179,6 +2247,7 @@
     const gannWrap = document.getElementById('gann');
     if (gannWrap) {
       const gsub = (t) => { const h = document.createElement('div'); h.className = 'menu-sub'; h.textContent = t; gannWrap.appendChild(h); };
+      mkBtn(gannWrap, '⚙ Настройки стиля Ганна…', () => { closeMenus(); gannStyleModal(); }, false, 'Размер подписей и цифр уровней, толщина/тип линий, цвет уровней');
       gsub('Геометрия (2 клика: пивот → охват)');
       mkBtn(gannWrap, '▱ Gann Box / Квадрат…', () => { closeMenus(); gannGeomModal(); }, false, 'Единая форма: Box с делениями или квадрат-сетка N×N (8/12/своё)');
       mkBtn(gannWrap, '⟋ Сквоузинг 1×1 (панель)', (b) => {
@@ -2289,12 +2358,8 @@
     regHotkey('+', () => zoomChart(true)); regHotkey('=', () => zoomChart(true)); regHotkey('-', () => zoomChart(false));   // зум +/−
 
     const setWrap = document.getElementById('settings');
-    const fcBtn = mkBtn(setWrap, '🔮 Прогноз', (b) => {
-      const on = !b.classList.contains('active'); b.classList.toggle('active', on); setForecast(on, b); closeMenus();
-    }, false, 'Продлить астро-полосы вправо до следующего аспекта ☉–♅ (F)');
-    fcBtn.dataset.sync = 'forecast';
-    regHotkey('f', () => fcBtn.click());
-    const setBtn = mkBtn(setWrap, '⚙ Настройки', () => { closeMenus(); window.LunSettings.open(applySettings); }, false,
+    mkBtn(setWrap, '🎨 Оформление, коннекторы, прогноз…', () => { closeMenus(); appearanceModal(); }, false, 'Тема (тёмная/светлая), тип свечей, коннекторы реалтайма, горизонт прогноза');
+    const setBtn = mkBtn(setWrap, '⚙ Настройки (циклы, цвета знаков)', () => { closeMenus(); window.LunSettings.open(applySettings); }, false,
       'Цвета знаков и торговые зоны циклов (S)');
     regHotkey('s', () => setBtn.click());
     const btBtn = mkBtn(setWrap, '📊 Бэктест', async () => {
@@ -2309,8 +2374,6 @@
     mkBtn(setWrap, '📖 Справочник (статьи по инструментам)', () => { closeMenus(); helpArticlesModal(); }, false, 'Короткие статьи: что это, принцип, как читать и использовать — по каждому блоку');
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '📚 Как пользоваться', () => { closeMenus(); guideModal(); }, false, 'Пошагово: Астро, Ганн, Бэктест');
-    mkBtn(setWrap, '🌗 Тема: тёмная/светлая', () => { closeMenus(); setTheme(LOOK.theme === 'dark' ? 'light' : 'dark'); }, false, 'Переключить оформление');
-    mkBtn(setWrap, '🕯 Тип: свечи/бары', () => { closeMenus(); setCandleType(LOOK.candle === 'candle_solid' ? 'ohlc' : 'candle_solid'); }, false, 'Свечи ↔ бары (OHLC)');
     mkBtn(setWrap, '⌨ Горячие клавиши', () => { closeMenus(); hotkeysModal(); }, false, 'Список горячих клавиш');
     mkBtn(setWrap, '📜 Правила и конфиденциальность', () => { closeMenus(); legalModal(); }, false, 'Отказ от ответственности, конфиденциальность, условия использования');
 
@@ -2334,17 +2397,6 @@
       mkBtn(alWrap, '🔔 Алерты…', () => { closeMenus(); alertsModal(); }, false, 'Создать/смотреть алерты (цена/астро), e-mail или Telegram. Работают на сервере — терминал можно закрыть');
       const note = document.createElement('div'); note.className = 'menu-note'; note.textContent = 'Нужен вход в аккаунт (👤). Проверка — на сервере (cron).'; alWrap.appendChild(note);
     }
-
-    // Коннекторы — в Настройках, все ВКЛ по умолчанию (цена всегда движется)
-    const conSub = document.createElement('div'); conSub.className = 'menu-sub'; conSub.textContent = 'Коннекторы (реалтайм)'; conSub.style.marginTop = '6px'; setWrap.appendChild(conSub);
-    [['crypto', 'Крипта · Bybit', 'Настоящий поток (WebSocket)'],
-     ['us', 'Америка · Yahoo', 'Опрос ~15–30с'],
-     ['moex', 'MOEX · псевдо', 'Опрос (истинный realtime у биржи платный)']].forEach(([name, label, tip]) => {
-      connBtns[name] = mkBtn(setWrap, label, (b) => {
-        const on = !b.classList.contains('active'); b.classList.toggle('active', on);
-        if (window.LunStream) window.LunStream.setConnector(name, on, slots);
-      }, true, tip);   // active по умолчанию
-    });
 
     // Экраны — сетка графиков
     const layWrap = document.getElementById('layouts');
