@@ -1289,24 +1289,29 @@
     reloadAllSlots();                       // getBars обрежет до cutoff и заполнит буферы
     showReplayBar(); updateReplayBar();
   }
-  function flushReplaySlots() {
-    slots.forEach((s) => {
-      const buf = s.loader && s.loader.replayBuffer; if (!buf || !buf.length) return;
-      let n = 0, pushed = false;
-      while (buf.length && buf[0].timestamp <= window.LUN_REPLAY.at) { const bar = buf.shift(); try { if (s.loader.pushBar) { s.loader.pushBar(bar); pushed = true; } } catch (e) {} if (++n > 5000) break; }
-      // прокрутка к правому краю — иначе новые бары «доливаются» за экраном (было
-      // ощущение, что реплей не двигается)
-      if (pushed) { try { if (s.chart.scrollToRealTime) s.chart.scrollToRealTime(); } catch (e) {} }
+  // синхронизировать остальные слоты по времени до ts (у каждого свой ТФ)
+  function syncSlotsTo(ts) {
+    slots.forEach((o) => {
+      if (o === state) return; const b = o.loader && o.loader.replayBuffer; if (!b || !b.length) return;
+      let pushed = false;
+      while (b.length && b[0].timestamp <= ts) { const bar = b.shift(); try { if (o.loader.pushBar) { o.loader.pushBar(bar); pushed = true; } } catch (e) {} }
+      if (pushed) { try { if (o.chart.scrollToRealTime) o.chart.scrollToRealTime(); } catch (e) {} }
     });
-    if (typeof simMarkStep === 'function') simMarkStep();   // отметить позиции (paper)
   }
+  // ШАГ вперёд: раскрываем N баров активного слота ПО СЧЁТУ (детерминированно),
+  // остальные слоты подтягиваем по времени; следуем к правому краю.
   function stepReplay(nBars) {
     if (!window.LUN_REPLAY.on) return;
-    const step = tfMsOf(state.tf) * (nBars || 1);
-    window.LUN_REPLAY.at += step;
-    flushReplaySlots(); updateReplayBar();
-    // если буферы активного слота пусты — дошли до конца истории
-    if (state.loader && state.loader.replayBuffer && !state.loader.replayBuffer.length) pauseReplay();
+    const s = state, buf = s.loader && s.loader.replayBuffer;
+    if (!buf || !buf.length) { pauseReplay(); return; }
+    let lastTs = window.LUN_REPLAY.at, pushed = false;
+    for (let k = 0; k < (nBars || 1) && buf.length; k++) { const bar = buf.shift(); try { if (s.loader.pushBar) { s.loader.pushBar(bar); pushed = true; } } catch (e) {} lastTs = bar.timestamp; }
+    window.LUN_REPLAY.at = lastTs;
+    if (pushed) { try { if (s.chart.scrollToRealTime) s.chart.scrollToRealTime(); } catch (e) {} }
+    syncSlotsTo(lastTs);
+    if (typeof simMarkStep === 'function') simMarkStep();
+    updateReplayBar();
+    if (!buf.length) pauseReplay();
   }
   let replaySpeed = 700;
   function playReplay() { if (replayTimer) return; replayTimer = setInterval(() => stepReplay(1), replaySpeed); updateReplayBar(); }
@@ -1323,16 +1328,17 @@
     const risk = entry * (SIM.settings.riskPct / 100);
     const sl = dir === 'long' ? entry - risk : entry + risk;
     const tp = dir === 'long' ? entry + risk * SIM.settings.rr : entry - risk * SIM.settings.rr;
-    const dayMs = tfMsOf(state.tf);                 // ширина коробки = 1 бар мин.
+    const dayMs = Math.max(tfMsOf(state.tf), 3600000);
     let ovId = null;
-    try { const id = c.createOverlay(Object.assign({ name: 'lun_pos', points: [{ timestamp: ts, value: entry }, { timestamp: ts + Math.max(86400000, dayMs), value: tp }], extendData: { rr: SIM.settings.rr, style: defOvStyle() } }, overlayEvents())); ovId = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); } catch (e) {}
+    const ed = { entry: entry, tp: tp, sl: sl, rr: SIM.settings.rr, dir: dir, entryTs: ts, endTs: ts + dayMs, style: defOvStyle() };
+    try { const id = c.createOverlay(Object.assign({ name: 'lun_pos', points: [{ timestamp: ts, value: entry }], extendData: ed }, overlayEvents())); ovId = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); } catch (e) {}
     SIM.open.push({ dir, entry, sl, tp, ts, ins: (state.instrument.title || state.instrument.id), slot: activeIdx, lastIdx: l.length - 1, ovId, rr: SIM.settings.rr });
     updateReplayBar();
   }
   // подвинуть правый край коробки позиции ко времени endTs (продление до закрытия)
   function posExtend(pos, endTs) {
     if (!pos.ovId) return; const s = slots[pos.slot]; if (!s) return;
-    try { s.chart.overrideOverlay({ id: pos.ovId, points: [{ timestamp: pos.ts, value: pos.entry }, { timestamp: Math.max(endTs, pos.ts + 86400000), value: pos.tp }] }); } catch (e) {}
+    try { s.chart.overrideOverlay({ id: pos.ovId, extendData: { entry: pos.entry, tp: pos.tp, sl: pos.sl, rr: pos.rr, dir: pos.dir, entryTs: pos.ts, endTs: Math.max(endTs, pos.ts + 3600000), style: defOvStyle() } }); } catch (e) {}
   }
   function closeTrade(pos, exit, ts, reason) {
     const pnlPct = (pos.dir === 'long' ? (exit - pos.entry) / pos.entry : (pos.entry - exit) / pos.entry) * 100;

@@ -136,36 +136,53 @@
     },
   });
 
-  /* --- позиция (как в TradingView): вход → цель, стоп по R:R --- */
+  /* --- позиция (как в TradingView): вход → цель, стоп по R:R ---
+   * Два режима: (1) СИМУЛЯТОР — цены заданы в extendData {entry,tp,sl,endTs,dir},
+   * точка одна (вход), правый край считается из endTs (можно в будущем);
+   * (2) РУЧНОЙ — 2 точки: вход и цель (время+цена), стоп по R:R. */
+  function posFigures(x0, x1, yE, yT, yS, e, tp, sl, long) {
+    if (x1 <= x0 + 3) x1 = x0 + 40;
+    const w = x1 - x0;
+    const rewardPct = (tp - e) / e * 100, riskPct = (sl - e) / e * 100;
+    return [
+      { type: 'rect', attrs: { x: x0, y: Math.min(yE, yT), width: w, height: Math.abs(yT - yE) }, styles: { style: 'fill', color: 'rgba(38,166,154,0.16)' } },
+      { type: 'rect', attrs: { x: x0, y: Math.min(yE, yS), width: w, height: Math.abs(yS - yE) }, styles: { style: 'fill', color: 'rgba(239,83,80,0.16)' } },
+      { type: 'line', attrs: { coordinates: [{ x: x0, y: yE }, { x: x1, y: yE }] }, styles: { color: '#c7d0e0', size: 1 } },
+      { type: 'line', attrs: { coordinates: [{ x: x0, y: yT }, { x: x1, y: yT }] }, styles: { color: '#26a69a', size: 1, style: 'dashed' } },
+      { type: 'line', attrs: { coordinates: [{ x: x0, y: yS }, { x: x1, y: yS }] }, styles: { color: '#ef5350', size: 1, style: 'dashed' } },
+      { type: 'text', attrs: { x: x0 + 3, y: yE - 2, text: (long ? 'ЛОНГ ' : 'ШОРТ ') + e.toFixed(2), baseline: 'bottom' }, ignoreEvent: true, styles: { color: '#0b0e14', backgroundColor: long ? '#26a69a' : '#ef5350', size: 11, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, borderRadius: 3 } },
+      { type: 'text', attrs: { x: x1 - 2, y: yT - 2, text: 'TP ' + tp.toFixed(2) + ' (' + (rewardPct >= 0 ? '+' : '') + rewardPct.toFixed(2) + '%)', baseline: 'bottom', align: 'right' }, ignoreEvent: true, styles: { color: '#26a69a', size: 11 } },
+      { type: 'text', attrs: { x: x1 - 2, y: yS + 2, text: 'SL ' + sl.toFixed(2) + ' (' + riskPct.toFixed(2) + '%)', baseline: 'top', align: 'right' }, ignoreEvent: true, styles: { color: '#ef5350', size: 11 } },
+    ];
+  }
   kc.registerOverlay({
     name: 'lun_pos', totalStep: 3, needDefaultPointFigure: true,
-    createPointFigures: ({ coordinates, overlay, bounding }) => {
+    createPointFigures: ({ coordinates, overlay, chart, yAxis }) => {
+      if (!coordinates.length) return [];
+      const p0 = coordinates[0], pts = overlay.points || [], ed = overlay.extendData || {};
+      // (1) режим симулятора — цены в extendData, правый край из endTs
+      if (ed.entry != null && ed.tp != null && ed.sl != null) {
+        const yE = yAxis.convertToPixel(ed.entry), yT = yAxis.convertToPixel(ed.tp), yS = yAxis.convertToPixel(ed.sl);
+        let x1 = p0.x + 40;
+        try {
+          const bs = chart.getBarSpace().bar || 6, list = chart.getDataList();
+          const tfMs = (list.length > 1) ? (list[list.length - 1].timestamp - list[0].timestamp) / (list.length - 1) : 86400000;
+          const entryTs = (pts[0] && pts[0].timestamp) || ed.entryTs || (list.length ? list[list.length - 1].timestamp : 0);
+          const endTs = ed.endTs || (entryTs + tfMs);
+          x1 = p0.x + Math.max(bs, ((endTs - entryTs) / tfMs) * bs);
+        } catch (e2) {}
+        return posFigures(p0.x, x1, yE, yT, yS, ed.entry, ed.tp, ed.sl, ed.tp >= ed.entry);
+      }
+      // (2) ручной режим — 2 точки
       if (coordinates.length < 2) return [];
-      const [p0, p1] = coordinates, pts = overlay.points || [], ed = overlay.extendData || {};
+      const p1 = coordinates[1];
       const e = pts[0] ? pts[0].value : null, tp = pts[1] ? pts[1].value : null;
       if (e == null || tp == null || !(e > 0)) return [{ type: 'line', attrs: { coordinates: [p0, p1] }, styles: { color: '#8b93a7' } }];
       const rr = ed.rr || (window.LUN.POS && window.LUN.POS.rr) || 2;
-      const long = tp >= e;
-      const sl = e - (tp - e) / rr;                 // риск = вознаграждение / R:R
-      // box: от входа (p0.x) до времени 2-й точки (p1.x) — не в бесконечность.
-      // цель tp = цена 2-й точки; её Y = p1.y. sl считаем по R:R.
+      const sl = e - (tp - e) / rr;
       const yPerPrice = (tp - e) !== 0 ? (p1.y - p0.y) / (tp - e) : 0;
       const slY = p0.y + yPerPrice * (sl - e);
-      let x0 = p0.x, x1 = p1.x; if (x1 <= x0 + 3) x1 = x0 + 40;   // минимальная ширина
-      const w = x1 - x0;
-      const rewardPct = (tp - e) / e * 100, riskPct = (sl - e) / e * 100;
-      const green = 'rgba(38,166,154,0.16)', red = 'rgba(239,83,80,0.16)';
-      const dir = long ? 'ЛОНГ' : 'ШОРТ';
-      return [
-        { type: 'rect', attrs: { x: x0, y: Math.min(p0.y, p1.y), width: w, height: Math.abs(p1.y - p0.y) }, styles: { style: 'fill', color: green } },
-        { type: 'rect', attrs: { x: x0, y: Math.min(p0.y, slY), width: w, height: Math.abs(slY - p0.y) }, styles: { style: 'fill', color: red } },
-        { type: 'line', attrs: { coordinates: [{ x: x0, y: p0.y }, { x: x1, y: p0.y }] }, styles: { color: '#c7d0e0', size: 1 } },
-        { type: 'line', attrs: { coordinates: [{ x: x0, y: p1.y }, { x: x1, y: p1.y }] }, styles: { color: '#26a69a', size: 1, style: 'dashed' } },
-        { type: 'line', attrs: { coordinates: [{ x: x0, y: slY }, { x: x1, y: slY }] }, styles: { color: '#ef5350', size: 1, style: 'dashed' } },
-        { type: 'text', attrs: { x: x0 + 3, y: p0.y - 2, text: dir + ' ' + e.toFixed(2) + ' · R:R ' + rr.toFixed(1), baseline: 'bottom' }, ignoreEvent: true, styles: { color: '#0b0e14', backgroundColor: long ? '#26a69a' : '#ef5350', size: 11, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, borderRadius: 3 } },
-        { type: 'text', attrs: { x: x1 - 2, y: p1.y - 2, text: 'TP ' + tp.toFixed(2) + ' (' + (rewardPct >= 0 ? '+' : '') + rewardPct.toFixed(2) + '%)', baseline: 'bottom', align: 'right' }, ignoreEvent: true, styles: { color: '#26a69a', size: 11 } },
-        { type: 'text', attrs: { x: x1 - 2, y: slY + 2, text: 'SL ' + sl.toFixed(2) + ' (' + riskPct.toFixed(2) + '%)', baseline: 'top', align: 'right' }, ignoreEvent: true, styles: { color: '#ef5350', size: 11 } },
-      ];
+      return posFigures(p0.x, p1.x, p0.y, p1.y, slY, e, tp, sl, tp >= e);
     },
   });
 
