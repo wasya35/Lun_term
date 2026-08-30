@@ -1287,6 +1287,9 @@
     try { if (window.LunStream) window.LunStream.detachAll(); } catch (e) {}   // глушим живой поток
     window.LUN_REPLAY = { on: true, at: atTs };
     reloadAllSlots();                       // getBars обрежет до cutoff и заполнит буферы
+    // держим текущий бар около ЦЕНТРА (справа остаётся место «в будущее»),
+    // а не прижимаем к правому краю. Ставим большой правый офсет.
+    setTimeout(() => { slots.forEach((s) => { try { const w = (s.cellEl && s.cellEl.clientWidth) || 800; s.chart.setOffsetRightDistance(Math.round(w * 0.5)); if (s.chart.scrollToRealTime) s.chart.scrollToRealTime(); } catch (e) {} }); }, 1200);
     showReplayBar(); updateReplayBar();
   }
   // синхронизировать остальные слоты по времени до ts (у каждого свой ТФ)
@@ -2312,7 +2315,7 @@
         window.LUN.BAR.mode = window.LUN.BAR.mode === 'polar' ? 'signed' : 'polar';
         if (state.bradleyPane) { try { state.chart.removeIndicator({ paneId: state.bradleyPane }); state.chart.createIndicator({ name: 'BradleyStrip', paneId: state.bradleyPane }, false); } catch (e) {} }
         closeMenus();
-      }, false, '1 знаковая линия ↔ 2 полярности (🟢 поддержка / 🔴 напряжение), как у П. Свиридова');
+      }, false, '1 знаковая линия ↔ 2 полярности (🟢 поддержка / 🔴 напряжение), две кривые: поддержка / напряжение');
       barModeBtn.dataset.sync = 'barMode';
       mkBtn(gannWrap, '🜨 Космограмма…', () => { closeMenus(); cosmogramModal(); }, false, 'Колесо зодиака с планетами и аспектами на дату');
       gsub('Прогностика');
@@ -2554,8 +2557,8 @@
       else { b.classList.remove('active'); removeAspSelPane(); }
     }, false, 'Показать/скрыть ленту выбранных аспектов');
     asBtn.dataset.sync = 'aspsel';
-    // ---- Свиридов ----
-    const svSub = document.createElement('div'); svSub.className = 'menu-sub'; svSub.textContent = 'Свиридов'; aspWrap.appendChild(svSub);
+    // ---- Исследование аспектов ----
+    const svSub = document.createElement('div'); svSub.className = 'menu-sub'; svSub.textContent = 'Исследование аспектов'; aspWrap.appendChild(svSub);
     const svBtn = mkBtn(aspWrap, '🟢🔴 Динамика (зелёные/красные)', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createSvirPane(); else removeSvirPane(); closeMenus();
@@ -2563,13 +2566,13 @@
     svBtn.dataset.sync = 'svir';
     mkBtn(aspWrap, '🔍 Аспекты у даты…', () => { closeMenus(); svirDateModal(); }, false, 'Все точные аспекты в окне ±1–2 дня вокруг выбранной даты');
     mkBtn(aspWrap, '🔄 Аспекты на разворотах', () => { closeMenus(); svirPivotsModal(); }, false, 'Найти развороты (ZigZag) на графике и показать аспекты у каждого (±дни)');
-    mkBtn(aspWrap, '⚙ Свиридов: настройки', () => { closeMenus(); svirSettingsModal(); }, false, 'Какие планеты и аспекты в зелёные/красные, орб, окно');
+    mkBtn(aspWrap, '⚙ Настройки аспектов', () => { closeMenus(); svirSettingsModal(); }, false, 'Какие планеты и аспекты в зелёные/красные, орб, окно');
   }
-  /* ---------- Свиридов: панель динамики + модалки ---------- */
+  /* ---------- Исследование аспектов: панель динамики + модалки ---------- */
   const SVIR_PANE = 'pane_svir';
   function createSvirPane() {
     if (state.svirPane) { try { state.chart.removeIndicator({ paneId: state.svirPane }); } catch (e) {} }
-    state.chart.createIndicator({ name: 'SviridovDyn', paneId: SVIR_PANE, shortName: 'Свиридов' }, false);
+    state.chart.createIndicator({ name: 'SviridovDyn', paneId: SVIR_PANE, shortName: 'Аспекты 🟢🔴' }, false);
     state.svirPane = SVIR_PANE; wishPane(SVIR_PANE, { height: 100, order: 44 });
   }
   function removeSvirPane() { if (state.svirPane) { try { state.chart.removeIndicator({ paneId: state.svirPane }); } catch (e) {} state.svirPane = null; } }
@@ -2583,7 +2586,7 @@
     }).join('') + '</tbody></table>';
   }
   function svirDateModal() {
-    if (!window.LunSvir) { openModal('Свиридов', '<p>Модуль не загрузился.</p>'); return; }
+    if (!window.LunSvir) { openModal('Исследование аспектов', '<p>Модуль не загрузился.</p>'); return; }
     let def = Date.now(); try { const l = state.chart.getDataList(); if (l && l.length) def = l[l.length - 1].timestamp; } catch (e) {}
     const ds = new Date(def).toISOString().slice(0, 10);
     const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:5px 8px';
@@ -2599,7 +2602,7 @@
     bg.querySelector('#sv-go').onclick = run; run();
   }
   function svirPivotsModal() {
-    if (!window.LunSvir || !window.LunMC) { openModal('Свиридов', '<p>Модуль не загрузился.</p>'); return; }
+    if (!window.LunSvir || !window.LunMC) { openModal('Исследование аспектов', '<p>Модуль не загрузился.</p>'); return; }
     let bars = []; try { bars = state.chart.getDataList() || []; } catch (e) {}
     if (bars.length < 40) { alert('Мало истории. Углубите «Период».'); return; }
     const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:5px 8px';
@@ -2634,7 +2637,7 @@
       return `<tr><td style="padding:2px 8px 2px 0">${lbl}</td><td><select class="sv-asp" data-a="${a}" style="${ss}"><option value="off"${cur === 'off' ? ' selected' : ''}>—</option><option value="green"${cur === 'green' ? ' selected' : ''}>🟢 гармония</option><option value="red"${cur === 'red' ? ' selected' : ''}>🔴 напряжение</option></select></td></tr>`;
     }).join('');
     const plBoxes = PLA.map((p) => `<label style="display:inline-block;margin:2px 8px 2px 0"><input type="checkbox" class="sv-pl" data-p="${p}"${(S.planets || []).indexOf(p) >= 0 ? ' checked' : ''}> ${window.LunSvir.G(p)} ${p}</label>`).join('');
-    openModal('⚙ Свиридов — настройки', `
+    openModal('⚙ Исследование аспектов — настройки', `
       <p style="color:#8b93a7">Распределите аспекты по цветам и выберите планеты. Влияет на динамику, «аспекты у даты» и «на разворотах».</p>
       <div style="display:flex;gap:20px;flex-wrap:wrap">
         <div><b>Аспекты</b><table style="border-collapse:collapse;font-size:13px;margin-top:4px">${aspRows}</table></div>
@@ -2651,7 +2654,7 @@
       S.planets = [...bg.querySelectorAll('.sv-pl')].filter((c) => c.checked).map((c) => c.dataset.p);
       S.orb = Math.max(0.5, +bg.querySelector('#sv-orb').value || 2);
       S.frame = bg.querySelector('#sv-frame').value === 'helio' ? 'helio' : 'geo';
-      if (state.svirPane) { try { state.chart.removeIndicator({ paneId: state.svirPane }); state.chart.createIndicator({ name: 'SviridovDyn', paneId: state.svirPane, shortName: 'Свиридов' }, false); } catch (e) {} }
+      if (state.svirPane) { try { state.chart.removeIndicator({ paneId: state.svirPane }); state.chart.createIndicator({ name: 'SviridovDyn', paneId: state.svirPane, shortName: 'Аспекты 🟢🔴' }, false); } catch (e) {} }
       scheduleWsSave();
     };
     bg.querySelectorAll('.sv-asp,.sv-pl,#sv-orb,#sv-frame').forEach((el) => el.onchange = apply);

@@ -1059,7 +1059,7 @@
    * напряжение (суммы гармоничных/напряжённых аспектов). Пересекаются там, где
    * баланс смещается — как у П. Свиридова. Набор планет/аспектов — LUN.SVIR. */
   kc.registerIndicator({
-    name: 'SviridovDyn', shortName: 'Свиридов', series: 'normal', figures: [],
+    name: 'SviridovDyn', shortName: 'Аспекты 🟢🔴', series: 'normal', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis }) => {
       const list = chart.getDataList(); if (list.length < 3 || !window.LunSvir) return true;
@@ -1075,7 +1075,7 @@
       // подсветка «красный выше зелёного» = напряжённые окна
       for (let i = from + 1; i < to; i++) { if (red[i] > grn[i] && red[i - 1] <= grn[i - 1]) { const x = xAxis.convertToPixel(i); ctx.strokeStyle = 'rgba(239,83,80,0.25)'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); } }
       ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-      ctx.fillText('Свиридов · 🟢 поддержка / 🔴 напряжение (пересечение = смена баланса)', 4, 2);
+      ctx.fillText('Динамика аспектов · 🟢 поддержка / 🔴 напряжение (пересечение = смена баланса)', 4, 2);
       return true;
     },
   });
