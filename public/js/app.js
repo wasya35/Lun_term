@@ -1804,12 +1804,13 @@
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
       trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null, barMode: (window.LUN.BAR && window.LUN.BAR.mode) || 'signed',
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
+      svir: window.LUN.SVIR || null,
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
         basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane, syn: !!s.synPane,
         signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
-        aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane, sbc: !!s.sbcPane,
+        aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane, sbc: !!s.sbcPane, svir: !!s.svirPane,
       },
       drawings: Object.values(s.drawings || {}),
     };
@@ -1833,6 +1834,7 @@
     try { if (ind.allAspect && !state.allAspectPane) createAllAspect(); } catch (e) {}
     try { if (ind.aspsel && !state.aspSelPane && (window.LUN.ASPSEL.blocks || []).length) createAspSelPane(); } catch (e) {}
     try { if (ind.sbc && !state.sbcPane && window.LUN_SBC && window.LUN_SBC.janma) createSBCPane(); } catch (e) {}
+    try { if (ind.svir && !state.svirPane) createSvirPane(); } catch (e) {}
   }
   function applyWsDrawings(list) {
     (list || []).forEach((d) => { try { const id = state.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) state.drawings[oid] = d; } catch (e) {} });
@@ -1850,6 +1852,7 @@
       if (ws.maslov && ws.maslov.cycle) window.LUN_MASLOV = ws.maslov;
       if (ws.barMode) window.LUN.BAR.mode = ws.barMode;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
+      if (ws.svir && ws.svir.planets) window.LUN.SVIR = ws.svir;
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
@@ -2551,6 +2554,107 @@
       else { b.classList.remove('active'); removeAspSelPane(); }
     }, false, 'Показать/скрыть ленту выбранных аспектов');
     asBtn.dataset.sync = 'aspsel';
+    // ---- Свиридов ----
+    const svSub = document.createElement('div'); svSub.className = 'menu-sub'; svSub.textContent = 'Свиридов'; aspWrap.appendChild(svSub);
+    const svBtn = mkBtn(aspWrap, '🟢🔴 Динамика (зелёные/красные)', (b) => {
+      const on = !b.classList.contains('active'); b.classList.toggle('active', on);
+      if (on) createSvirPane(); else removeSvirPane(); closeMenus();
+    }, false, 'Две кривые: поддержка (зел.) и напряжение (красн.), пересечение = смена баланса');
+    svBtn.dataset.sync = 'svir';
+    mkBtn(aspWrap, '🔍 Аспекты у даты…', () => { closeMenus(); svirDateModal(); }, false, 'Все точные аспекты в окне ±1–2 дня вокруг выбранной даты');
+    mkBtn(aspWrap, '🔄 Аспекты на разворотах', () => { closeMenus(); svirPivotsModal(); }, false, 'Найти развороты (ZigZag) на графике и показать аспекты у каждого (±дни)');
+    mkBtn(aspWrap, '⚙ Свиридов: настройки', () => { closeMenus(); svirSettingsModal(); }, false, 'Какие планеты и аспекты в зелёные/красные, орб, окно');
+  }
+  /* ---------- Свиридов: панель динамики + модалки ---------- */
+  const SVIR_PANE = 'pane_svir';
+  function createSvirPane() {
+    if (state.svirPane) { try { state.chart.removeIndicator({ paneId: state.svirPane }); } catch (e) {} }
+    state.chart.createIndicator({ name: 'SviridovDyn', paneId: SVIR_PANE, shortName: 'Свиридов' }, false);
+    state.svirPane = SVIR_PANE; wishPane(SVIR_PANE, { height: 100, order: 44 });
+  }
+  function removeSvirPane() { if (state.svirPane) { try { state.chart.removeIndicator({ paneId: state.svirPane }); } catch (e) {} state.svirPane = null; } }
+  function svirListHtml(list) {
+    if (!list.length) return '<p style="color:#6b7280">Аспектов в окне не найдено.</p>';
+    const G = window.LunSvir.G;
+    return '<table style="width:100%;border-collapse:collapse;font-size:13px"><tbody>' + list.map((x) => {
+      const d = new Date(x.exactTs), dd = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      const c = x.color === 'green' ? '#26a69a' : '#ef5350';
+      return `<tr><td style="color:${c};font-size:15px;padding:2px 8px 2px 0">${G(x.a)} ${x.sym} ${G(x.b)}</td><td style="color:#8b93a7">${x.a}–${x.b}</td><td style="text-align:right;color:${c}">${dd}</td></tr>`;
+    }).join('') + '</tbody></table>';
+  }
+  function svirDateModal() {
+    if (!window.LunSvir) { openModal('Свиридов', '<p>Модуль не загрузился.</p>'); return; }
+    let def = Date.now(); try { const l = state.chart.getDataList(); if (l && l.length) def = l[l.length - 1].timestamp; } catch (e) {}
+    const ds = new Date(def).toISOString().slice(0, 10);
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:5px 8px';
+    openModal('🔍 Аспекты у даты', `
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
+        <label>Дата<br><input id="sv-date" type="date" value="${ds}" style="${ss}"></label>
+        <label>Окно ±дней<br><select id="sv-win" style="${ss}"><option value="1">1</option><option value="2">2</option></select></label>
+        <button id="sv-go" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer">Показать</button>
+      </div>
+      <div id="sv-out">…</div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const run = () => { const v = bg.querySelector('#sv-date').value, w = +bg.querySelector('#sv-win').value || 1; const ts = v ? Date.parse(v + 'T12:00:00') : def; bg.querySelector('#sv-out').innerHTML = svirListHtml(window.LunSvir.aspectsAround(ts, w)); };
+    bg.querySelector('#sv-go').onclick = run; run();
+  }
+  function svirPivotsModal() {
+    if (!window.LunSvir || !window.LunMC) { openModal('Свиридов', '<p>Модуль не загрузился.</p>'); return; }
+    let bars = []; try { bars = state.chart.getDataList() || []; } catch (e) {}
+    if (bars.length < 40) { alert('Мало истории. Углубите «Период».'); return; }
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:5px 8px';
+    openModal('🔄 Аспекты на разворотах', `
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px">
+        <label>Разворот ≥ %<br><input id="pv-pct" type="number" step="0.5" min="1" value="4" style="${ss};width:80px"></label>
+        <label>Окно ±дней<br><select id="pv-win" style="${ss}"><option value="1">1</option><option value="2">2</option></select></label>
+        <button id="pv-go" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer">Найти</button>
+      </div>
+      <div id="pv-out" style="max-height:56vh;overflow:auto">…</div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const run = () => {
+      const pct = +bg.querySelector('#pv-pct').value || 4, w = +bg.querySelector('#pv-win').value || 1;
+      const piv = window.LunMC.detectPivots(bars, pct);
+      if (!piv.length) { bg.querySelector('#pv-out').innerHTML = '<p style="color:#6b7280">Разворотов не найдено (уменьшите %).</p>'; return; }
+      const html = piv.slice(-40).reverse().map((idx) => {
+        const b = bars[idx], d = new Date(b.timestamp), dd = ('0' + d.getDate()).slice(-2) + '.' + ('0' + (d.getMonth() + 1)).slice(-2) + '.' + d.getFullYear();
+        const asp = window.LunSvir.aspectsAround(b.timestamp, w);
+        return `<div style="border-top:1px solid #232b3a;padding:6px 0"><b>${dd}</b> · цена ${b.close}<br>${svirListHtml(asp)}</div>`;
+      }).join('');
+      bg.querySelector('#pv-out').innerHTML = '<p style="color:#8b93a7">Разворотов: ' + piv.length + ' (показаны последние 40)</p>' + html;
+    };
+    bg.querySelector('#pv-go').onclick = run; run();
+  }
+  function svirSettingsModal() {
+    const S = window.LUN.SVIR;
+    const ANG = [[0, '☌ соединение'], [60, '⚹ секстиль'], [90, '□ квадрат'], [120, '△ трин'], [180, '☍ оппозиция'], [45, '∠ полукв.'], [135, '⚼ полутора'], [150, '⚻ квинконс'], [30, '⚺ 30°'], [72, 'квинтиль 72°']];
+    const PLA = window.LunSvir.ALLP;
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 6px';
+    const aspRows = ANG.map(([a, lbl]) => {
+      const cur = (S.green || []).indexOf(a) >= 0 ? 'green' : ((S.red || []).indexOf(a) >= 0 ? 'red' : (a === 0 ? (S.neutral0 || 'off') : 'off'));
+      return `<tr><td style="padding:2px 8px 2px 0">${lbl}</td><td><select class="sv-asp" data-a="${a}" style="${ss}"><option value="off"${cur === 'off' ? ' selected' : ''}>—</option><option value="green"${cur === 'green' ? ' selected' : ''}>🟢 гармония</option><option value="red"${cur === 'red' ? ' selected' : ''}>🔴 напряжение</option></select></td></tr>`;
+    }).join('');
+    const plBoxes = PLA.map((p) => `<label style="display:inline-block;margin:2px 8px 2px 0"><input type="checkbox" class="sv-pl" data-p="${p}"${(S.planets || []).indexOf(p) >= 0 ? ' checked' : ''}> ${window.LunSvir.G(p)} ${p}</label>`).join('');
+    openModal('⚙ Свиридов — настройки', `
+      <p style="color:#8b93a7">Распределите аспекты по цветам и выберите планеты. Влияет на динамику, «аспекты у даты» и «на разворотах».</p>
+      <div style="display:flex;gap:20px;flex-wrap:wrap">
+        <div><b>Аспекты</b><table style="border-collapse:collapse;font-size:13px;margin-top:4px">${aspRows}</table></div>
+        <div style="flex:1;min-width:220px"><b>Планеты</b><div style="margin-top:6px">${plBoxes}</div>
+          <div style="margin-top:12px"><label>Орб, °: <input id="sv-orb" type="number" step="0.5" min="0.5" max="8" value="${S.orb || 2}" style="${ss};width:60px"></label></div>
+          <div style="margin-top:8px"><label>Система: <select id="sv-frame" style="${ss}"><option value="geo"${S.frame !== 'helio' ? ' selected' : ''}>гео</option><option value="helio"${S.frame === 'helio' ? ' selected' : ''}>гелио</option></select></label></div>
+        </div>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const apply = () => {
+      const green = [], red = []; let n0 = 'off';
+      bg.querySelectorAll('.sv-asp').forEach((s) => { const a = +s.dataset.a, v = s.value; if (a === 0) { n0 = v; } if (v === 'green') green.push(a); else if (v === 'red') red.push(a); });
+      S.green = green.filter((a) => a !== 0); S.red = red.filter((a) => a !== 0); S.neutral0 = n0;
+      S.planets = [...bg.querySelectorAll('.sv-pl')].filter((c) => c.checked).map((c) => c.dataset.p);
+      S.orb = Math.max(0.5, +bg.querySelector('#sv-orb').value || 2);
+      S.frame = bg.querySelector('#sv-frame').value === 'helio' ? 'helio' : 'geo';
+      if (state.svirPane) { try { state.chart.removeIndicator({ paneId: state.svirPane }); state.chart.createIndicator({ name: 'SviridovDyn', paneId: state.svirPane, shortName: 'Свиридов' }, false); } catch (e) {} }
+      scheduleWsSave();
+    };
+    bg.querySelectorAll('.sv-asp,.sv-pl,#sv-orb,#sv-frame').forEach((el) => el.onchange = apply);
   }
   const ASPSEL_PANE = 'pane_aspsel';
   function createAspSelPane() {

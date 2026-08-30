@@ -1054,6 +1054,32 @@
     },
   });
 
+  /* ============ Свиридов: двухполярная динамика аспектов ============
+   * Две кривые на ОДНОЙ шкале от общей базовой линии: 🟢 поддержка и 🔴
+   * напряжение (суммы гармоничных/напряжённых аспектов). Пересекаются там, где
+   * баланс смещается — как у П. Свиридова. Набор планет/аспектов — LUN.SVIR. */
+  kc.registerIndicator({
+    name: 'SviridovDyn', shortName: 'Свиридов', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis }) => {
+      const list = chart.getDataList(); if (list.length < 3 || !window.LunSvir) return true;
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
+      if (to - from < 2) return true;
+      const grn = [], red = []; let mx = 1e-9;
+      for (let i = from; i < to; i++) { const r = window.LunSvir.dynAt(list[i].timestamp); grn[i] = r.green; red[i] = r.red; if (r.green > mx) mx = r.green; if (r.red > mx) mx = r.red; }
+      const H = bounding.height, W = bounding.width, base = H - 3;
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, base); ctx.lineTo(W, base); ctx.stroke();
+      const line = (arr, col) => { ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.beginPath(); let st = false; for (let i = from; i < to; i++) { const x = xAxis.convertToPixel(i), y = base - (arr[i] / mx) * (H - 8); if (!st) { ctx.moveTo(x, y); st = true; } else ctx.lineTo(x, y); } ctx.stroke(); };
+      line(grn, '#26a69a'); line(red, '#ef5350');
+      // подсветка «красный выше зелёного» = напряжённые окна
+      for (let i = from + 1; i < to; i++) { if (red[i] > grn[i] && red[i - 1] <= grn[i - 1]) { const x = xAxis.convertToPixel(i); ctx.strokeStyle = 'rgba(239,83,80,0.25)'; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); } }
+      ctx.fillStyle = '#8b93a7'; ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.fillText('Свиридов · 🟢 поддержка / 🔴 напряжение (пересечение = смена баланса)', 4, 2);
+      return true;
+    },
+  });
+
   /* ============ Прогностика: цикл Меркурий–Солнце (каркас Маслова) ============
    * window.LUN_MASLOV = { cycle:'merc'|'moon' }. Вертикали на 4 событиях этапа
    * + чередующийся фон между ними. Направление НЕ постулируется (чередование);

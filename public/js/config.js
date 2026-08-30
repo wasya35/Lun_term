@@ -262,6 +262,19 @@ LUN.SYN = { mode: 'both' };
 /* Барометр аспектов: 'signed' (1 знаковая линия) | 'polar' (2 полярности, Свиридов). */
 LUN.BAR = { mode: 'signed' };
 
+/* Свиридов: набор планет и распределение аспектов на зелёные (гармония) и
+ * красные (напряжение). neutral0 — куда относить соединение (green/red/off).
+ * Правится в «Астро → Свиридов: настройки». */
+LUN.SVIR = {
+  planets: ['Sun', 'Moon', 'Mercury', 'Venus', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune', 'Pluto', 'NNode'],
+  green: [60, 120],
+  red: [90, 180],
+  neutral0: 'green',
+  orb: 2,
+  frame: 'geo',
+  windowDays: 1,
+};
+
 /* Позиция (paper): R:R по умолчанию (риск = вознаграждение / rr). */
 LUN.POS = { rr: 2 };
 
