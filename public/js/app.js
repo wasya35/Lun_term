@@ -279,7 +279,9 @@
         <div><b>Коннекторы (реалтайм)</b> <span style="color:#8b93a7;font-size:11px">— все вкл по умолчанию, цена всегда движется</span><br>
           <label><input type="checkbox" id="ap-crypto"${on('crypto') ? ' checked' : ''}> Крипта · Bybit (WebSocket, настоящий поток)</label><br>
           <label><input type="checkbox" id="ap-us"${on('us') ? ' checked' : ''}> Америка · Yahoo (опрос ~15–30с)</label><br>
-          <label><input type="checkbox" id="ap-moex"${on('moex') ? ' checked' : ''}> MOEX · псевдо (опрос; истинный realtime у биржи платный)</label></div>
+          <label><input type="checkbox" id="ap-moex"${on('moex') ? ' checked' : ''}> MOEX · псевдо (опрос; истинный realtime у биржи платный)</label><br>
+          <button id="ap-apply" style="margin-top:8px;background:#1e2636;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:6px 14px;cursor:pointer">Применить</button>
+          <span id="ap-applied" style="color:#26a69a;font-size:11px;margin-left:8px"></span></div>
         <div><b>Прогноз вперёд</b><br>
           <select id="ap-fc" style="${ss}"><option value="1">1 квартал</option><option value="2">2 квартала</option></select>
           <span style="color:#8b93a7;font-size:11px">на сколько продлевать поле кнопкой «🔮 Прогноз» (в Астро)</span></div>
@@ -289,6 +291,15 @@
     bg.querySelectorAll('[name=ap-cd]').forEach((r) => r.onchange = () => { if (r.checked) setCandleType(r.value); });
     const cw = (id, name) => { const el = bg.querySelector(id); el.onchange = () => { if (window.LunStream) window.LunStream.setConnector(name, el.checked, slots); }; };
     cw('#ap-crypto', 'crypto'); cw('#ap-us', 'us'); cw('#ap-moex', 'moex');
+    // «Применить» — форсировать переподписку всех коннекторов по галочкам
+    const applyBtn = bg.querySelector('#ap-apply'), appliedMsg = bg.querySelector('#ap-applied');
+    if (applyBtn) applyBtn.onclick = () => {
+      if (!window.LunStream) return;
+      [['#ap-crypto', 'crypto'], ['#ap-us', 'us'], ['#ap-moex', 'moex']].forEach(([id, name]) => {
+        const el = bg.querySelector(id); if (el) window.LunStream.setConnector(name, el.checked, slots);
+      });
+      if (appliedMsg) { appliedMsg.textContent = '✓ применено'; setTimeout(() => { if (appliedMsg) appliedMsg.textContent = ''; }, 2000); }
+    };
     const fc = bg.querySelector('#ap-fc'); fc.value = String((window.LUN.FORECAST && window.LUN.FORECAST.quarters) || 1);
     fc.onchange = () => { window.LUN.FORECAST.quarters = +fc.value; if (state.forecastOn) setForecast(true); };
   }
@@ -2791,8 +2802,10 @@
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
     if (window.LunStream) window.LunStream.onStatus((txt, color) => { const el = document.getElementById('stream-status'); if (el) { el.textContent = txt; el.style.color = color; } });
     setLayout('1');       // создаёт график(и), панели и загрузку
-    // коннекторы — все включены по умолчанию (цена всегда движется)
-    if (window.LunStream) setTimeout(() => { ['crypto', 'us', 'moex'].forEach((n) => window.LunStream.setConnector(n, true, slots)); }, 1200);
+    // коннекторы включены по умолчанию (stream.js: enabled=true) — цена всегда
+    // движется. Достаточно один раз подписать открытые слоты (load() тоже это
+    // делает; здесь — страховка на случай гонки таймингов при старте).
+    if (window.LunStream) setTimeout(() => { slots.forEach((s) => window.LunStream.attach(s)); }, 1200);
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
     setInterval(() => scheduleWsSave(), 25000);   // страховочное авто-сохранение рабочего стола

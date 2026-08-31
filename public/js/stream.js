@@ -12,8 +12,10 @@
  * ===========================================================================*/
 (function () {
   const PROV2CONN = { moex: 'moex', bybit: 'crypto', binance: 'crypto', yahoo: 'us' };
-  const enabled = { crypto: false, us: false, moex: false };
-  const subs = new Map();                 // slotId -> { kind, topic?, handler?, timer?, refresh }
+  // Коннекторы включены по умолчанию — цена всегда движется (терминал «живой»).
+  const enabled = { crypto: true, us: true, moex: true };
+  const subs = new Map();                 // slotId -> { token, kind, topic?, handler?, timer?, refresh }
+  let attachSeq = 0;                       // токен подписки (страж целостности потока)
   let statusCb = null;
   const setStatus = (txt, color) => { if (statusCb) statusCb(txt, color); };
 
@@ -65,32 +67,54 @@
     // данные тянет iss-client через LunData.fetchFor, поэтому prov может быть null.
     const prov = window.LunProviders && window.LunProviders.get(provId);
     const ins = slot.instrument, tf = slot.tf;
+    // Регистрируем подписку СРАЗУ, с уникальным токеном. Дальше идут await'ы
+    // (resolveTicker, pull) — за это время пользователь может сменить инструмент/ТФ
+    // и запустить новый attach. Токен + сверка инструмента = страж целостности:
+    // «поздний» ответ от прошлого инструмента НЕ попадёт в новый график
+    // (именно из-за этого последний бар раньше «улетал» на чужую цену).
+    const token = ++attachSeq;
+    const sub = { token, kind: 'pending', refresh: () => {} };
+    subs.set(slot.slotId, sub);
+    const alive = () => subs.get(slot.slotId) === sub
+      && slot.instrument === ins && slot.tf === tf
+      && !(window.LUN_REPLAY && window.LUN_REPLAY.on);   // в реплее живой поток молчит
     // KLineChart v10: свечу отдаём в колбэк subscribeBar (loader.pushBar),
     // он делает _addData(bar,"update") — обновляет последнюю или добавляет новую.
-    const push = (bar) => { try { if (slot.loader && slot.loader.pushBar) slot.loader.pushBar(bar); } catch (e) {} };
+    const push = (bar) => {
+      try {
+        if (!alive()) return;                             // слот уже показывает другое — молчим
+        if (!bar || !Number.isFinite(bar.timestamp) || !Number.isFinite(bar.close)) return;
+        if (slot.loader && slot.loader.pushBar) slot.loader.pushBar(bar);
+      } catch (e) {}
+    };
     // REST-обновление последних баров (опрос и дозагрузка после фона). Один
     // источник на всех: LunData.fetchFor (умеет и MOEX, и провайдеры реестра).
     let symbolObj = { provider: provId, symbol: ins.symbol, ticker: ins.ticker, engine: ins.engine, market: ins.market };
     try { symbolObj.ticker = await window.LunData.resolveTicker(ins); if (!symbolObj.symbol) symbolObj.symbol = symbolObj.ticker; } catch (e) {}
+    if (!alive()) {                                        // инструмент сменили за время резолва
+      if (subs.get(slot.slotId) === sub) subs.delete(slot.slotId);
+      return;
+    }
     const pull = async () => {
       if (prov && prov.fetchCandles) return prov.fetchCandles(symbolObj, tf);
       return window.LunData.fetchFor(ins, tf);
     };
-    const refresh = async () => { try { const b = await pull(); if (b && b.length) { push(b[b.length - 1]); if (b.length > 1) push(b[b.length - 2]); } } catch (e) {} };
+    const refresh = async () => { try { const b = await pull(); if (!alive()) return; if (b && b.length) { push(b[b.length - 1]); if (b.length > 1) push(b[b.length - 2]); } } catch (e) {} };
+    sub.refresh = refresh;
 
     if (provId === 'bybit' && prov && prov.tfMap) {       // настоящий WS + страховочный опрос
       const iv = prov.tfMap[tf.id] || '60', sym = ins.symbol || symbolObj.ticker, topic = 'kline.' + iv + '.' + sym;
       bybitSub(topic, push);
       refresh();                                          // мгновенно подтянуть текущую свечу
       const timer = setInterval(refresh, 15000);          // резерв, если WS замолчит
-      subs.set(slot.slotId, { kind: 'ws', topic, handler: push, refresh, timer });
+      sub.kind = 'ws'; sub.topic = topic; sub.handler = push; sub.timer = timer;
       return;
     }
     // опрос (псевдо-реалтайм): MOEX и US
     const stepMs = ({ minute: 60000, hour: 3600000, day: 86400000 }[tf.type] || 3600000) * tf.span;
     const period = Math.max(5000, Math.min(30000, Math.floor(stepMs / 4)));
     const timer = setInterval(refresh, period); refresh();
-    subs.set(slot.slotId, { kind: 'poll', timer, refresh });
+    sub.kind = 'poll'; sub.timer = timer;
     setStatus(conn === 'moex' ? 'поток: MOEX псевдо (опрос ~' + Math.round(period / 1000) + 'с)' : 'поток: ' + (prov ? prov.title : conn) + ' опрос', '#e0a030');
   }
   function detach(slot) {

@@ -127,31 +127,85 @@
     return parseCandles(await getAllPages(url, 'candles', maxPages || 40));
   }
 
+  // Порядковый номер экспирации из тикера (SiZ5 -> дек-2025). Месяц — предпосл.
+  // символ, год — последний (одна цифра, разворачиваем к ближайшему десятилетию).
+  const MCODE = { F: 1, G: 2, H: 3, J: 4, K: 5, M: 6, N: 7, Q: 8, U: 9, V: 10, X: 11, Z: 12 };
+  function expiryOrd(secid) {
+    const s = String(secid || '');
+    const mo = MCODE[s.slice(-2, -1)]; if (!mo) return null;
+    const y = +s.slice(-1); if (!Number.isFinite(y)) return null;
+    const nowY = new Date().getUTCFullYear();
+    let full = Math.floor(nowY / 10) * 10 + y;
+    if (full < nowY - 5) full += 10;                 // перескок десятилетия (…9 -> …0)
+    return full * 100 + mo;
+  }
+
   /* --- склейка непрерывного фьючерса из квартальных контрактов ---
-   * contracts: [{secid, bars(asc)}]. Роллинг по экспирации (последняя свеча
-   * контракта), фронт-окно = (пред.экспирация, своя экспирация]. Стыки
-   * back-adjust (разностный «панамский»): по перекрытию в день ролла. */
+   * contracts: [{secid, bars(asc)}]. Строим НЕПРЕРЫВНЫЙ ряд по ликвидности:
+   * на каждый момент времени берём самый ОБЪЁМНЫЙ из ещё не «прошедших»
+   * контрактов (монотонно вперёд по экспирации — назад не откатываемся). Так
+   * дальний, уже листингованный, но неликвидный квартал не подменяет фронт, а
+   * ролл происходит ровно там, где ликвидность реально мигрировала. Хвостовые
+   * «одиночные» неликвидные принты дальнего контракта отсекаются. Стыки
+   * back-adjust (разностный «панамский») — по разнице close в точке ролла.
+   * Итог: последний бар графика — всегда цена ликвидного фронта, без «улётов». */
   function stitchContracts(contracts) {
     const cs = contracts.filter((c) => c.bars && c.bars.length)
       .map((c) => ({ secid: c.secid, bars: c.bars.slice().sort((a, b) => a.timestamp - b.timestamp) }));
-    cs.forEach((c) => { c.expiry = c.bars[c.bars.length - 1].timestamp; c.byTs = new Map(c.bars.map((b) => [b.timestamp, b])); });
-    cs.sort((a, b) => a.expiry - b.expiry);
-    let prevExp = -Infinity; const segs = [];
-    for (const c of cs) {
-      const front = c.bars.filter((b) => b.timestamp > prevExp && b.timestamp <= c.expiry);
-      if (front.length) segs.push({ c, front });
-      prevExp = c.expiry;
+    if (!cs.length) return [];
+    cs.forEach((c) => {
+      c.ord = expiryOrd(c.secid);
+      c.lastTs = c.bars[c.bars.length - 1].timestamp;
+      c.byTs = new Map(c.bars.map((b) => [b.timestamp, b]));
+    });
+    // порядок контрактов — по РЕАЛЬНОЙ экспирации из тикера (а не по последней
+    // свече: у дальнего квартала она тоже «сегодня»); фолбэк — по последней свече
+    cs.sort((a, b) => (a.ord != null && b.ord != null ? a.ord - b.ord : a.lastTs - b.lastTs));
+    if (cs.length === 1) return cs[0].bars.map((b) => ({ timestamp: b.timestamp, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume }));
+
+    // объединённая шкала времени
+    const tsSet = new Set(); cs.forEach((c) => c.bars.forEach((b) => tsSet.add(b.timestamp)));
+    const allTs = [...tsSet].sort((a, b) => a - b);
+    let globalMaxVol = 0; cs.forEach((c) => c.bars.forEach((b) => { const v = +b.volume || 0; if (v > globalMaxVol) globalMaxVol = v; }));
+
+    // на каждый ts — самый ликвидный контракт из индексов >= текущего (монотонно)
+    let curIdx = 0; const picks = [];   // {ts, ci, bar}
+    for (const ts of allTs) {
+      let best = -1, bestVol = -Infinity;
+      for (let ci = curIdx; ci < cs.length; ci++) { const b = cs[ci].byTs.get(ts); if (b) { const v = +b.volume || 0; if (v > bestVol) { bestVol = v; best = ci; } } }
+      if (best < 0) { for (let ci = curIdx; ci < cs.length && best < 0; ci++) if (cs[ci].byTs.has(ts)) best = ci; }
+      if (best < 0) continue;
+      curIdx = best; picks.push({ ts, ci: best, bar: cs[best].byTs.get(ts) });
     }
-    let offset = 0;                       // накапливаем от новых к старым
-    for (let i = segs.length - 2; i >= 0; i--) {
-      const older = segs[i], newer = segs[i + 1], rollTs = older.c.expiry;
-      const ob = older.c.byTs.get(rollTs), nb = newer.c.byTs.get(rollTs);
-      if (ob && nb) offset += (nb.close - ob.close);
-      const off = offset;
-      older.front = older.front.map((b) => ({ timestamp: b.timestamp, open: b.open + off, high: b.high + off, low: b.low + off, close: b.close + off, volume: b.volume }));
+    if (!picks.length) return [];
+
+    // непрерывные «прогоны» одного контракта
+    let runs = [];
+    for (let i = 0; i < picks.length; i++) {
+      if (!runs.length || runs[runs.length - 1].ci !== picks[i].ci) runs.push({ ci: picks[i].ci, start: i, end: i, maxVol: 0 });
+      const r = runs[runs.length - 1]; r.end = i; const v = +picks[i].bar.volume || 0; if (v > r.maxVol) r.maxVol = v;
     }
+    // отсечь хвостовые НЕЛИКВИДНЫЕ прогоны (случайные принты дальнего квартала):
+    // если последний прогон почти без объёма относительно рынка — выбросить
+    const liqFloor = globalMaxVol * 0.05;
+    while (runs.length > 1 && runs[runs.length - 1].maxVol < liqFloor) { const dead = runs.pop(); picks.length = dead.start; }
+
+    // собрать ряд из оставшихся прогонов
     const out = [];
-    for (const s of segs) for (const b of s.front) out.push(b);
+    for (const r of runs) for (let i = r.start; i <= r.end; i++) { const p = picks[i]; out.push({ timestamp: p.ts, open: p.bar.open, high: p.bar.high, low: p.bar.low, close: p.bar.close, volume: p.bar.volume, _ci: p.ci }); }
+    if (!out.length) return [];
+
+    // back-adjust: от новых к старым, копим смещение по разнице close в точке ролла
+    let off = 0;
+    for (let r = runs.length - 2; r >= 0; r--) {
+      const older = runs[r], newer = runs[r + 1];
+      const rollTs = picks[newer.start].ts;
+      const nb = cs[newer.ci].byTs.get(rollTs), ob = cs[older.ci].byTs.get(rollTs);
+      if (nb && ob) off += (nb.close - ob.close);
+      const o = off, s = older.start - runs[0].start, e = older.end - runs[0].start;
+      for (let k = s; k <= e; k++) { out[k].open += o; out[k].high += o; out[k].low += o; out[k].close += o; }
+    }
+    out.forEach((b) => { delete b._ci; });
     out.sort((a, b) => a.timestamp - b.timestamp);
     return out;
   }
