@@ -319,6 +319,55 @@
     },
   });
 
+  /* ============ Мульти-VWAP: до 3 якорей (день/неделя/месяц/все) ============ */
+  function vwapSessionKey(ts, reset) {
+    const t = ts + MSK_OFFSET;
+    if (reset === 'month') { const dt = new Date(t); return dt.getUTCFullYear() * 12 + dt.getUTCMonth(); }
+    if (reset === 'week') return Math.floor((Math.floor(t / 86400000) + 3) / 7);   // ISO-недели (пн)
+    if (reset === 'day') return Math.floor(t / 86400000);
+    return 0;   // 'all' / 'none' — сплошной, один якорь на всю историю
+  }
+  function vwapCalcFor(i) {
+    return (dataList) => {
+      const cfg = (window.LUN.INDICATORS.vwapList || [])[i];
+      if (!cfg || !cfg.on) return dataList.map(() => ({}));
+      const k1 = (cfg.sigma && cfg.sigma[0]) || 1, k2 = (cfg.sigma && cfg.sigma[1]) || 2;
+      let curKey = null, cumV = 0, cumPV = 0, cumP2V = 0;
+      return dataList.map((d) => {
+        const key = vwapSessionKey(d.timestamp, cfg.reset);
+        if (key !== curKey) { curKey = key; cumV = cumPV = cumP2V = 0; }
+        const tp = (d.high + d.low + d.close) / 3, v = d.volume || 1;
+        cumV += v; cumPV += tp * v; cumP2V += tp * tp * v;
+        const vwap = cumPV / cumV;
+        if (!cfg.bands) return { vwap };
+        const sd = Math.sqrt(Math.max(0, cumP2V / cumV - vwap * vwap));
+        return { vwap, up1: vwap + k1 * sd, dn1: vwap - k1 * sd, up2: vwap + k2 * sd, dn2: vwap - k2 * sd };
+      });
+    };
+  }
+  const VW_MARK = ['①', '②', '③'];
+  for (let i = 0; i < 3; i++) {
+    kc.registerIndicator({
+      name: 'VWAP_' + (i + 1),
+      shortName: 'VWAP ' + VW_MARK[i],
+      series: 'price',
+      precision: 2,
+      figures: [
+        { key: 'up2', title: '+2σ: ', type: 'line' },
+        { key: 'up1', title: '+1σ: ', type: 'line' },
+        { key: 'vwap', title: 'VWAP: ', type: 'line' },
+        { key: 'dn1', title: '−1σ: ', type: 'line' },
+        { key: 'dn2', title: '−2σ: ', type: 'line' },
+      ],
+      styles: () => {
+        const cfg = (window.LUN.INDICATORS.vwapList || [])[i] || {};
+        const band = { color: cfg.bandColor || 'rgba(240,192,64,0.30)', style: 'dashed' };
+        return { lines: [{ ...band }, { ...band }, { color: cfg.color || '#f0c040', size: 1.4 }, { ...band }, { ...band }] };
+      },
+      calc: vwapCalcFor(i),
+    });
+  }
+
   /* =============== Дневная кумулятивная дельта (по OHLC) =============== */
   // Точных данных покупок/продаж у ISS нет — дельта аппроксимируется из свечи:
   // доля дня = (close-open)/(high-low), знак = направление; накопление за сутки (МСК).

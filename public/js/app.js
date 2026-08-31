@@ -1216,6 +1216,51 @@
     }
   }
 
+  /* ---------- мульти-VWAP (день/неделя/месяц/все + полосы) ---------- */
+  function applyVwap(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    const list = window.LUN.INDICATORS.vwapList || [];
+    let anyOn = false;
+    for (let i = 0; i < 3; i++) {
+      const name = 'VWAP_' + (i + 1);
+      try { c.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {}
+      if (list[i] && list[i].on) { try { c.createIndicator({ name, paneId: 'candle_pane' }, true); anyOn = true; } catch (e) {} }
+    }
+    slot.vwapOn = anyOn;
+    const b = document.querySelector('[data-sync="vwapmulti"]'); if (b) b.classList.toggle('active', anyOn);
+  }
+  function vwapModal() {
+    const IND = window.LUN.INDICATORS;
+    const list = IND.vwapList || (IND.vwapList = []);
+    while (list.length < 3) list.push({ on: false, reset: 'day', bands: false, sigma: [1, 2], color: '#f0c040', bandColor: 'rgba(240,192,64,0.30)' });
+    const anchors = [['day', 'день'], ['week', 'неделя'], ['month', 'месяц'], ['all', 'все бары']];
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
+    const row = (i) => { const v = list[i]; return `
+      <div style="border:1px solid #232b3a;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px">
+        <label style="font-weight:600"><input type="checkbox" class="vw-on" data-i="${i}"${v.on ? ' checked' : ''}> VWAP ${['①', '②', '③'][i]}</label>
+        <label>Якорь (сброс): <select class="vw-reset" data-i="${i}" style="${ss}">${anchors.map(([val, t]) => `<option value="${val}"${v.reset === val ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label><input type="checkbox" class="vw-bands" data-i="${i}"${v.bands ? ' checked' : ''}> полосы отклонений ±1σ / ±2σ</label>
+        <label>Цвет: <input type="color" class="vw-color" data-i="${i}" value="${v.color}" style="width:44px;height:26px;background:#0b0e14;border:1px solid #2a3242;border-radius:6px;vertical-align:middle"></label>
+      </div>`; };
+    openModal('📊 VWAP — до трёх якорей', `
+      <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;max-width:420px">
+        <div style="color:#8b93a7;font-size:12px">Несколько VWAP одновременно — например «день» + «месяц». У каждого свой якорь (сброс накопления) и полосы отклонений.</div>
+        ${row(0)}${row(1)}${row(2)}
+        <button id="vw-apply" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px 16px;cursor:pointer">Применить</button>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#vw-apply').onclick = () => {
+      for (let i = 0; i < 3; i++) {
+        list[i].on = bg.querySelector('.vw-on[data-i="' + i + '"]').checked;
+        list[i].reset = bg.querySelector('.vw-reset[data-i="' + i + '"]').value;
+        list[i].bands = bg.querySelector('.vw-bands[data-i="' + i + '"]').checked;
+        const col = bg.querySelector('.vw-color[data-i="' + i + '"]').value;
+        list[i].color = col; list[i].bandColor = hexToRgba(col, 0.30);
+      }
+      applyVwap(state); scheduleWsSave(); bg.remove();
+    };
+  }
+
   /* ---------- загрузка инструмента/ТФ ---------- */
   async function load(slot) {
     slot = slot || state;
@@ -1402,6 +1447,8 @@
         <div><div style="color:#8b93a7;font-size:11px">Сумма PnL</div><b style="font-size:16px;color:${sumPnl >= 0 ? '#26a69a' : '#ef5350'}">${sumPnl >= 0 ? '+' : ''}${sumPnl.toFixed(2)}%</b></div>
         <div><div style="color:#8b93a7;font-size:11px">Сумма R</div><b style="font-size:16px;color:${sumR >= 0 ? '#26a69a' : '#ef5350'}">${sumR >= 0 ? '+' : ''}${sumR.toFixed(2)}R</b></div>
         <div style="flex:1"></div>
+        <button id="sim-csv" style="align-self:center;background:#123a2a;color:#8fe0b8;border:1px solid #2a5a3a;border-radius:6px;padding:5px 10px;cursor:pointer">⬇ Excel (CSV)</button>
+        <button id="sim-txt" style="align-self:center;background:#1f2b3d;color:#9cc7f0;border:1px solid #3aa0ff;border-radius:6px;padding:5px 10px;cursor:pointer">⬇ TXT</button>
         <button id="sim-clear" style="align-self:center;background:#3a1a20;color:#ef8a8a;border:1px solid #5a2a30;border-radius:6px;padding:5px 10px;cursor:pointer">Очистить журнал</button>
       </div>
       <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -1419,6 +1466,8 @@
       <p style="color:#6b7280;font-size:11px;margin-top:8px">Авто-закрытие: касание TP/SL внутри бара (при совпадении в одном баре — сначала стоп). R:R и риск задаются в панели симулятора. Исследовательский тест — не гарантия результата.</p>`);
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
     bg.querySelector('#sim-clear').onclick = () => { SIM.trades = []; bg.remove(); updateReplayBar(); };
+    bg.querySelector('#sim-csv').onclick = () => simExport('csv');
+    bg.querySelector('#sim-txt').onclick = () => simExport('txt');
     // equity-кривая
     const cv = bg.querySelector('#sim-eq'); if (cv && cv.getContext) {
       const ctx = cv.getContext('2d'), W = cv.width, Hh = cv.height;
@@ -1429,6 +1478,45 @@
       ctx.strokeStyle = cum >= 0 ? '#26a69a' : '#ef5350'; ctx.lineWidth = 1.8; ctx.beginPath();
       pts.forEach((v, i) => { const px = x(i), py = y(v); if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); }); ctx.stroke();
     }
+  }
+
+  // экспорт журнала сделок в CSV (Excel) или TXT — скачивание файлом
+  function simExport(fmt) {
+    const T = SIM.trades;
+    if (!T.length) { alert('Нет сделок для экспорта. Сначала проведите сделки в симуляторе.'); return; }
+    const p2 = (n) => ('0' + n).slice(-2);
+    const fmtTs = (ms) => { const d = new Date(ms); return d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()); };
+    const headers = ['#', 'Инструмент', 'Направление', 'Вход', 'Выход', 'Открыта', 'Закрыта', 'Итог', 'PnL_%', 'R'];
+    const rows = T.map((t, i) => [i + 1, t.ins, t.dir === 'long' ? 'ЛОНГ' : 'ШОРТ', t.entry, t.exit, fmtTs(t.ts), fmtTs(t.exitTs), t.reason, t.pnlPct.toFixed(2), t.rMult.toFixed(2)]);
+    const wins = T.filter((t) => t.pnlPct > 0).length, wr = T.length ? (wins / T.length * 100) : 0;
+    const sumR = T.reduce((a, t) => a + t.rMult, 0), sumPnl = T.reduce((a, t) => a + t.pnlPct, 0);
+    let content, mime, ext;
+    if (fmt === 'csv') {
+      const esc = (v) => { const s = String(v); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+      const lines = [headers.join(';')];                   // ; — Excel-RU открывает по столбцам
+      rows.forEach((r) => lines.push(r.map(esc).join(';')));
+      lines.push('');
+      lines.push(['Итого', 'сделок=' + T.length, 'винрейт=' + wr.toFixed(0) + '%', 'сумма PnL=' + sumPnl.toFixed(2) + '%', 'сумма R=' + sumR.toFixed(2)].join(';'));
+      content = '﻿' + lines.join('\r\n');              // BOM — кириллица в Excel
+      mime = 'text/csv;charset=utf-8'; ext = 'csv';
+    } else {
+      const w = [3, 12, 11, 11, 11, 17, 17, 10, 9, 8];
+      const pad = (v, n) => { const s = String(v); return s.length >= n ? s : s + ' '.repeat(n - s.length); };
+      const line = (arr) => arr.map((v, k) => pad(v, w[k])).join(' ');
+      const lines = ['Журнал сделок — Lun_term (' + fmtTs(Date.now()) + ')', '', line(headers), '-'.repeat(w.reduce((a, b) => a + b + 1, 0))];
+      rows.forEach((r) => lines.push(line(r)));
+      lines.push('');
+      lines.push('Сделок: ' + T.length + '   Винрейт: ' + wr.toFixed(0) + '%   Сумма PnL: ' + sumPnl.toFixed(2) + '%   Сумма R: ' + sumR.toFixed(2));
+      lines.push('Исследовательский тест — не гарантия результата.');
+      content = lines.join('\r\n'); mime = 'text/plain;charset=utf-8'; ext = 'txt';
+    }
+    try {
+      const blob = new Blob([content], { type: mime });
+      const url = URL.createObjectURL(blob), a = document.createElement('a'), now = new Date();
+      a.href = url; a.download = 'lun_trades_' + now.getFullYear() + p2(now.getMonth() + 1) + p2(now.getDate()) + '_' + p2(now.getHours()) + p2(now.getMinutes()) + '.' + ext;
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { try { URL.revokeObjectURL(url); a.remove(); } catch (e) {} }, 200);
+    } catch (e) { alert('Не удалось сформировать файл: ' + e.message); }
   }
 
   let replayBarEl = null;
@@ -1807,10 +1895,18 @@
   }
   /* ---------- рабочий стол: авто-сохранение/восстановление ---------- */
   let applyingWs = false, wsTimer = null, wsApplied = false;
+  const WS_LKEY = 'lun_ws_v1';
   function scheduleWsSave() {
-    if (applyingWs || !window.LunAuth || !window.LunAuth.user) return;
+    if (applyingWs) return;
     clearTimeout(wsTimer);
-    wsTimer = setTimeout(() => { authApi('ws_save', { ws: captureWorkspace() }).catch(() => {}); }, 1500);
+    wsTimer = setTimeout(() => {
+      let ws; try { ws = captureWorkspace(); } catch (e) { return; }
+      // локально — ВСЕГДА (сохранение разметки/индикаторов между сессиями в этом
+      // браузере, даже без входа). На сервер — если вошли (кросс-устройство, много
+      // пользователей: у каждого свой рабочий стол).
+      try { localStorage.setItem(WS_LKEY, JSON.stringify(ws)); } catch (e) {}
+      if (window.LunAuth && window.LunAuth.user) authApi('ws_save', { ws }).catch(() => {});
+    }, 1500);
   }
   function captureWorkspace() {
     const s = state;
@@ -1819,12 +1915,14 @@
       trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null, barMode: (window.LUN.BAR && window.LUN.BAR.mode) || 'signed',
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       svir: window.LUN.SVIR || null,
+      vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
         basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane, syn: !!s.synPane,
         signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
         aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane, sbc: !!s.sbcPane, svir: !!s.svirPane,
+        vwap: !!s.vwapOn,
       },
       drawings: Object.values(s.drawings || {}),
     };
@@ -1849,6 +1947,7 @@
     try { if (ind.aspsel && !state.aspSelPane && (window.LUN.ASPSEL.blocks || []).length) createAspSelPane(); } catch (e) {}
     try { if (ind.sbc && !state.sbcPane && window.LUN_SBC && window.LUN_SBC.janma) createSBCPane(); } catch (e) {}
     try { if (ind.svir && !state.svirPane) createSvirPane(); } catch (e) {}
+    try { if (ind.vwap) applyVwap(state); } catch (e) {}
   }
   function applyWsDrawings(list) {
     (list || []).forEach((d) => { try { const id = state.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) state.drawings[oid] = d; } catch (e) {} });
@@ -1867,6 +1966,7 @@
       if (ws.barMode) window.LUN.BAR.mode = ws.barMode;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.svir && ws.svir.planets) window.LUN.SVIR = ws.svir;
+      if (Array.isArray(ws.vwapList) && ws.vwapList.length) window.LUN.INDICATORS.vwapList = ws.vwapList;
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
@@ -1875,10 +1975,18 @@
       setTimeout(() => { applyWsIndicators(ws.inds); applyWsDrawings(ws.drawings); syncToolbar(); applyingWs = false; }, 1000);
     } catch (e) { applyingWs = false; }
   }
-  // вызывается из auth.js при входе/восстановлении сессии
+  // Восстановление рабочего стола. Приоритет: сервер (если вошли — свой стол,
+  // кросс-устройство), иначе локальная копия (та же машина, вход не обязателен).
+  // Вызывается из auth.js после проверки сессии И из init() как страховка
+  // (например, если PHP недоступен — анонимный юзер всё равно вернёт разметку).
   window.LUN_APPLY_WS = async function () {
     if (wsApplied) return; wsApplied = true;
-    try { const r = await authApi('ws_load'); if (r && r.ws) applyWorkspace(r.ws); } catch (e) {}
+    let ws = null;
+    if (window.LunAuth && window.LunAuth.user) {
+      try { const r = await authApi('ws_load'); if (r && r.ws) ws = r.ws; } catch (e) {}
+    }
+    if (!ws) { try { ws = JSON.parse(localStorage.getItem(WS_LKEY) || 'null'); } catch (e) {} }
+    if (ws) applyWorkspace(ws);
   };
   window.LUN_SCHEDULE_WS = scheduleWsSave;
 
@@ -2197,9 +2305,12 @@
     }
 
     const indWrap = document.getElementById('indicators');
-    ['SMA', 'EMA', 'VWAP'].forEach((k) => { const b = mkBtn(indWrap, k, (b) => {
+    ['SMA', 'EMA'].forEach((k) => { const b = mkBtn(indWrap, k, (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleOverlay(k, on);
     }); b.dataset.sync = 'ov:' + k; });
+    // VWAP — теперь настраиваемый: до 3 якорей (день/неделя/месяц/все) + полосы
+    mkBtn(indWrap, 'VWAP…', () => { closeMenus(); vwapModal(); }, false,
+      'Несколько VWAP одновременно: день / неделя / месяц / все бары, полосы отклонений вкл/выкл').dataset.sync = 'vwapmulti';
     // объём — включён по умолчанию, можно убрать
     mkBtn(indWrap, 'Объём', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
@@ -2806,6 +2917,10 @@
     // движется. Достаточно один раз подписать открытые слоты (load() тоже это
     // делает; здесь — страховка на случай гонки таймингов при старте).
     if (window.LunStream) setTimeout(() => { slots.forEach((s) => window.LunStream.attach(s)); }, 1200);
+    // Страховка восстановления рабочего стола: если auth.php недоступен или юзер
+    // не вошёл — anonymous-стол из localStorage всё равно вернётся (разметка,
+    // индикаторы, VWAP). Если auth.js уже применил стол — сработает guard wsApplied.
+    setTimeout(() => { if (!wsApplied && window.LUN_APPLY_WS) window.LUN_APPLY_WS(); }, 2600);
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
     setInterval(() => scheduleWsSave(), 25000);   // страховочное авто-сохранение рабочего стола
@@ -2815,6 +2930,10 @@
       el.title = window.LUN_DATA_ERROR || '';
       el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
       slots.forEach((s) => scheduleApply(s));   // данные загружены — закрепляем высоты панелей всех слотов
+      // коннекторы всегда живые: после (пере)загрузки данных переподписываем поток
+      // активного слота (вне реплея). Страж целостности в stream.js не даст чужому
+      // бару попасть в график.
+      if (window.LunStream && !(window.LUN_REPLAY && window.LUN_REPLAY.on)) { try { window.LunStream.attach(state); } catch (e) {} }
       if (state.markovPanes) setTimeout(refreshMarkovPanel, 200);
       // прогноз в активном слоте выключаем при перезагрузке данных (шаг ТФ иной)
       if (state.forecastOn) { window.LUN_FORECAST = { enabled: false }; state.forecastOn = false; try { state.chart.setOffsetRightDistance(80); } catch (e) {} syncToolbar(); }

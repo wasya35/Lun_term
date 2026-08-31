@@ -84,7 +84,11 @@
 
   async function init() {
     mountButton();
-    try { const r = await api('me'); user = r.user; csrf = r.csrf || ''; render(); if (user && window.LUN_APPLY_WS) window.LUN_APPLY_WS(); } catch (e) { /* нет PHP — кнопка просто откроет форму, покажет ошибку */ }
+    try { const r = await api('me'); user = r.user; csrf = r.csrf || ''; render(); }
+    catch (e) { /* нет PHP — кнопка просто откроет форму, покажет ошибку */ }
+    // восстановить рабочий стол: вошедшему — с сервера, иначе локальную копию
+    // (разметка/индикаторы сохраняются между сессиями и без входа)
+    if (window.LUN_APPLY_WS) window.LUN_APPLY_WS();
   }
   window.LunAuth = { init, get user() { return user; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
