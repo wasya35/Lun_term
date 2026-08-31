@@ -1232,30 +1232,36 @@
   function vwapModal() {
     const IND = window.LUN.INDICATORS;
     const list = IND.vwapList || (IND.vwapList = []);
-    while (list.length < 3) list.push({ on: false, reset: 'day', bands: false, sigma: [1, 2], color: '#f0c040', bandColor: 'rgba(240,192,64,0.30)' });
+    const AX = window.LUN.VWAP_AXIS_COLOR || {}, OLD = window.LUN.VWAP_OLD_DEFAULTS || [];
+    const isDefaultCol = (c) => OLD.indexOf(c) >= 0 || Object.keys(AX).some((k) => AX[k] === c);
+    while (list.length < 3) list.push({ on: false, reset: 'day', bands: false, sigma: [1, 2], color: AX.day || '#1f9fe0' });
     const anchors = [['day', 'день'], ['week', 'неделя'], ['month', 'месяц'], ['all', 'все бары']];
     const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
     const row = (i) => { const v = list[i]; return `
       <div style="border:1px solid #232b3a;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px">
         <label style="font-weight:600"><input type="checkbox" class="vw-on" data-i="${i}"${v.on ? ' checked' : ''}> VWAP ${['①', '②', '③'][i]}</label>
         <label>Якорь (сброс): <select class="vw-reset" data-i="${i}" style="${ss}">${anchors.map(([val, t]) => `<option value="${val}"${v.reset === val ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
-        <label><input type="checkbox" class="vw-bands" data-i="${i}"${v.bands ? ' checked' : ''}> полосы отклонений ±1σ / ±2σ</label>
-        <label>Цвет: <input type="color" class="vw-color" data-i="${i}" value="${v.color}" style="width:44px;height:26px;background:#0b0e14;border:1px solid #2a3242;border-radius:6px;vertical-align:middle"></label>
+        <label><input type="checkbox" class="vw-bands" data-i="${i}"${v.bands ? ' checked' : ''}> полосы отклонений ±1σ / ±2σ (пунктир, светлее оси)</label>
+        <label>Цвет оси: <input type="color" class="vw-color" data-i="${i}" value="${v.color}" style="width:44px;height:26px;background:#0b0e14;border:1px solid #2a3242;border-radius:6px;vertical-align:middle"></label>
       </div>`; };
     openModal('📊 VWAP — до трёх якорей', `
       <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;max-width:420px">
-        <div style="color:#8b93a7;font-size:12px">Несколько VWAP одновременно — например «день» + «месяц». У каждого свой якорь (сброс накопления) и полосы отклонений.</div>
+        <div style="color:#8b93a7;font-size:12px">Несколько VWAP одновременно — например «день» + «месяц». Осевой цвет — по типу якоря (день — сине-голубой, неделя — тёмно-зелёный, месяц — розово-фиолетовый). Полосы 1σ вдвое светлее оси, 2σ — вдвое светлее 1σ, пунктиром.</div>
         ${row(0)}${row(1)}${row(2)}
         <button id="vw-apply" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px 16px;cursor:pointer">Применить</button>
       </div>`);
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    // смена якоря подтягивает осевой цвет по типу — если цвет не менялся вручную
+    bg.querySelectorAll('.vw-reset').forEach((sel) => sel.onchange = () => {
+      const i = sel.dataset.i, colEl = bg.querySelector('.vw-color[data-i="' + i + '"]');
+      if (colEl && isDefaultCol(colEl.value) && AX[sel.value]) colEl.value = AX[sel.value];
+    });
     bg.querySelector('#vw-apply').onclick = () => {
       for (let i = 0; i < 3; i++) {
         list[i].on = bg.querySelector('.vw-on[data-i="' + i + '"]').checked;
         list[i].reset = bg.querySelector('.vw-reset[data-i="' + i + '"]').value;
         list[i].bands = bg.querySelector('.vw-bands[data-i="' + i + '"]').checked;
-        const col = bg.querySelector('.vw-color[data-i="' + i + '"]').value;
-        list[i].color = col; list[i].bandColor = hexToRgba(col, 0.30);
+        list[i].color = bg.querySelector('.vw-color[data-i="' + i + '"]').value;
       }
       applyVwap(state); scheduleWsSave(); bg.remove();
     };
@@ -1966,7 +1972,12 @@
       if (ws.barMode) window.LUN.BAR.mode = ws.barMode;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.svir && ws.svir.planets) window.LUN.SVIR = ws.svir;
-      if (Array.isArray(ws.vwapList) && ws.vwapList.length) window.LUN.INDICATORS.vwapList = ws.vwapList;
+      if (Array.isArray(ws.vwapList) && ws.vwapList.length) {
+        // миграция: старые дефолтные цвета -> новая осевая палитра по типу якоря
+        const OLD = window.LUN.VWAP_OLD_DEFAULTS || [], AX = window.LUN.VWAP_AXIS_COLOR || {};
+        ws.vwapList.forEach((v) => { if (v && (!v.color || OLD.indexOf(v.color) >= 0) && AX[v.reset]) v.color = AX[v.reset]; });
+        window.LUN.INDICATORS.vwapList = ws.vwapList;
+      }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }

@@ -345,6 +345,14 @@
       });
     };
   }
+  // осветление цвета к белому на долю t (0..1). t=0.5 — «вдвое светлее».
+  function vwapLighten(hex, t) {
+    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
+    if (!m) return hex || '#f0c040';
+    let r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+    r = Math.round(r + (255 - r) * t); g = Math.round(g + (255 - g) * t); b = Math.round(b + (255 - b) * t);
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
   const VW_MARK = ['①', '②', '③'];
   for (let i = 0; i < 3; i++) {
     kc.registerIndicator({
@@ -361,8 +369,13 @@
       ],
       styles: () => {
         const cfg = (window.LUN.INDICATORS.vwapList || [])[i] || {};
-        const band = { color: cfg.bandColor || 'rgba(240,192,64,0.30)', style: 'dashed' };
-        return { lines: [{ ...band }, { ...band }, { color: cfg.color || '#f0c040', size: 1.4 }, { ...band }, { ...band }] };
+        const axis = cfg.color || '#f0c040';
+        const s1 = vwapLighten(axis, 0.5);            // 1σ — вдвое светлее оси
+        const s2 = vwapLighten(axis, 0.75);           // 2σ — вдвое светлее 1σ
+        const b1 = { color: s1, style: 'dashed', dashedValue: [6, 4], size: 1 };
+        const b2 = { color: s2, style: 'dashed', dashedValue: [6, 4], size: 1 };
+        // порядок: up2, up1, vwap(ось), dn1, dn2
+        return { lines: [{ ...b2 }, { ...b1 }, { color: axis, size: 1.6 }, { ...b1 }, { ...b2 }] };
       },
       calc: vwapCalcFor(i),
     });

@@ -325,14 +325,18 @@ LUN.INDICATORS = {
     color: '#f0c040',
     bandColor: 'rgba(240,192,64,0.35)',
   },
-  // Мульти-VWAP: до трёх одновременных якорей (день/неделя/месяц/все бары),
-  // у каждого — свой цвет и полосы отклонений вкл/выкл.
+  // Мульти-VWAP: до трёх одновременных якорей (день/неделя/месяц/все бары).
+  // Осевой цвет — по типу якоря; полосы 1σ/2σ пунктирные, вдвое/вчетверо светлее
+  // оси (считаются в indicators.js). День и неделя — без сигм по умолчанию.
   vwapList: [
-    { on: true,  reset: 'day',   bands: true,  sigma: [1, 2], color: '#f0c040', bandColor: 'rgba(240,192,64,0.30)' },
-    { on: false, reset: 'month', bands: false, sigma: [1, 2], color: '#4aa3df', bandColor: 'rgba(74,163,223,0.28)' },
-    { on: false, reset: 'week',  bands: false, sigma: [1, 2], color: '#26a69a', bandColor: 'rgba(38,166,154,0.28)' },
+    { on: true,  reset: 'day',   bands: false, sigma: [1, 2], color: '#1f9fe0' }, // сине-голубой
+    { on: false, reset: 'week',  bands: false, sigma: [1, 2], color: '#15803a' }, // тёмно-зелёный
+    { on: false, reset: 'month', bands: true,  sigma: [1, 2], color: '#d23af0' }, // ярко розово-фиолетовый
   ],
 };
+// осевые цвета VWAP по типу якоря (для миграции старых сохранённых наборов)
+LUN.VWAP_AXIS_COLOR = { day: '#1f9fe0', week: '#15803a', month: '#d23af0', all: '#e0a030' };
+LUN.VWAP_OLD_DEFAULTS = ['#f0c040', '#4aa3df', '#26a69a'];
 
 /* Разделитель половины знака: 15° (середина). Ставится одна тонкая линия на 15°,
  * граница знака (30°/0°) — ярче. */
