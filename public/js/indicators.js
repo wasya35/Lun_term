@@ -345,14 +345,6 @@
       });
     };
   }
-  // осветление цвета к белому на долю t (0..1). t=0.5 — «вдвое светлее».
-  function vwapLighten(hex, t) {
-    const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
-    if (!m) return hex || '#f0c040';
-    let r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
-    r = Math.round(r + (255 - r) * t); g = Math.round(g + (255 - g) * t); b = Math.round(b + (255 - b) * t);
-    return 'rgb(' + r + ',' + g + ',' + b + ')';
-  }
   const VW_MARK = ['①', '②', '③'];
   for (let i = 0; i < 3; i++) {
     kc.registerIndicator({
@@ -367,16 +359,9 @@
         { key: 'dn1', title: '−1σ: ', type: 'line' },
         { key: 'dn2', title: '−2σ: ', type: 'line' },
       ],
-      styles: () => {
-        const cfg = (window.LUN.INDICATORS.vwapList || [])[i] || {};
-        const axis = cfg.color || '#f0c040';
-        const s1 = vwapLighten(axis, 0.5);            // 1σ — вдвое светлее оси
-        const s2 = vwapLighten(axis, 0.75);           // 2σ — вдвое светлее 1σ
-        const b1 = { color: s1, style: 'dashed', dashedValue: [6, 4], size: 1 };
-        const b2 = { color: s2, style: 'dashed', dashedValue: [6, 4], size: 1 };
-        // порядок: up2, up1, vwap(ось), dn1, dn2
-        return { lines: [{ ...b2 }, { ...b1 }, { color: axis, size: 1.6 }, { ...b1 }, { ...b2 }] };
-      },
+      // ось — сплошная выбранного цвета; 1σ вдвое светлее, 2σ вдвое светлее 1σ;
+      // тип линий отклонений — из cfg.dash (см. LUN.vwapStyle)
+      styles: () => window.LUN.vwapStyle((window.LUN.INDICATORS.vwapList || [])[i] || {}),
       calc: vwapCalcFor(i),
     });
   }
@@ -818,6 +803,82 @@
       return true;
     },
   });
+
+  /* ============ Свинги Ганна (1/2/3-баровые) ============
+   * Свинг = ломаная экстремум→экстремум. Направление меняется, когда цена N бар
+   * подряд перебивает в противоположную сторону (для 1-барового — любое перебитие,
+   * для 2/3 — 2/3 подряд). «Внутренний» бар (не перебил ни вершину, ни низину
+   * предыдущего) игнорируется. Пивоты хранятся по timestamp (extendData.pivots),
+   * поэтому свинги, построенные на ТФ день/час, остаются при переходе на младший
+   * ТФ и НЕ перестраиваются. Линии — полупрозрачные: вверх зелёные, вниз голубые.
+   *
+   * computeSwings(bars, N) -> [{ts, price, type:'H'|'L'}] (наружу, для app.js). */
+  function computeSwings(bars, N) {
+    N = Math.max(1, Math.min(3, N | 0));
+    if (!bars || bars.length < 2) return [];
+    let dir = 0, extIdx = 0, extVal = null;                 // текущий тренд и его экстремум
+    let prevH = bars[0].high, prevL = bars[0].low;
+    let opp = 0, oppIdx = -1, oppVal = null;                // счётчик и экстремум контр-движения
+    const piv = [];
+    for (let i = 1; i < bars.length; i++) {
+      const b = bars[i];
+      const hh = b.high > prevH, ll = b.low < prevL;
+      if (!hh && !ll) continue;                             // внутренний бар — пропускаем
+      const bd = (hh && ll) ? (dir >= 0 ? 1 : -1) : (hh ? 1 : -1);   // внешний — по тренду
+      prevH = b.high; prevL = b.low;
+      if (dir === 0) { dir = bd; extIdx = i; extVal = (dir > 0 ? b.high : b.low); opp = 0; oppIdx = -1; continue; }
+      if (bd === dir) {
+        if (dir > 0) { if (b.high >= extVal) { extVal = b.high; extIdx = i; } }
+        else { if (b.low <= extVal) { extVal = b.low; extIdx = i; } }
+        opp = 0; oppIdx = -1; oppVal = null;
+      } else {
+        if (opp === 0) { oppIdx = i; oppVal = (dir > 0 ? b.low : b.high); }
+        else if (dir > 0) { if (b.low < oppVal) { oppVal = b.low; oppIdx = i; } }
+        else { if (b.high > oppVal) { oppVal = b.high; oppIdx = i; } }
+        opp++;
+        if (opp >= N) {                                     // разворот подтверждён
+          piv.push({ ts: bars[extIdx].timestamp, price: extVal, type: dir > 0 ? 'H' : 'L' });
+          dir = -dir; extIdx = oppIdx; extVal = oppVal; opp = 0; oppIdx = -1; oppVal = null;
+        }
+      }
+    }
+    piv.push({ ts: bars[extIdx].timestamp, price: extVal, type: dir > 0 ? 'H' : 'L' });
+    return piv;
+  }
+  kc.registerIndicator({
+    name: 'GannSwings', shortName: 'Свинги Ганна', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
+      const ed = indicator.extendData || {}, piv = ed.pivots; if (!piv || piv.length < 2) return true;
+      const list = chart.getDataList(); if (!list.length) return true;
+      const W = bounding.width, H = bounding.height;
+      const t0 = list[0].timestamp, t1 = list[list.length - 1].timestamp;
+      const step = list.length > 1 ? (t1 - t0) / (list.length - 1) : 1;
+      // timestamp -> дробный индекс -> пиксель (свинги с ТФ день ложатся на часовой)
+      const xOf = (ts) => {
+        if (ts <= t0) return xAxis.convertToPixel(0 + (ts - t0) / (step || 1));
+        if (ts >= t1) return xAxis.convertToPixel(list.length - 1 + (ts - t1) / (step || 1));
+        let lo = 0, hi = list.length - 1;
+        while (hi - lo > 1) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) lo = m; else hi = m; }
+        const span = (list[hi].timestamp - list[lo].timestamp) || 1;
+        return xAxis.convertToPixel(lo + (ts - list[lo].timestamp) / span);
+      };
+      const SW = window.LUN.SWING || {};
+      const up = ed.upColor || SW.upColor || 'rgba(38,166,154,0.34)';
+      const dn = ed.dnColor || SW.dnColor || 'rgba(56,150,240,0.34)';
+      ctx.lineWidth = ed.width || SW.width || 5; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      for (let k = 1; k < piv.length; k++) {
+        const a = piv[k - 1], b = piv[k];
+        const x1 = xOf(a.ts), y1 = yAxis.convertToPixel(a.price);
+        const x2 = xOf(b.ts), y2 = yAxis.convertToPixel(b.price);
+        if ((x1 < -50 && x2 < -50) || (x1 > W + 50 && x2 > W + 50)) continue;
+        ctx.strokeStyle = b.price > a.price ? up : dn;      // растёт — зелёный, падает — голубой
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      }
+      return true;
+    },
+  });
+  window.LunSwings = { computeSwings };
 
   /* ============ Ганн: ретрейсменты (доли диапазона видимого окна) ============
    * Горизонтали на 1/8·1/3·1/2 и т.д. между минимумом и максимумом видимых

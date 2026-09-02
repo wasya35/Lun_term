@@ -326,17 +326,43 @@ LUN.INDICATORS = {
     bandColor: 'rgba(240,192,64,0.35)',
   },
   // Мульти-VWAP: до трёх одновременных якорей (день/неделя/месяц/все бары).
-  // Осевой цвет — по типу якоря; полосы 1σ/2σ пунктирные, вдвое/вчетверо светлее
-  // оси (считаются в indicators.js). День и неделя — без сигм по умолчанию.
+  // Осевой цвет — по типу якоря; полосы 1σ/2σ вдвое/вчетверо светлее оси
+  // (считаются в LUN.vwapStyle), тип линий отклонений — dash/dotted/solid.
+  // День и неделя — без сигм по умолчанию.
   vwapList: [
-    { on: true,  reset: 'day',   bands: false, sigma: [1, 2], color: '#1f9fe0' }, // сине-голубой
-    { on: false, reset: 'week',  bands: false, sigma: [1, 2], color: '#15803a' }, // тёмно-зелёный
-    { on: false, reset: 'month', bands: true,  sigma: [1, 2], color: '#d23af0' }, // ярко розово-фиолетовый
+    { on: true,  reset: 'day',   bands: false, sigma: [1, 2], color: '#1f9fe0', dash: 'dashed' }, // сине-голубой
+    { on: false, reset: 'week',  bands: false, sigma: [1, 2], color: '#15803a', dash: 'dashed' }, // тёмно-зелёный
+    { on: false, reset: 'month', bands: true,  sigma: [1, 2], color: '#d23af0', dash: 'dashed' }, // ярко розово-фиолетовый
   ],
 };
 // осевые цвета VWAP по типу якоря (для миграции старых сохранённых наборов)
 LUN.VWAP_AXIS_COLOR = { day: '#1f9fe0', week: '#15803a', month: '#d23af0', all: '#e0a030' };
 LUN.VWAP_OLD_DEFAULTS = ['#f0c040', '#4aa3df', '#26a69a'];
+// осветление цвета к белому на долю t (0..1). t=0.5 — «вдвое светлее».
+LUN.vwapLighten = function (hex, t) {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ''));
+  if (!m) return hex || '#f0c040';
+  let r = parseInt(m[1], 16), g = parseInt(m[2], 16), b = parseInt(m[3], 16);
+  r = Math.round(r + (255 - r) * t); g = Math.round(g + (255 - g) * t); b = Math.round(b + (255 - b) * t);
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+};
+// стиль линий VWAP: ось — сплошная выбранного цвета; 1σ вдвое светлее оси, 2σ —
+// вдвое светлее 1σ; тип линий отклонений — dashed/dotted/solid.
+LUN.vwapStyle = function (cfg) {
+  cfg = cfg || {};
+  const axis = cfg.color || '#f0c040';
+  const s1 = LUN.vwapLighten(axis, 0.5), s2 = LUN.vwapLighten(axis, 0.75);
+  const dash = cfg.dash || 'dashed';
+  const dv = dash === 'dotted' ? [2, 3] : (dash === 'solid' ? [] : [6, 4]);
+  const st = dash === 'solid' ? 'solid' : 'dashed';
+  const b1 = { color: s1, style: st, dashedValue: dv, size: 1 };
+  const b2 = { color: s2, style: st, dashedValue: dv, size: 1 };
+  // порядок фигур: up2, up1, vwap(ось), dn1, dn2
+  return { lines: [Object.assign({}, b2), Object.assign({}, b1), { color: axis, style: 'solid', size: 1.6 }, Object.assign({}, b1), Object.assign({}, b2)] };
+};
+// Свинги Ганна (1/2/3-баровые): полупрозрачные линии за барами — вверх зелёные,
+// вниз голубые. Строятся на своём ТФ и НЕ перестраиваются при переходе на младший.
+LUN.SWING = { nbars: 2, upColor: 'rgba(38,166,154,0.34)', dnColor: 'rgba(56,150,240,0.34)', width: 5 };
 
 /* Разделитель половины знака: 15° (середина). Ставится одна тонкая линия на 15°,
  * граница знака (30°/0°) — ярче. */

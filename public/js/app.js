@@ -1018,25 +1018,37 @@
   // Уровни квадрата Ганна. √-спираль: полный оборот (360°) = +2 к √цены.
   // base: '9'→8 делений (крест 45°), 'hex'→6 (60°), '360'→24 (15°),
   // 'natural'→квадраты натуральных чисел n² и серединные точки n²+n.
-  function gannSquareLevels(price, base, turns) {
+  // авто-масштаб: домножаем цену на степень 10, чтобы попасть в удобный диапазон
+  // (~[300,3000]) — тогда шаг спирали Sq9 не «взрывается» на мелких ценах и не
+  // грубит на крупных. Работает и для 0,01, и для 50, и для 90000.
+  function gannAutoScale(price) {
+    price = +price; if (!(price > 0)) return 1;
+    let s = 1, p = price;
+    while (p < 300 && s < 1e8) { s *= 10; p *= 10; }
+    while (p > 30000 && s > 1e-8) { s /= 10; p /= 10; }
+    return s;
+  }
+  function gannSquareLevels(price, base, turns, scale) {
     price = +price; turns = Math.max(1, Math.min(8, +turns || 3));
     if (!(price > 0)) return [];
+    scale = (!scale || scale === 'auto') ? gannAutoScale(price) : +scale || 1;
+    const P = price * scale;                          // считаем в масштабе, уровни делим обратно
     const out = [];
     if (base === 'natural') {
-      const n = Math.round(Math.sqrt(price));
+      const n = Math.round(Math.sqrt(P));
       for (let j = -turns; j <= turns; j++) {
         const m = n + j; if (m <= 0) continue;
-        out.push({ price: m * m, deg: 0, tag: m + '²' });
-        out.push({ price: m * m + m, deg: 45, tag: m + '²+' + m });
+        out.push({ price: (m * m) / scale, deg: 0, tag: m + '²' });
+        out.push({ price: (m * m + m) / scale, deg: 45, tag: m + '²+' + m });
       }
       return out.sort((a, b) => a.price - b.price);
     }
     const divs = base === 'hex' ? 6 : (base === '360' ? 24 : 8);
-    const stepDeg = 360 / divs, root = Math.sqrt(price), dRoot = 2 / divs;
+    const stepDeg = 360 / divs, root = Math.sqrt(P), dRoot = 2 / divs;
     for (let k = -turns * divs; k <= turns * divs; k++) {
       if (k === 0) continue;
       const r = root + k * dRoot; if (r <= 0) continue;
-      out.push({ price: r * r, deg: ((k * stepDeg) % 360 + 360) % 360, k });
+      out.push({ price: (r * r) / scale, deg: ((k * stepDeg) % 360 + 360) % 360, k });
     }
     return out.sort((a, b) => a.price - b.price);
   }
@@ -1048,15 +1060,20 @@
   function gannSquareModal() {
     let last = 0; try { const l = state.chart.getDataList(); last = l.length ? l[l.length - 1].close : 0; } catch (e) {}
     const prec = state.instrument.pricePrecision != null ? state.instrument.pricePrecision : 1;
-    const S = window.LUN.GANNTOOLS.square || { base: '9', turns: 3 };
+    const S = window.LUN.GANNTOOLS.square || { base: '9', turns: 3, scale: 'auto' };
     const inp = 'background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:5px 8px;font-size:13px';
     const btn = 'background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px';
     const opt = (v, t) => `<option value="${v}"${v === S.base ? ' selected' : ''}>${t}</option>`;
+    const sc = S.scale || 'auto';
+    const scOpt = (v, t) => `<option value="${v}"${String(v) === String(sc) ? ' selected' : ''}>${t}</option>`;
     openModal('Калькулятор квадратов Ганна', `
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px">
         <label>Цена (пивот)<br><input id="gsq-price" type="number" step="any" value="${last}" style="${inp};width:130px"></label>
         <label>База<br><select id="gsq-base" style="${inp}">
           ${opt('9', 'Квадрат 9 · крест 45°')}${opt('hex', 'Шестиугольник · 60°')}${opt('360', 'Круг 360° · 15°')}${opt('natural', 'Натуральные квадраты')}
+        </select></label>
+        <label>Масштаб цены<br><select id="gsq-scale" style="${inp}">
+          ${scOpt('auto', 'авто (по цене)')}${scOpt('1', '×1 — крупные (5000+)')}${scOpt('100', '×100 — средние (1–1000)')}${scOpt('10000', '×10000 — мелкие (≤0,01)')}
         </select></label>
         <label>Оборотов (колец)<br><input id="gsq-turns" type="number" min="1" max="8" value="${S.turns}" style="${inp};width:80px"></label>
         <button id="gsq-calc" style="${btn}">Рассчитать</button>
@@ -1066,13 +1083,13 @@
         <button id="gsq-apply" style="${btn};border-color:#26a69a">Нанести на график</button>
         <button id="gsq-clear" style="${btn};border-color:#8b93a7">Убрать уровни</button>
       </div>
-      <p style="color:#8b93a7;margin:10px 0 0">Кардинальные углы (0/90/180/270°) — сильнейшие поддержки/сопротивления. Квадрат 144, Box и сквоузинг (нужен масштаб цена/бар) — следующим этапом.</p>`);
+      <p style="color:#8b93a7;margin:10px 0 0">Масштаб цены: для мелких инструментов (валюты, центовые, крипто-альты) Sq9 считается на домноженной цене. «Авто» подбирает степень 10 сам. Кардинальные углы (0/90/180/270°) — сильнейшие уровни.</p>`);
     const $ = (id) => document.getElementById(id);
     let levels = [];
     const recalc = () => {
-      const price = +$('gsq-price').value, base = $('gsq-base').value, turns = +$('gsq-turns').value;
-      window.LUN.GANNTOOLS.square = { base, turns };
-      levels = gannSquareLevels(price, base, turns);
+      const price = +$('gsq-price').value, base = $('gsq-base').value, turns = +$('gsq-turns').value, scale = $('gsq-scale').value;
+      window.LUN.GANNTOOLS.square = { base, turns, scale };
+      levels = gannSquareLevels(price, base, turns, scale);
       if (!levels.length) { $('gsq-out').innerHTML = '<p style="color:#e0a030">Введите положительную цену.</p>'; return; }
       const rows = levels.map((L) => {
         const dist = (L.price - price) / price * 100, up = L.price >= price;
@@ -1086,7 +1103,7 @@
         + `<tbody>${rows}</tbody></table></div>`;
     };
     $('gsq-calc').onclick = recalc;
-    $('gsq-base').onchange = recalc; $('gsq-turns').onchange = recalc; $('gsq-price').onchange = recalc;
+    $('gsq-base').onchange = recalc; $('gsq-turns').onchange = recalc; $('gsq-price').onchange = recalc; $('gsq-scale').onchange = recalc;
     $('gsq-apply').onclick = () => { if (!levels.length) recalc(); if (levels.length) applyGannSquare(levels, +$('gsq-price').value, prec); };
     $('gsq-clear').onclick = () => removeCandInd('GannSquareLevels');
     recalc();
@@ -1224,7 +1241,11 @@
     for (let i = 0; i < 3; i++) {
       const name = 'VWAP_' + (i + 1);
       try { c.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {}
-      if (list[i] && list[i].on) { try { c.createIndicator({ name, paneId: 'candle_pane' }, true); anyOn = true; } catch (e) {} }
+      if (list[i] && list[i].on) {
+        // стиль передаём ЯВНО (ось = выбранный цвет, полосы производные) — надёжнее,
+        // чем полагаться на styles-колбэк индикатора
+        try { c.createIndicator({ name, paneId: 'candle_pane', styles: window.LUN.vwapStyle(list[i]) }, true); anyOn = true; } catch (e) {}
+      }
     }
     slot.vwapOn = anyOn;
     const b = document.querySelector('[data-sync="vwapmulti"]'); if (b) b.classList.toggle('active', anyOn);
@@ -1234,19 +1255,21 @@
     const list = IND.vwapList || (IND.vwapList = []);
     const AX = window.LUN.VWAP_AXIS_COLOR || {}, OLD = window.LUN.VWAP_OLD_DEFAULTS || [];
     const isDefaultCol = (c) => OLD.indexOf(c) >= 0 || Object.keys(AX).some((k) => AX[k] === c);
-    while (list.length < 3) list.push({ on: false, reset: 'day', bands: false, sigma: [1, 2], color: AX.day || '#1f9fe0' });
+    while (list.length < 3) list.push({ on: false, reset: 'day', bands: false, sigma: [1, 2], color: AX.day || '#1f9fe0', dash: 'dashed' });
     const anchors = [['day', 'день'], ['week', 'неделя'], ['month', 'месяц'], ['all', 'все бары']];
+    const dashes = [['dashed', 'тире'], ['dotted', 'точки'], ['solid', 'линия']];
     const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
     const row = (i) => { const v = list[i]; return `
       <div style="border:1px solid #232b3a;border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px">
         <label style="font-weight:600"><input type="checkbox" class="vw-on" data-i="${i}"${v.on ? ' checked' : ''}> VWAP ${['①', '②', '③'][i]}</label>
         <label>Якорь (сброс): <select class="vw-reset" data-i="${i}" style="${ss}">${anchors.map(([val, t]) => `<option value="${val}"${v.reset === val ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
-        <label><input type="checkbox" class="vw-bands" data-i="${i}"${v.bands ? ' checked' : ''}> полосы отклонений ±1σ / ±2σ (пунктир, светлее оси)</label>
+        <label><input type="checkbox" class="vw-bands" data-i="${i}"${v.bands ? ' checked' : ''}> полосы отклонений ±1σ / ±2σ (светлее оси)</label>
+        <label>Тип линий отклонений: <select class="vw-dash" data-i="${i}" style="${ss}">${dashes.map(([val, t]) => `<option value="${val}"${(v.dash || 'dashed') === val ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
         <label>Цвет оси: <input type="color" class="vw-color" data-i="${i}" value="${v.color}" style="width:44px;height:26px;background:#0b0e14;border:1px solid #2a3242;border-radius:6px;vertical-align:middle"></label>
       </div>`; };
     openModal('📊 VWAP — до трёх якорей', `
       <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;max-width:420px">
-        <div style="color:#8b93a7;font-size:12px">Несколько VWAP одновременно — например «день» + «месяц». Осевой цвет — по типу якоря (день — сине-голубой, неделя — тёмно-зелёный, месяц — розово-фиолетовый). Полосы 1σ вдвое светлее оси, 2σ — вдвое светлее 1σ, пунктиром.</div>
+        <div style="color:#8b93a7;font-size:12px">Несколько VWAP одновременно — например «день» + «месяц». Осевая линия — выбранного цвета (день — сине-голубой, неделя — тёмно-зелёный, месяц — розово-фиолетовый). Полосы 1σ вдвое светлее оси, 2σ — вдвое светлее 1σ. Тип линий отклонений — тире / точки / линия.</div>
         ${row(0)}${row(1)}${row(2)}
         <button id="vw-apply" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px 16px;cursor:pointer">Применить</button>
       </div>`);
@@ -1261,10 +1284,43 @@
         list[i].on = bg.querySelector('.vw-on[data-i="' + i + '"]').checked;
         list[i].reset = bg.querySelector('.vw-reset[data-i="' + i + '"]').value;
         list[i].bands = bg.querySelector('.vw-bands[data-i="' + i + '"]').checked;
+        list[i].dash = bg.querySelector('.vw-dash[data-i="' + i + '"]').value;
         list[i].color = bg.querySelector('.vw-color[data-i="' + i + '"]').value;
       }
       applyVwap(state); scheduleWsSave(); bg.remove();
     };
+  }
+
+  /* ---------- свинги Ганна (1/2/3-баровые) ---------- */
+  function buildSwings(slot, nbars) {
+    slot = slot || state; const c = slot && slot.chart; if (!c || !window.LunSwings) return;
+    let list; try { list = c.getDataList(); } catch (e) { return; }
+    if (!list || list.length < 2) { alert('Недостаточно баров для свингов.'); return; }
+    const piv = window.LunSwings.computeSwings(list, nbars);
+    if (piv.length < 2) { alert('Свинги не построились (мало движения).'); return; }
+    slot.swings = { pivots: piv, buildTf: slot.tf.id, nbars: nbars };
+    window.LUN.SWING.nbars = nbars;
+    applySwings(slot);
+    scheduleWsSave();
+  }
+  function applySwings(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'GannSwings' }); } catch (e) {}
+    const sw = slot.swings; if (!sw || !sw.pivots || sw.pivots.length < 2) { slot.swingsOn = false; syncSwingBtns(slot); return; }
+    const SW = window.LUN.SWING || {};
+    try { c.createIndicator({ name: 'GannSwings', paneId: 'candle_pane', extendData: { pivots: sw.pivots, nbars: sw.nbars, upColor: SW.upColor, dnColor: SW.dnColor, width: SW.width } }, true); slot.swingsOn = true; } catch (e) { slot.swingsOn = false; }
+    syncSwingBtns(slot);
+  }
+  function removeSwings(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'GannSwings' }); } catch (e) {}
+    slot.swings = null; slot.swingsOn = false; syncSwingBtns(slot); scheduleWsSave();
+  }
+  function syncSwingBtns(slot) {
+    slot = slot || state;
+    if (slot !== state) return;   // кнопки отражают только активную ячейку
+    const n = slot.swings && slot.swingsOn ? slot.swings.nbars : 0;
+    document.querySelectorAll('[data-sync^="swing:"]').forEach((b) => { b.classList.toggle('active', +b.dataset.sync.split(':')[1] === n); });
   }
 
   /* ---------- загрузка инструмента/ТФ ---------- */
@@ -1274,6 +1330,7 @@
     // рисунки — ПЕР-ИНСТРУМЕНТ: при смене инструмента прячем текущие в хранилище,
     // очищаем поле, а рисунки нового инструмента восстанавливаем после загрузки.
     const insId = favId(ins);
+    const insChanged = !!(slot._loadedInsId && slot._loadedInsId !== insId);
     if (slot._loadedInsId && slot._loadedInsId !== insId) {
       slot.drawStore = slot.drawStore || {};
       slot.drawStore[slot._loadedInsId] = Object.values(slot.drawings || {}).map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }));
@@ -1319,6 +1376,10 @@
       }, 950);
     }
     if (!replaying) setTimeout(() => setInitialView(slot), 900);   // дефолт-обзор по ТФ
+    // свинги: строились на своём ТФ и хранятся по timestamp — при смене ТФ они
+    // остаются (не перестраиваются). При смене ИНСТРУМЕНТА (insChanged) — снимаем.
+    if (insChanged) { slot.swings = null; slot.swingsOn = false; }
+    setTimeout(() => { try { applySwings(slot); } catch (e) {} }, 960);
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
   }
   // стартовый обзор: сколько истории показать по ТФ (D1 ≈ 3 мес, H1 ≈ 1 мес)
@@ -1922,6 +1983,7 @@
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
+      swings: s.swings || null,
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
@@ -1933,7 +1995,7 @@
       drawings: Object.values(s.drawings || {}),
     };
   }
-  const IND_SKIP = { GannSquareLevels: 1, OIExtremes: 1, AstroEventMarks: 1, CycleProjection: 1, GannSquaring: 1, GannRetr: 1, GannCycles: 1 };
+  const IND_SKIP = { GannSquareLevels: 1, OIExtremes: 1, AstroEventMarks: 1, CycleProjection: 1, GannSquaring: 1, GannRetr: 1, GannCycles: 1, GannSwings: 1, VWAP_1: 1, VWAP_2: 1, VWAP_3: 1 };
   function applyWsIndicators(ind) {
     if (!ind) return;
     (ind.candle || []).forEach((n) => { if (IND_SKIP[n]) return; try { state.chart.createIndicator({ name: n, paneId: 'candle_pane' }, true); state.candleInds[n] = true; } catch (e) {} });
@@ -1978,6 +2040,7 @@
         ws.vwapList.forEach((v) => { if (v && (!v.color || OLD.indexOf(v.color) >= 0) && AX[v.reset]) v.color = AX[v.reset]; });
         window.LUN.INDICATORS.vwapList = ws.vwapList;
       }
+      if (ws.swings && ws.swings.pivots && ws.swings.pivots.length > 1) state.swings = ws.swings;
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
@@ -2407,6 +2470,14 @@
       gsub('Квадраты');
       mkBtn(gannWrap, '⊞ Калькулятор квадратов…', () => { closeMenus(); gannSquareModal(); }, false, 'Квадрат 9 / шестиугольник / круг 360° / натуральные — уровни поддержки и сопротивления');
       mkBtn(gannWrap, '✕ убрать уровни квадрата', () => { closeMenus(); removeCandInd('GannSquareLevels'); }, false, 'Убрать нанесённые уровни квадрата');
+      gsub('Свинги (1/2/3 бара)');
+      [[1, '⟋ Свинги 1 бар', 'Каждое перебитие вершины/низины — новый свинг'],
+       [2, '⟋ Свинги 2 бара', '2 бара подряд перебивают в одну сторону = разворот тренда'],
+       [3, '⟋ Свинги 3 бара', '3 бара подряд перебивают в одну сторону = разворот. Внутренние бары не в счёт']].forEach(([n, label, tip]) => {
+        const b = mkBtn(gannWrap, label, () => { closeMenus(); buildSwings(state, n); }, false, tip);
+        b.dataset.sync = 'swing:' + n;
+      });
+      mkBtn(gannWrap, '✕ убрать свинги', () => { closeMenus(); removeSwings(state); }, false, 'Убрать ломаную свингов');
       gsub('Уровни и циклы');
       mkBtn(gannWrap, '📏 Ганн-ретрейсменты', (b) => {
         const on = !b.classList.contains('active'); b.classList.toggle('active', on);
@@ -2612,6 +2683,8 @@
       case 'uranus': return !!state.uranusPane;
       case 'forecast': return !!state.forecastOn;
       case 'oi': return !!state.oiPane;
+      case 'vwapmulti': return !!state.vwapOn;
+      case 'swing': return !!(state.swings && state.swingsOn && state.swings.nbars === +arg);
     }
     return false;
   }
