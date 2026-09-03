@@ -48,10 +48,13 @@ function db() {
     $pdo = new PDO('sqlite:' . $dir . '/users.db');
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->exec('CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL, pass TEXT NOT NULL, grp TEXT NOT NULL DEFAULT "free", settings TEXT, created INTEGER)');
-    @$pdo->exec('ALTER TABLE users ADD COLUMN tg_chat TEXT');   // привязка Telegram (может уже быть)
-    @$pdo->exec('ALTER TABLE users ADD COLUMN tg_code TEXT');
-    @$pdo->exec('ALTER TABLE users ADD COLUMN workspace TEXT');  // рабочий стол (последнее состояние)
-    @$pdo->exec('ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0');  // доступ подтверждён владельцем
+    // Идемпотентные ALTER: при ERRMODE_EXCEPTION оператор @ не гасит исключение,
+    // поэтому «duplicate column» надо ловить явно — иначе повторный запуск падает.
+    $addcol = function ($sql) use ($pdo) { try { $pdo->exec($sql); } catch (Exception $e) { /* колонка уже есть */ } };
+    $addcol('ALTER TABLE users ADD COLUMN tg_chat TEXT');       // привязка Telegram
+    $addcol('ALTER TABLE users ADD COLUMN tg_code TEXT');
+    $addcol('ALTER TABLE users ADD COLUMN workspace TEXT');     // рабочий стол (последнее состояние)
+    $addcol('ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0');  // доступ подтверждён владельцем
     $pdo->exec('CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, kind TEXT, title TEXT, instrument TEXT, provider TEXT, op TEXT, level REAL, fire_ts INTEGER, channel TEXT, rpt INTEGER DEFAULT 0, status TEXT DEFAULT "active", created INTEGER)');
   } catch (Exception $e) { out(['error' => 'Хранилище недоступно: ' . $e->getMessage() . ' (нужен PDO SQLite и запись в lun_data/)'], 500); }
   return $pdo;
