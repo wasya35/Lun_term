@@ -56,11 +56,20 @@ function db() {
   return $pdo;
 }
 
+// Владелец/админ сайта — задаётся жёстко. При входе этот e-mail всегда 'admin'.
+const OWNER_EMAIL = 'irvikv@rambler.ru';
+function enforce_owner($row) {
+  if ($row && strcasecmp($row['email'], OWNER_EMAIL) === 0 && $row['grp'] !== 'admin') {
+    db()->prepare('UPDATE users SET grp = "admin" WHERE id = ?')->execute([$row['id']]);
+    $row['grp'] = 'admin';
+  }
+  return $row;
+}
 function public_user($row) { return $row ? ['id' => (int)$row['id'], 'email' => $row['email'], 'group' => $row['grp']] : null; }
 function current_user() {
   if (empty($_SESSION['uid'])) return null;
   $st = db()->prepare('SELECT * FROM users WHERE id = ?'); $st->execute([$_SESSION['uid']]);
-  return $st->fetch(PDO::FETCH_ASSOC) ?: null;
+  return enforce_owner($st->fetch(PDO::FETCH_ASSOC) ?: null);
 }
 function csrf() { if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16)); return $_SESSION['csrf']; }
 
@@ -90,7 +99,7 @@ if ($fn === 'login') {
   if (!$u || !password_verify($pass, $u['pass'])) out(['error' => 'Неверный e-mail или пароль'], 401);
   session_regenerate_id(true);
   $_SESSION['uid'] = (int)$u['id'];
-  out(['user' => public_user($u), 'csrf' => csrf()]);
+  out(['user' => public_user(enforce_owner($u)), 'csrf' => csrf()]);
 }
 
 if ($fn === 'logout') { $_SESSION = []; session_destroy(); out(['ok' => true]); }

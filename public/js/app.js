@@ -20,6 +20,9 @@
     if (c.indexOf('Numpad') === 0) { const n = c.slice(6); if (n === 'Add') return '+'; if (n === 'Subtract') return '-'; if (/^\d$/.test(n)) return n; }
     if (c === 'Equal') return '=';
     if (c === 'Minus') return '-';
+    if (c === 'Backquote') return '`';       // тильда/ё — левее «1»
+    if (c === 'Space') return 'space';
+    if (c === 'Tab') return 'tab';
     return (e.key || '').toLowerCase();
   }
 
@@ -1323,6 +1326,37 @@
     document.querySelectorAll('[data-sync^="swing:"]').forEach((b) => { b.classList.toggle('active', +b.dataset.sync.split(':')[1] === n); });
   }
 
+  /* ---------- настройки рисования (притяжка + Gann Box прогноз) ---------- */
+  function drawSettingsModal() {
+    const B = window.LUN.GANNTOOLS.box || (window.LUN.GANNTOOLS.box = {});
+    const cnt = Math.max(1, Math.min(3, B.forecastCount || 2));
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
+    openModal('✏️ Настройки рисования', `
+      <div style="display:flex;flex-direction:column;gap:14px;font-size:13px;max-width:440px">
+        <label style="display:flex;gap:8px;align-items:flex-start">
+          <input type="checkbox" id="ds-snap"${window.LUN.SNAP ? ' checked' : ''} style="margin-top:2px">
+          <span><b>Притяжка к вершинам/низинам баров</b><br><span style="color:#8b93a7;font-size:12px">Начало линий, лучей, прямоугольников и углов Ганна прилипает к High/Low бара — но только вблизи вершины (за ~1 бар). Дальше — рисуется в месте тыка (чистое поле).</span></span>
+        </label>
+        <div style="border-top:1px solid #232b3a;padding-top:12px">
+          <label style="display:flex;gap:8px;align-items:flex-start">
+            <input type="checkbox" id="ds-fc"${B.forecast ? ' checked' : ''} style="margin-top:2px">
+            <span><b>Прогнозные Gann Box по диагонали</b><br><span style="color:#8b93a7;font-size:12px">При построении Gann Box автоматически строятся его проекции вправо-вверх по диагонали.</span></span>
+          </label>
+          <label style="display:block;margin-top:8px">Сколько прогнозных боксов:
+            <select id="ds-fc-n" style="${ss}">${[1, 2, 3].map((n) => `<option value="${n}"${n === cnt ? ' selected' : ''}>${n}</option>`).join('')}</select>
+          </label>
+        </div>
+        <button id="ds-apply" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px 16px;cursor:pointer">Применить</button>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#ds-apply').onclick = () => {
+      window.LUN.SNAP = bg.querySelector('#ds-snap').checked;
+      B.forecast = bg.querySelector('#ds-fc').checked;
+      B.forecastCount = +bg.querySelector('#ds-fc-n').value || 2;
+      scheduleWsSave(); bg.remove();
+    };
+  }
+
   /* ---------- загрузка инструмента/ТФ ---------- */
   async function load(slot) {
     slot = slot || state;
@@ -1380,6 +1414,8 @@
     // остаются (не перестраиваются). При смене ИНСТРУМЕНТА (insChanged) — снимаем.
     if (insChanged) { slot.swings = null; slot.swingsOn = false; }
     setTimeout(() => { try { applySwings(slot); } catch (e) {} }, 960);
+    // много-экранное зеркало рисунков (одинаковый инструмент) — после отрисовки истории
+    if (slot === state && slots.length > 1) setTimeout(() => { try { mirrorToSiblings(state); } catch (e) {} }, 1050);
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
   }
   // стартовый обзор: сколько истории показать по ТФ (D1 ≈ 3 мес, H1 ≈ 1 мес)
@@ -1646,10 +1682,11 @@
     note.innerHTML = 'Внизу — панель симулятора: ⏭/⏩/▶ шаг вперёд, дата периода, R:R и % риска, 🟢 Лонг / 🔴 Шорт (открыть по последней цене), 📊 Результаты.<br>Сделки закрываются <b>автоматически</b> по касанию TP/SL; итог — в «Результаты» (таблица + кривая доходности в R).<br>Клавиши: <b>W</b> — реплей вкл/выкл · <b>K</b> — играть/пауза · <b>N</b> — +1 бар · <b>J</b> — +10 баров.';
     wrap.appendChild(note);
     // горячие клавиши симулятора
-    regHotkey('w', () => { if (window.LUN_REPLAY.on) stopReplay(); else replayStartModal(); });
+    // Симулятор: ` (тильда, левее «1») — старт/выход; Пробел — +1 бар; Tab — +10 баров.
+    regHotkey('`', () => { if (window.LUN_REPLAY.on) stopReplay(); else replayStartModal(); });
     regHotkey('k', () => { if (window.LUN_REPLAY.on) { if (replayTimer) pauseReplay(); else playReplay(); } });
-    regHotkey('n', () => { if (window.LUN_REPLAY.on) stepReplay(1); });
-    regHotkey('j', () => { if (window.LUN_REPLAY.on) stepReplay(10); });
+    regHotkey('space', () => { if (!window.LUN_REPLAY.on) return false; stepReplay(1); });   // false → не глушим пробел вне реплея
+    regHotkey('tab', () => { if (!window.LUN_REPLAY.on) return false; stepReplay(10); });     // false → Tab работает как обычно вне реплея
   }
   // модалка выбора диапазона дат «от–до»
   function historyModal(onApply) {
@@ -1689,14 +1726,87 @@
    * Ctrl создаём дубликат на СТАРОМ месте, а сам оверлей уносится мышью в новое.
    * Клон получает те же обработчики — его тоже можно копировать. */
   let ctrlDown = false;
+  let lastSelTs = 0;                // время последнего выделения оверлея (для авто-скрытия панели)
+  let mirroring = false;            // защита от рекурсии при зеркалировании рисунков
   const clonePoints = (pts) => (pts || []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value }));
   const ovOf = (event) => event && (event.overlay || event.currentOverlay);
+  // Зеркалирование рисунков на другие ячейки с ТЕМ ЖЕ инструментом: рисуешь на
+  // одном экране — появляется на всех с этим же инструментом (в обе стороны).
+  function mirrorToSiblings(src) {
+    if (mirroring || !src || slots.length < 2) return;
+    mirroring = true;
+    try {
+      const insId = favId(src.instrument);
+      slots.forEach((s) => {
+        if (s === src || !s.chart || favId(s.instrument) !== insId) return;
+        Object.keys(s.drawings || {}).forEach((id) => { try { s.chart.removeOverlay({ id }); } catch (e) {} });
+        s.drawings = {};
+        Object.values(src.drawings || {}).forEach((d) => {
+          try {
+            const id = s.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents()));
+            const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) s.drawings[oid] = d;
+          } catch (e) {}
+        });
+      });
+    } finally { mirroring = false; }
+  }
   // учёт нарисованных объектов для сохранения рабочего стола
   function recordOverlay(ov) { if (!ov || !ov.id) return; state.drawings[ov.id] = { name: ov.name, points: clonePoints(ov.points), extendData: ov.extendData, styles: ov.styles, lock: !!ov.lock }; scheduleWsSave(); }
   function forgetOverlay(id) { if (id && state.drawings[id]) { delete state.drawings[id]; scheduleWsSave(); } }
+  // притяжка точки к вершине/низине бара — ТОЛЬКО вблизи (в пределах ~половины
+  // высоты свечи), иначе точка остаётся в месте тыка (чистое поле).
+  function snapPoint(p, list) {
+    if (!window.LUN.SNAP || !p || p.dataIndex == null || p.value == null || !list || !list.length) return p;
+    const i = Math.round(p.dataIndex); const b = list[i]; if (!b) return p;
+    let sum = 0, n = 0;
+    for (let k = Math.max(0, i - 10); k <= Math.min(list.length - 1, i + 10); k++) { const bb = list[k]; if (bb) { sum += Math.abs(bb.high - bb.low); n++; } }
+    const thr = (n ? sum / n : Math.abs(b.high - b.low)) * 0.6;
+    const dH = Math.abs(p.value - b.high), dL = Math.abs(p.value - b.low);
+    if (dH <= dL && dH <= thr) return Object.assign({}, p, { value: b.high });
+    if (dL < dH && dL <= thr) return Object.assign({}, p, { value: b.low });
+    return p;
+  }
+  const SNAP_NAMES = { lun_gann: 1, lun_hray: 1, lun_arrow: 1, lun_rect: 1, lun_gannbox: 1, lun_gannsquare: 1, segment: 1, straightLine: 1, rayLine: 1, priceLine: 1 };
+  function maybeSnap(ov) {
+    if (!window.LUN.SNAP || !ov || !ov.points || !SNAP_NAMES[ov.name]) return;
+    let list; try { list = state.chart.getDataList(); } catch (e) { return; }
+    const snapped = ov.points.map((p) => snapPoint(p, list));
+    let changed = false; for (let i = 0; i < snapped.length; i++) if (snapped[i].value !== ov.points[i].value) changed = true;
+    if (changed) { try { state.chart.overrideOverlay({ id: ov.id, points: snapped }); ov.points = snapped; } catch (e) {} }
+  }
+  // прогнозные Gann Box'ы по диагонали вправо-вверх (1..3) — от исходного бокса
+  function gannBoxForecast(ov) {
+    const B = window.LUN.GANNTOOLS.box || {};
+    if (!B.forecast || !ov || ov.name !== 'lun_gannbox') return;
+    const ed = ov.extendData && typeof ov.extendData === 'object' ? ov.extendData : {};
+    if (ed.forecast) return;                     // сам прогнозный бокс — не размножаем
+    const pts = ov.points || []; if (pts.length < 2) return;
+    let list; try { list = state.chart.getDataList(); } catch (e) { list = []; }
+    const last = list.length ? list[list.length - 1] : null;
+    const step = (list.length > 1) ? (list[list.length - 1].timestamp - list[list.length - 2].timestamp) : 0;
+    const i0 = pts[0].dataIndex, i1 = pts[1].dataIndex, v0 = pts[0].value, v1 = pts[1].value;
+    if (i0 == null || i1 == null || v0 == null || v1 == null) return;
+    const di = i1 - i0, dv = Math.abs(v1 - v0);   // вправо (время) и вверх (цена)
+    const tsFor = (idx) => (last && step) ? last.timestamp + (idx - (list.length - 1)) * step : undefined;
+    const cnt = Math.max(1, Math.min(3, B.forecastCount || 2));
+    for (let k = 1; k <= cnt; k++) {
+      const np = [
+        { dataIndex: i0 + k * di, value: v0 + k * dv, timestamp: tsFor(i0 + k * di) },
+        { dataIndex: i1 + k * di, value: v1 + k * dv, timestamp: tsFor(i1 + k * di) },
+      ];
+      const stt = Object.assign({}, defOvStyle(), { dash: 'dashed' });
+      const ed2 = { style: stt, forecast: true };
+      try {
+        const id = state.chart.createOverlay(Object.assign({ name: 'lun_gannbox', points: np, extendData: ed2 }, overlayEvents()));
+        const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null);
+        if (oid) state.drawings[oid] = { name: 'lun_gannbox', points: clonePoints(np), extendData: ed2 };
+      } catch (e) {}
+    }
+    scheduleWsSave();
+  }
   function overlayEvents() {
-    const sel = (event) => { const ov = ovOf(event); if (ov) { state.selectedOverlayId = ov.id; state.selectedOverlay = ov; showStylePanel(ov); } return false; };
-    const rec = (event) => { const ov = ovOf(event); if (ov) recordOverlay(ov); return false; };
+    const sel = (event) => { const ov = ovOf(event); if (ov) { lastSelTs = Date.now(); state.selectedOverlayId = ov.id; state.selectedOverlay = ov; showStylePanel(ov); } return false; };
+    const rec = (event) => { const ov = ovOf(event); if (ov) { maybeSnap(ov); recordOverlay(ov); gannBoxForecast(ov); mirrorToSiblings(state); } return false; };
     // при перетаскивании т2 у линии Ганна с фикс-углом — пересчитываем угол по
     // новому положению, чтобы т2 всегда лежала на луче, а поле угла совпадало.
     const moveEnd = (event) => {
@@ -1707,6 +1817,7 @@
       }
       recordOverlay(ov);
       if (state.selectedOverlay && state.selectedOverlay.id === ov.id) showStylePanel(ov);
+      mirrorToSiblings(state);
       return false;
     };
     return {
@@ -1734,6 +1845,7 @@
     forgetOverlay(id);
     state.selectedOverlayId = null; state.selectedOverlay = null;
     if (stylePanelEl) stylePanelEl.style.display = 'none';
+    mirrorToSiblings(state);
   }
   function copySelected() {
     const ov = state.selectedOverlay || (state.chart.getOverlayById && state.chart.getOverlayById(state.selectedOverlayId));
@@ -1745,13 +1857,26 @@
     const pts = c.points.map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: (p.value != null ? p.value * 1.004 : p.value) }));  // сдвиг ↑0.4%, чтобы копия была видна
     try { state.chart.createOverlay(Object.assign({ name: c.name, points: pts, styles: c.styles, extendData: c.extendData }, overlayEvents())); return true; } catch (e) { return false; }
   }
-  // Ctrl+S — скрин графика (PNG). +/- — зум.
+  // Ctrl+S — скрин активного графика (PNG). +/- — зум.
   function screenshot() {
     const c = state.chart; let url = null;
-    try { if (c.getConvertPictureUrl) url = c.getConvertPictureUrl(true, 'png', '#0b0e14'); } catch (e) {}
-    if (!url) { alert('Скрин не поддерживается этой версией графика.'); return; }
-    const a = document.createElement('a'); a.href = url; a.download = 'lun_term_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.png';
-    document.body.appendChild(a); a.click(); a.remove();
+    const bg = LOOK.theme === 'light' ? '#ffffff' : '#0b0e14';
+    try { if (c.getConvertPictureUrl) url = c.getConvertPictureUrl(true, 'png', bg); } catch (e) {}
+    if (!url) { try { const cv = state.cellEl && state.cellEl.querySelector('canvas'); if (cv && cv.toDataURL) url = cv.toDataURL('image/png'); } catch (e) {} }
+    if (!url) { alert('Скрин не удался — график ещё не готов. Попробуйте ещё раз.'); return; }
+    const fname = 'ag-ts_' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.png';
+    // авто-скачивание
+    try { const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
+    // и превью с кнопками (работает даже если авто-скачивание заблокировано)
+    openModal('📷 Скрин графика', `
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <img src="${url}" style="max-width:100%;border:1px solid #232b3a;border-radius:6px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <a href="${url}" download="${fname}" style="text-decoration:none;background:#123a2a;color:#8fe0b8;border:1px solid #2a5a3a;border-radius:6px;padding:7px 14px">⬇ Скачать PNG</a>
+          <a href="${url}" target="_blank" rel="noopener" style="text-decoration:none;background:#1f2b3d;color:#9cc7f0;border:1px solid #3aa0ff;border-radius:6px;padding:7px 14px">↗ Открыть в новой вкладке</a>
+        </div>
+        <div style="color:#8b93a7;font-size:11px">Если файл не скачался автоматически — нажмите «Скачать PNG» или правой кнопкой по картинке → «Сохранить изображение».</div>
+      </div>`);
   }
   function zoomChart(inn) {
     const c = state.chart;
@@ -1984,6 +2109,7 @@
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
       swings: s.swings || null,
+      draw: { snap: !!window.LUN.SNAP, boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2 },
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
@@ -2041,6 +2167,7 @@
         window.LUN.INDICATORS.vwapList = ws.vwapList;
       }
       if (ws.swings && ws.swings.pivots && ws.swings.pivots.length > 1) state.swings = ws.swings;
+      if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; } }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
@@ -2053,8 +2180,8 @@
   // кросс-устройство), иначе локальная копия (та же машина, вход не обязателен).
   // Вызывается из auth.js после проверки сессии И из init() как страховка
   // (например, если PHP недоступен — анонимный юзер всё равно вернёт разметку).
-  window.LUN_APPLY_WS = async function () {
-    if (wsApplied) return; wsApplied = true;
+  window.LUN_APPLY_WS = async function (force) {
+    if (wsApplied && !force) return; wsApplied = true;
     let ws = null;
     if (window.LunAuth && window.LunAuth.user) {
       try { const r = await authApi('ws_load'); if (r && r.ws) ws = r.ws; } catch (e) {}
@@ -2567,6 +2694,7 @@
       if (t.key) b.innerHTML = t.label + '<span class="hk">' + t.key.toUpperCase() + '</span>';   // хоткей справа
       regHotkey(t.key, () => startDraw(t.id));
     });
+    mkBtn(drawWrap, '⚙ Настройки рисования (притяжка, Gann Box прогноз)…', () => { closeMenus(); drawSettingsModal(); }, false, 'Притяжка к вершинам баров, прогнозные Gann Box по диагонали');
     mkBtn(drawWrap, '✕ очистить всё', () => { closeMenus(); state.chart.removeOverlay(); }).className = 'danger';
     const drawNote = document.createElement('div'); drawNote.className = 'menu-note';
     drawNote.innerHTML = 'Как пользоваться:<br>• Выбери инструмент → клики по графику ставят точки (2 клика — линия/угол).<br>• <b>Ган 1×1</b> — от разворота; угол правится в свойствах.<br>• <b>Луч ⨯N</b> — до N-го пересечения уровня.<br>• <b>Вертикаль (дата)</b> — метка времени на графике.<br>• Клик по объекту — выделить, Delete — удалить, Ctrl+C/V — копия.<br>• Рисунки хранятся отдельно для каждого инструмента.';
@@ -2587,6 +2715,7 @@
     regHotkey('b', () => btBtn.click());
     mkBtn(setWrap, '🔬 Исследование сигналов', () => { closeMenus(); researchModal(); }, false, 'Выбираемый бэктест: объём, EMA, пробой, RSI, лунные зоны — на текущих данных');
     mkBtn(setWrap, '📰 Новости по инструменту', () => { closeMenus(); toggleNews(!newsOpen); }, false, 'Правая колонка новостей по текущему инструменту (СМИ как контр-индикатор)');
+    mkBtn(setWrap, '📷 Скрин графика (Ctrl+S)', () => { closeMenus(); screenshot(); }, false, 'PNG активного графика — скачать или открыть');
     mkBtn(setWrap, '📖 Справочник (статьи по инструментам)', () => { closeMenus(); helpArticlesModal(); }, false, 'Короткие статьи: что это, принцип, как читать и использовать — по каждому блоку');
     mkBtn(setWrap, '❓ Справка', () => { closeMenus(); helpModal(); }, false, 'Что умеет терминал');
     mkBtn(setWrap, '📚 Как пользоваться', () => { closeMenus(); guideModal(); }, false, 'Пошагово: Астро, Ганн, Бэктест');
@@ -2658,6 +2787,57 @@
       if (px && isFinite(px.y) && s.instrument.id === src.instrument.id) { s.lines.h.style.top = px.y + 'px'; s.lines.h.style.display = 'block'; } else s.lines.h.style.display = 'none';
     });
   }
+  /* ---------- изменение размеров ячеек (перетаскивание границ) ---------- */
+  let gridColFr = [], gridRowFr = [];
+  const parseFr = (s) => String(s || '').trim().split(/\s+/).map((x) => { const m = /([\d.]+)fr/.exec(x); return m ? +m[1] : 1; });
+  function addResizers(grid, L) {
+    grid.style.position = 'relative';
+    gridColFr = parseFr(L.cols); gridRowFr = parseFr(L.rows);
+    const nC = gridColFr.length, nR = gridRowFr.length;
+    const applyTracks = () => {
+      grid.style.gridTemplateColumns = gridColFr.map((f) => f.toFixed(4) + 'fr').join(' ');
+      grid.style.gridTemplateRows = gridRowFr.map((f) => f.toFixed(4) + 'fr').join(' ');
+    };
+    const handles = [];
+    const reposition = () => {
+      const totC = gridColFr.reduce((a, b) => a + b, 0), totR = gridRowFr.reduce((a, b) => a + b, 0);
+      handles.forEach((h) => {
+        const b = +h.dataset.b;
+        if (h.dataset.kind === 'col') { let acc = 0; for (let k = 0; k < b; k++) acc += gridColFr[k]; h.style.left = (acc / totC * 100) + '%'; }
+        else { let acc = 0; for (let k = 0; k < b; k++) acc += gridRowFr[k]; h.style.top = (acc / totR * 100) + '%'; }
+      });
+    };
+    const mkHandle = (kind, b) => {
+      const h = document.createElement('div'); h.dataset.kind = kind; h.dataset.b = b;
+      h.style.cssText = 'position:absolute;z-index:40;background:transparent;' + (kind === 'col'
+        ? 'top:0;bottom:0;width:10px;transform:translateX(-5px);cursor:col-resize'
+        : 'left:0;right:0;height:10px;transform:translateY(-5px);cursor:row-resize');
+      const line = document.createElement('div');
+      line.style.cssText = kind === 'col' ? 'position:absolute;left:4px;top:0;bottom:0;width:2px;background:#2a3a4f' : 'position:absolute;top:4px;left:0;right:0;height:2px;background:#2a3a4f';
+      h.appendChild(line);
+      h.onmouseenter = () => line.style.background = '#3aa0ff'; h.onmouseleave = () => line.style.background = '#2a3a4f';
+      grid.appendChild(h); handles.push(h);
+      h.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); try { h.setPointerCapture(e.pointerId); } catch (_) {}
+        const rect = grid.getBoundingClientRect(), startX = e.clientX, startY = e.clientY;
+        const arr = kind === 'col' ? gridColFr : gridRowFr, idx = +b;
+        const a0 = arr[idx - 1], a1 = arr[idx], tot = arr.reduce((x, y) => x + y, 0);
+        const px = kind === 'col' ? rect.width : rect.height, min = tot * 0.08;
+        const move = (ev) => {
+          const d = kind === 'col' ? (ev.clientX - startX) : (ev.clientY - startY);
+          const dFr = d / px * tot; let n0 = a0 + dFr, n1 = a1 - dFr;
+          if (n0 < min) { n1 -= (min - n0); n0 = min; } if (n1 < min) { n0 -= (min - n1); n1 = min; }
+          arr[idx - 1] = n0; arr[idx] = n1; applyTracks(); reposition();
+        };
+        const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); slots.forEach((s) => { try { s.chart.resize && s.chart.resize(); } catch (_) {} }); scheduleWsSave(); };
+        window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+      });
+    };
+    for (let c = 1; c < nC; c++) mkHandle('col', c);
+    for (let r = 1; r < nR; r++) mkHandle('row', r);
+    applyTracks(); reposition();
+  }
+
   function wireSync(slot) {
     const cell = slot.cellEl;
     const v = document.createElement('div'); v.className = 'sync-vline';
@@ -2715,6 +2895,14 @@
       else { slot.instrument = window.LUN.INSTRUMENTS[Math.min(i, window.LUN.INSTRUMENTS.length - 1)]; slot.tf = DEFAULT_TF; }
       slot.chart = kc.init(cell, { styles: THEME });
       cell.addEventListener('mousedown', () => activateSlot(i));
+      // клик по ПОЛЮ (не по объекту) — снять выделение и спрятать панель свойств.
+      // Если клик попал в объект, sel() обновит lastSelTs и панель останется.
+      cell.addEventListener('click', () => {
+        setTimeout(() => {
+          if (Date.now() - lastSelTs < 120) return;   // только что выделили объект — панель оставить
+          state.selectedOverlayId = null; state.selectedOverlay = null; hideStylePanel();
+        }, 40);
+      });
       // отслеживаем панель под курсором (для удаления двойным кликом)
       try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; }); } catch (e) {}
       cell.addEventListener('dblclick', (e) => {
@@ -2732,6 +2920,7 @@
     state = slots[0];
     applyChartLook();                                      // тема + тип свечей
     slots.forEach((s) => load(s));
+    if (L.cells > 1) { addResizers(grid, L); setTimeout(() => { try { mirrorToSiblings(state); } catch (e) {} }, 1200); }
     highlightActive(); syncToolbar();
   }
 
@@ -3046,7 +3235,7 @@
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (document.querySelector('.lun-modal-bg')) return;
       const fn = hotkeys[keyFromEvent(e)] || hotkeys[(e.key || '').toLowerCase()];
-      if (fn) { e.preventDefault(); fn(); }
+      if (fn) { const handled = fn(); if (handled !== false) e.preventDefault(); }   // fn вернул false — не перехватываем клавишу
     });
   }
 

@@ -67,9 +67,46 @@
     m.querySelector('#au-go').onclick = async () => {
       const email = m.querySelector('#au-email').value.trim(), password = m.querySelector('#au-pass').value;
       const errEl = m.querySelector('#au-err'); errEl.textContent = '';
-      try { const r = await api(mode, { email, password }); user = r.user; csrf = r.csrf || csrf; render(); bg.remove(); if (window.LUN_APPLY_WS) window.LUN_APPLY_WS(); }
+      try { const r = await api(mode, { email, password }); user = r.user; csrf = r.csrf || csrf; render(); bg.remove(); hideGate(); if (window.LUN_APPLY_WS) window.LUN_APPLY_WS(true); }
       catch (e) { errEl.textContent = e.message; }
     };
+  }
+
+  /* ---- шлюз входа: без аккаунта терминал закрыт ---- */
+  let gateEl = null;
+  function hideGate() { if (gateEl) { gateEl.remove(); gateEl = null; } }
+  function showGate() {
+    if (gateEl) { gateEl.style.display = 'flex'; return; }
+    const bg = el('div', 'position:fixed;inset:0;background:rgba(4,7,12,.97);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px');
+    const m = el('div', 'background:#121722;border:1px solid #232b3a;border-radius:12px;max-width:400px;width:100%;color:#d7deea;box-shadow:0 12px 40px rgba(0,0,0,.6);overflow:hidden');
+    const inp = 'width:100%;background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:6px;padding:9px 10px;font-size:14px;margin-top:8px';
+    const tab = (t, on) => `<button class="ga-tab" data-t="${t}" style="flex:1;background:${on ? '#1a2130' : 'transparent'};color:${on ? '#d7deea' : '#8b93a7'};border:0;border-bottom:2px solid ${on ? '#3aa0ff' : 'transparent'};padding:11px;cursor:pointer;font-size:14px">${t === 'login' ? 'Вход' : 'Регистрация'}</button>`;
+    m.innerHTML = `
+      <div style="padding:18px 18px 6px;text-align:center">
+        <div style="font-size:22px;font-weight:700;letter-spacing:.5px">AG-TS</div>
+        <div style="color:#8b93a7;font-size:12px;margin-top:2px">астро-ганновская торговая система · ag-ts.ru</div>
+      </div>
+      <div style="display:flex">${tab('login', true)}${tab('register', false)}</div>
+      <div style="padding:16px 18px">
+        <input id="ga-email" type="email" placeholder="e-mail" style="${inp}">
+        <input id="ga-pass" type="password" placeholder="пароль (мин. 8)" style="${inp}">
+        <div id="ga-err" style="color:#ef8a88;font-size:12px;min-height:16px;margin-top:8px"></div>
+        <button id="ga-go" style="width:100%;background:#3aa0ff;color:#04121f;border:0;border-radius:6px;padding:10px;cursor:pointer;font-weight:600;font-size:14px;margin-top:6px">Войти</button>
+        <p style="color:#6b7280;font-size:11px;margin:12px 0 0">Доступ к терминалу — только для зарегистрированных. Аккаунт хранит вашу разметку, индикаторы и настройки на сервере.</p>
+      </div>`;
+    bg.appendChild(m); document.body.appendChild(bg); gateEl = bg;
+    let mode = 'login';
+    const set = (t) => { mode = t; m.querySelectorAll('.ga-tab').forEach((x) => { const on = x.dataset.t === t; x.style.color = on ? '#d7deea' : '#8b93a7'; x.style.background = on ? '#1a2130' : 'transparent'; x.style.borderBottom = '2px solid ' + (on ? '#3aa0ff' : 'transparent'); }); m.querySelector('#ga-go').textContent = t === 'login' ? 'Войти' : 'Создать аккаунт'; };
+    m.querySelectorAll('.ga-tab').forEach((x) => x.onclick = () => set(x.dataset.t));
+    const go = async () => {
+      const email = m.querySelector('#ga-email').value.trim(), password = m.querySelector('#ga-pass').value;
+      const errEl = m.querySelector('#ga-err'); errEl.textContent = '';
+      try { const r = await api(mode, { email, password }); user = r.user; csrf = r.csrf || csrf; render(); hideGate(); if (window.LUN_APPLY_WS) window.LUN_APPLY_WS(true); }
+      catch (e) { errEl.textContent = e.message; }
+    };
+    m.querySelector('#ga-go').onclick = go;
+    m.querySelector('#ga-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+    m.querySelector('#ga-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
   }
 
   async function saveSettings() {
@@ -80,15 +117,15 @@
     try { const r = await api('load'); if (!r.settings) { alert('В аккаунте пока нет сохранённых настроек.'); return; } localStorage.setItem(SKEY, JSON.stringify(r.settings)); if (confirm('Настройки загружены. Перезагрузить страницу, чтобы применить?')) location.reload(); }
     catch (e) { alert('Не удалось загрузить: ' + e.message); }
   }
-  async function logout() { try { await api('logout', {}); } catch (e) {} user = null; render(); }
+  async function logout() { try { await api('logout', {}); } catch (e) {} user = null; render(); showGate(); }
 
   async function init() {
     mountButton();
     try { const r = await api('me'); user = r.user; csrf = r.csrf || ''; render(); }
-    catch (e) { /* нет PHP — кнопка просто откроет форму, покажет ошибку */ }
-    // восстановить рабочий стол: вошедшему — с сервера, иначе локальную копию
-    // (разметка/индикаторы сохраняются между сессиями и без входа)
-    if (window.LUN_APPLY_WS) window.LUN_APPLY_WS();
+    catch (e) { /* нет PHP — вход невозможен, покажем шлюз с ошибкой при попытке */ }
+    // Вход в сайт — только по аккаунту. Нет пользователя → шлюз перекрывает терминал.
+    if (user) { if (window.LUN_APPLY_WS) window.LUN_APPLY_WS(); }
+    else showGate();
   }
   window.LunAuth = { init, get user() { return user; } };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
