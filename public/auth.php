@@ -105,7 +105,7 @@ if ($fn === 'login') {
   $b = body(); $email = strtolower(trim($b['email'] ?? '')); $pass = (string)($b['password'] ?? '');
   $st = db()->prepare('SELECT * FROM users WHERE email = ?'); $st->execute([$email]);
   $u = $st->fetch(PDO::FETCH_ASSOC);
-  if (!$u || !password_verify($pass, $u['pass'])) out(['error' => 'Неверный e-mail или пароль'], 401);
+  if (!$u || !password_verify($pass, $u['pass'])) { usleep(400000); out(['error' => 'Неверный e-mail или пароль'], 401); }  // притормаживаем перебор
   session_regenerate_id(true);
   $_SESSION['uid'] = (int)$u['id'];
   out(['user' => public_user(enforce_owner($u)), 'csrf' => csrf()]);

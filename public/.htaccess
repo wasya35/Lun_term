@@ -1,5 +1,5 @@
 # ============================================================================
-#  Lun_term — конфигурация Apache (безопасность + красивые пути).
+#  Astro-Gann (AG-TS) — конфигурация Apache (безопасность + красивые пути).
 #  Работает на большинстве шаред-хостингов. Директивы обёрнуты в <IfModule>,
 #  чтобы отсутствие модуля не роняло сайт (500).
 # ============================================================================
@@ -58,6 +58,13 @@ Options -Indexes
   Header always set Referrer-Policy "strict-origin-when-cross-origin"
   Header always set Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
   Header always set Cross-Origin-Opener-Policy "same-origin"
+  # HSTS — только по HTTPS (env=HTTPS не даст отправить по голому http).
+  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
+  # Минимальный CSP, не ломающий приложение: запрет плагинов, чужих <base> и
+  # отправки форм на сторону; вставку в чужой iframe закрывает frame-ancestors.
+  # (Полный script-src не ставим — в приложении есть инлайн-скрипты и много
+  #  внешних коннектов: MOEX ISS, Bybit WSS, Yahoo, RSS-шлюзы.)
+  Header always set Content-Security-Policy "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'"
   # Не отдавать серверные версии/подпись, где можно.
   Header unset X-Powered-By
   Header always unset X-Powered-By
