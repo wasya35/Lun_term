@@ -1345,6 +1345,9 @@
           <label style="display:block;margin-top:8px">Сколько прогнозных боксов:
             <select id="ds-fc-n" style="${ss}">${[1, 2, 3].map((n) => `<option value="${n}"${n === cnt ? ' selected' : ''}>${n}</option>`).join('')}</select>
           </label>
+          <label style="display:block;margin-top:8px">Направление прогноза:
+            <select id="ds-fc-dir" style="${ss}">${[['auto', 'по направлению бокса'], ['up', 'вправо-вверх'], ['down', 'вправо-вниз']].map(([v, t]) => `<option value="${v}"${(B.forecastDir || 'auto') === v ? ' selected' : ''}>${t}</option>`).join('')}</select>
+          </label>
         </div>
         <button id="ds-apply" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px 16px;cursor:pointer">Применить</button>
       </div>`);
@@ -1353,6 +1356,7 @@
       window.LUN.SNAP = bg.querySelector('#ds-snap').checked;
       B.forecast = bg.querySelector('#ds-fc').checked;
       B.forecastCount = +bg.querySelector('#ds-fc-n').value || 2;
+      B.forecastDir = bg.querySelector('#ds-fc-dir').value;
       scheduleWsSave(); bg.remove();
     };
   }
@@ -1786,7 +1790,11 @@
     const step = (list.length > 1) ? (list[list.length - 1].timestamp - list[list.length - 2].timestamp) : 0;
     const i0 = pts[0].dataIndex, i1 = pts[1].dataIndex, v0 = pts[0].value, v1 = pts[1].value;
     if (i0 == null || i1 == null || v0 == null || v1 == null) return;
-    const di = i1 - i0, dv = Math.abs(v1 - v0);   // вправо (время) и вверх (цена)
+    // время — всегда вперёд (вправо); направление по цене — из настройки:
+    // 'auto' = по направлению построения бокса (снизу-вверх → вверх), либо явно up/down.
+    const dir = B.forecastDir || 'auto';
+    const goUp = dir === 'up' ? true : dir === 'down' ? false : (v1 >= v0);
+    const di = Math.abs(i1 - i0), dvAbs = Math.abs(v1 - v0), dv = goUp ? dvAbs : -dvAbs;
     const tsFor = (idx) => (last && step) ? last.timestamp + (idx - (list.length - 1)) * step : undefined;
     const cnt = Math.max(1, Math.min(3, B.forecastCount || 2));
     for (let k = 1; k <= cnt; k++) {
@@ -2109,7 +2117,7 @@
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
       swings: s.swings || null,
-      draw: { snap: !!window.LUN.SNAP, boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2 },
+      draw: { snap: !!window.LUN.SNAP, boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
@@ -2167,7 +2175,7 @@
         window.LUN.INDICATORS.vwapList = ws.vwapList;
       }
       if (ws.swings && ws.swings.pivots && ws.swings.pivots.length > 1) state.swings = ws.swings;
-      if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; } }
+      if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; window.LUN.GANNTOOLS.box.forecastDir = ws.draw.boxForecastDir || 'auto'; } }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }

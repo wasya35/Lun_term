@@ -51,25 +51,34 @@ function db() {
     @$pdo->exec('ALTER TABLE users ADD COLUMN tg_chat TEXT');   // привязка Telegram (может уже быть)
     @$pdo->exec('ALTER TABLE users ADD COLUMN tg_code TEXT');
     @$pdo->exec('ALTER TABLE users ADD COLUMN workspace TEXT');  // рабочий стол (последнее состояние)
+    @$pdo->exec('ALTER TABLE users ADD COLUMN approved INTEGER DEFAULT 0');  // доступ подтверждён владельцем
     $pdo->exec('CREATE TABLE IF NOT EXISTS alerts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, kind TEXT, title TEXT, instrument TEXT, provider TEXT, op TEXT, level REAL, fire_ts INTEGER, channel TEXT, rpt INTEGER DEFAULT 0, status TEXT DEFAULT "active", created INTEGER)');
   } catch (Exception $e) { out(['error' => 'Хранилище недоступно: ' . $e->getMessage() . ' (нужен PDO SQLite и запись в lun_data/)'], 500); }
   return $pdo;
 }
 
-// Владелец/админ сайта — задаётся жёстко. При входе этот e-mail всегда 'admin'.
+// Владелец сайта — задаётся жёстко. Это ЕДИНСТВЕННый автоматический доступ:
+// его аккаунт всегда admin и подтверждён (иначе некому подтверждать других).
+// Все остальные аккаунты доступ получают ТОЛЬКО после ручного подтверждения
+// владельцем (контроль на стороне владельца, а не автоматом).
 const OWNER_EMAIL = 'irvikv@rambler.ru';
 function enforce_owner($row) {
-  if ($row && strcasecmp($row['email'], OWNER_EMAIL) === 0 && $row['grp'] !== 'admin') {
-    db()->prepare('UPDATE users SET grp = "admin" WHERE id = ?')->execute([$row['id']]);
-    $row['grp'] = 'admin';
+  if ($row && strcasecmp($row['email'], OWNER_EMAIL) === 0 && ($row['grp'] !== 'admin' || (int)$row['approved'] !== 1)) {
+    db()->prepare('UPDATE users SET grp = "admin", approved = 1 WHERE id = ?')->execute([$row['id']]);
+    $row['grp'] = 'admin'; $row['approved'] = 1;
   }
   return $row;
 }
-function public_user($row) { return $row ? ['id' => (int)$row['id'], 'email' => $row['email'], 'group' => $row['grp']] : null; }
+function public_user($row) { return $row ? ['id' => (int)$row['id'], 'email' => $row['email'], 'group' => $row['grp'], 'approved' => (int)($row['approved'] ?? 0)] : null; }
 function current_user() {
   if (empty($_SESSION['uid'])) return null;
   $st = db()->prepare('SELECT * FROM users WHERE id = ?'); $st->execute([$_SESSION['uid']]);
   return enforce_owner($st->fetch(PDO::FETCH_ASSOC) ?: null);
+}
+function require_admin() {
+  $u = current_user();
+  if (!$u || $u['grp'] !== 'admin') out(['error' => 'Только для администратора'], 403);
+  return $u;
 }
 function csrf() { if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(16)); return $_SESSION['csrf']; }
 
@@ -156,6 +165,33 @@ if ($fn === 'tg_code') {
   $u = current_user(); if (!$u) out(['error' => 'Не авторизован'], 401);
   $code = $u['tg_code']; if (!$code) { $code = strtoupper(bin2hex(random_bytes(3))); db()->prepare('UPDATE users SET tg_code = ? WHERE id = ?')->execute([$code, $u['id']]); }
   out(['code' => $code, 'linked' => !empty($u['tg_chat'])]);
+}
+
+/* ---- Управление аккаунтами (только владелец/админ) ---- */
+if ($fn === 'users_list') {
+  require_admin();
+  $rows = db()->query('SELECT id, email, grp, approved, created FROM users ORDER BY id ASC')->fetchAll(PDO::FETCH_ASSOC);
+  $users = array_map(function ($r) {
+    return ['id' => (int)$r['id'], 'email' => $r['email'], 'group' => $r['grp'], 'approved' => (int)$r['approved'], 'created' => (int)$r['created'], 'owner' => strcasecmp($r['email'], OWNER_EMAIL) === 0];
+  }, $rows);
+  out(['users' => $users]);
+}
+if ($fn === 'user_set') {
+  $admin = require_admin(); $b = body(); $id = (int)($b['id'] ?? 0);
+  if ($id <= 0) out(['error' => 'Нет id'], 400);
+  $st = db()->prepare('SELECT * FROM users WHERE id = ?'); $st->execute([$id]); $target = $st->fetch(PDO::FETCH_ASSOC);
+  if (!$target) out(['error' => 'Нет такого аккаунта'], 404);
+  if (strcasecmp($target['email'], OWNER_EMAIL) === 0) out(['error' => 'Владельца менять нельзя'], 400);
+  if (array_key_exists('approved', $b)) db()->prepare('UPDATE users SET approved = ? WHERE id = ?')->execute([$b['approved'] ? 1 : 0, $id]);
+  if (array_key_exists('group', $b)) { $g = in_array($b['group'], ['free', 'pro', 'admin'], true) ? $b['group'] : 'free'; db()->prepare('UPDATE users SET grp = ? WHERE id = ?')->execute([$g, $id]); }
+  out(['ok' => true]);
+}
+if ($fn === 'user_del') {
+  require_admin(); $id = (int)(body()['id'] ?? 0);
+  $st = db()->prepare('SELECT email FROM users WHERE id = ?'); $st->execute([$id]); $target = $st->fetch(PDO::FETCH_ASSOC);
+  if ($target && strcasecmp($target['email'], OWNER_EMAIL) === 0) out(['error' => 'Владельца удалить нельзя'], 400);
+  db()->prepare('DELETE FROM users WHERE id = ?')->execute([$id]);
+  out(['ok' => true]);
 }
 
 out(['error' => 'unknown fn'], 400);

@@ -824,7 +824,8 @@
       const b = bars[i];
       const hh = b.high > prevH, ll = b.low < prevL;
       if (!hh && !ll) continue;                             // внутренний бар — пропускаем
-      const bd = (hh && ll) ? (dir >= 0 ? 1 : -1) : (hh ? 1 : -1);   // внешний — по тренду
+      // внешний бар (пробил и вершину, и низину) — направление по закрытию свечи
+      const bd = (hh && ll) ? (b.close >= b.open ? 1 : -1) : (hh ? 1 : -1);
       prevH = b.high; prevL = b.low;
       if (dir === 0) { dir = bd; extIdx = i; extVal = (dir > 0 ? b.high : b.low); opp = 0; oppIdx = -1; continue; }
       if (bd === dir) {
@@ -1397,12 +1398,18 @@
       if (!(hi > lo)) return true;
       const pad = (hi - lo) * 0.1; hi += pad; lo = Math.max(0, lo - pad);
       const prec = hi < 10 ? 4 : (hi < 1000 ? 2 : 1), W = bounding.width, H = bounding.height, ts = list[to - 1].timestamp;
+      // авто-масштаб: домножаем цену на степень 10 в удобный диапазон, иначе на
+      // мелких ценах (1–100 и <0,1) шаг √-спирали «взрывается» и уровней нет.
+      let S = 1, pm = (hi + lo) / 2 || 1;
+      while (pm < 300 && S < 1e8) { S *= 10; pm *= 10; }
+      while (pm > 30000 && S > 1e-8) { S /= 10; pm /= 10; }
+      const loS = Math.max(0, lo * S), hiS = hi * S;
       (AG.sq9Planets || []).forEach((p) => {
         const meta = AGmeta(p), L = window.LunAstro.bodyInfo(p, ts, AG.frame).lon;
-        const rMin = Math.floor((180 * Math.sqrt(Math.max(0, lo)) - L) / 360) - 1;
-        const rMax = Math.ceil((180 * Math.sqrt(hi) - L) / 360) + 1;
+        const rMin = Math.floor((180 * Math.sqrt(loS) - L) / 360) - 1;
+        const rMax = Math.ceil((180 * Math.sqrt(hiS) - L) / 360) + 1;
         for (let r = rMin; r <= rMax; r++) {
-          const s = (L + 360 * r) / 180; if (s <= 0) continue; const price = s * s;
+          const s = (L + 360 * r) / 180; if (s <= 0) continue; const price = (s * s) / S;
           if (price < lo || price > hi) continue;
           const y = yAxis.convertToPixel(price); if (y < 0 || y > H) continue;
           ctx.strokeStyle = meta.c; ctx.globalAlpha = 0.6; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);

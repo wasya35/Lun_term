@@ -215,7 +215,7 @@ LUN.GANNTOOLS = {
   // геометрия: масштаб 1×1 (цена на 1 бар; null = авто из видимого окна),
   // деления Gann Box (доли рамки по цене и времени).
   scale:  { unitPerBar: null },
-  box:    { levels: [0, 0.25, 0.3333, 0.5, 0.6667, 0.75, 1], forecast: false, forecastCount: 2 },
+  box:    { levels: [0, 0.25, 0.3333, 0.5, 0.6667, 0.75, 1], forecast: false, forecastCount: 2, forecastDir: 'auto' },
 };
 // Рисование: притяжка точек к вершинам/низинам баров (только вблизи вершины).
 LUN.SNAP = false;
