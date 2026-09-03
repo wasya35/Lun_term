@@ -1393,11 +1393,13 @@
 
   /* ============ Астро-Ганн: Sq9 в градусах планет ============
    * Горизонтали на ценах, где угол колеса Квадрата-9 равен долготе планеты:
-   * √price·180 = долгота + 360·оборот  →  price = ((L+360r)/180)². */
-  kc.registerIndicator({
-    name: 'PlanetSq9', shortName: 'Sq9 планет', series: 'price', figures: [],
-    calc: (dl) => dl.map((d) => d.timestamp),
-    draw: ({ ctx, chart, bounding, yAxis }) => {
+   * √price·180 = долгота + 360·оборот  →  price = ((L+360r)/180)².
+   * scale (фикс. множитель цены) — ТОЛЬКО для мелких инструментов, где иначе шаг
+   * √-спирали слишком крупный: считаем на цене·scale, уровень делим обратно.
+   * scale=1 — исходная формула (как в v90, для «нормальных»/крупных цен). */
+  function planetSq9Draw(scale) {
+    const S = scale || 1;
+    return ({ ctx, chart, bounding, yAxis }) => {
       const AG = window.LUN.ASTROGANN, list = chart.getDataList(); if (!list.length || !window.LunAstro) return true;
       const range = chart.getVisibleRange();
       const from = Math.max(0, range.from), to = Math.min(list.length, Math.ceil(range.to));
@@ -1406,11 +1408,6 @@
       if (!(hi > lo)) return true;
       const pad = (hi - lo) * 0.1; hi += pad; lo = Math.max(0, lo - pad);
       const prec = hi < 10 ? 4 : (hi < 1000 ? 2 : 1), W = bounding.width, H = bounding.height, ts = list[to - 1].timestamp;
-      // авто-масштаб: домножаем цену на степень 10 в удобный диапазон, иначе на
-      // мелких ценах (1–100 и <0,1) шаг √-спирали «взрывается» и уровней нет.
-      let S = 1, pm = (hi + lo) / 2 || 1;
-      while (pm < 300 && S < 1e8) { S *= 10; pm *= 10; }
-      while (pm > 30000 && S > 1e-8) { S /= 10; pm /= 10; }
       const loS = Math.max(0, lo * S), hiS = hi * S;
       (AG.sq9Planets || []).forEach((p) => {
         const meta = AGmeta(p), L = window.LunAstro.bodyInfo(p, ts, AG.frame).lon;
@@ -1427,8 +1424,11 @@
         }
       });
       return true;
-    },
-  });
+    };
+  }
+  kc.registerIndicator({ name: 'PlanetSq9',  shortName: 'Sq9 планет',        series: 'price', figures: [], calc: (dl) => dl.map((d) => d.timestamp), draw: planetSq9Draw(1) });
+  kc.registerIndicator({ name: 'PlanetSq9m', shortName: 'Sq9 планет · 1–100', series: 'price', figures: [], calc: (dl) => dl.map((d) => d.timestamp), draw: planetSq9Draw(100) });
+  kc.registerIndicator({ name: 'PlanetSq9s', shortName: 'Sq9 планет · ≤0,01', series: 'price', figures: [], calc: (dl) => dl.map((d) => d.timestamp), draw: planetSq9Draw(10000) });
 
   /* ============ Астро-Ганн: затмения (вертикали) ============ */
   kc.registerIndicator({
