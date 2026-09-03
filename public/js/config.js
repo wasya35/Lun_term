@@ -378,6 +378,9 @@ LUN.SIGN_SUBDIVISION = 15;
  * (напр. Cloudflare Worker) — тогда данные пойдут надёжно и без задержек шлюзов.
  * wrap: (issUrl) => готовый URL. */
 LUN.ISS_GATEWAYS = [
+  // НАШ серверный прокси (api.php) — приоритетный: server-to-server, с кэшем,
+  // без CORS и публичных шлюзов. Если PHP на хостинге нет — тихо падаем на прямой.
+  { name: 'сервер',     wrap: (u) => 'api.php?fn=iss&url=' + encodeURIComponent(u) },
   { name: 'прямой',     wrap: (u) => u },
   { name: 'allorigins', wrap: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
   { name: 'corsproxy',  wrap: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },

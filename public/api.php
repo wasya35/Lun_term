@@ -219,6 +219,33 @@ if (!defined('LUN_NO_DISPATCH')) {
     catch (Exception $e) { http_response_code(502); header('Content-Type: application/json'); echo json_encode(['error' => $e->getMessage()]); }
     exit;
   }
+  // Универсальный серверный проксик к MOEX ISS: браузер шлёт готовый ISS-URL,
+  // сервер ходит на него server-to-server (без CORS и публичных шлюзов) и кэширует.
+  // Через него идёт ВЕСЬ трафик ISS (свечи, склейка непрерывного фьючерса, ближний
+  // контракт, ОИ/FUTOI, поиск бумаг) — это и есть «бесплатное укрепление» MOEX.
+  // Хост жёстко ограничен iss.moex.com, чтобы не быть открытым прокси.
+  if ($fn === 'iss') {
+    send_cors();
+    if (!rate_ok('iss', 600, 60)) too_many();          // склейка фьючерса даёт много страниц
+    $url = $_GET['url'] ?? '';
+    $host = strtolower((string)parse_url($url, PHP_URL_HOST));
+    header('Content-Type: application/json; charset=utf-8');
+    if ($host !== 'iss.moex.com') { http_response_code(400); echo json_encode(['error' => 'host not allowed']); exit; }
+    $ttl = 120;
+    if (strpos($url, 'candles') !== false) $ttl = 45;
+    elseif (strpos($url, 'securities.json') !== false) $ttl = 600;
+    elseif (strpos($url, 'analyticalproducts') !== false) $ttl = 120;
+    elseif (strpos($url, '/history/') !== false) $ttl = 300;
+    $ck = 'iss|' . $url;
+    $hit = cache_get($ck, $ttl);
+    if ($hit !== null) { echo $hit; exit; }
+    try {
+      $body = http_get($url); $t = ltrim($body);
+      if ($t === '' || ($t[0] !== '{' && $t[0] !== '[')) throw new Exception('ISS не отдал JSON');
+      cache_put($ck, $body); echo $body;
+    } catch (Exception $e) { http_response_code(502); echo json_encode(['error' => $e->getMessage()]); }
+    exit;
+  }
   header('Content-Type: application/json; charset=utf-8');
   send_cors();
   if (!rate_ok('api', 120, 60)) too_many();           // 120 запросов/мин на IP
