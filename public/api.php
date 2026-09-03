@@ -96,7 +96,7 @@ function http_get($url) {
     curl_setopt_array($ch, [
       CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
       CURLOPT_TIMEOUT => 20, CURLOPT_CONNECTTIMEOUT => 10,
-      CURLOPT_USERAGENT => 'Lun_term/1.0',
+      CURLOPT_USERAGENT => 'Astro-Gann/1.0',
     ]);
     $body = curl_exec($ch);
     $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -106,7 +106,7 @@ function http_get($url) {
     if ($code !== 200) throw new Exception('ISS HTTP ' . $code);
     return $body;
   }
-  $ctx = stream_context_create(['http' => ['timeout' => 20, 'user_agent' => 'Lun_term/1.0']]);
+  $ctx = stream_context_create(['http' => ['timeout' => 20, 'user_agent' => 'Astro-Gann/1.0']]);
   $body = @file_get_contents($url, false, $ctx);
   if ($body === false) throw new Exception('file_get_contents failed (проверьте allow_url_fopen/curl на хостинге)');
   return $body;

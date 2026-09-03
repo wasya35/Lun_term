@@ -1,5 +1,5 @@
 /* =============================================================================
- *  app.js — сборка терминала Lun_term
+ *  app.js — сборка терминала Astro-Gann
  * =============================================================================*/
 (function () {
   const kc = window.klinecharts;
@@ -71,7 +71,7 @@
   function helpModal() {
     const h = (t) => `<h3 style="margin:14px 0 4px;color:#3aa0ff;font-size:13px">${t}</h3>`;
     openModal('Справка — как работают инструменты', `
-      <p><b>Lun_term</b> — исследовательский астро-трейдинг терминал. Данные MOEX ISS / крипта Bybit / США Yahoo прямо из браузера. Меню сверху: Инструменты · ТФ · Период (глубина истории) · Индикаторы · Рисование · Ганн · Коннекторы (реалтайм) · Настройки · Экраны (мультичарт).</p>
+      <p><b>Astro-Gann</b> — исследовательский астро-трейдинг терминал. Данные MOEX ISS / крипта Bybit / США Yahoo прямо из браузера. Меню сверху: Инструменты · ТФ · Период (глубина истории) · Индикаторы · Рисование · Ганн · Коннекторы (реалтайм) · Настройки · Экраны (мультичарт).</p>
 
       ${h('🌙 Астро')}
       <p><b>Луна в знаках</b> (Астро → ☾ Луна в знаках) — верхняя лента: цвет по знаку зодиака, текущий градус. Тумблер показать/скрыть.</p>
@@ -160,7 +160,7 @@
     const h = (t) => `<h3 style="margin:16px 0 4px;color:#3aa0ff;font-size:13px">${t}</h3>`;
     const site = (location && location.host) ? location.host : 'этот сайт';
     openModal('📜 Правила, конфиденциальность и отказ от ответственности', `
-      <p style="margin-top:0"><b>Коротко:</b> Lun_term — это <b>исследовательский инструмент</b>. Мы даём данные и методы для самостоятельного анализа рынка. Мы <b>не даём инвестиционных рекомендаций и не обещаем никакого дохода</b>. Все решения и их последствия — только ваши.</p>
+      <p style="margin-top:0"><b>Коротко:</b> Astro-Gann — это <b>исследовательский инструмент</b>. Мы даём данные и методы для самостоятельного анализа рынка. Мы <b>не даём инвестиционных рекомендаций и не обещаем никакого дохода</b>. Все решения и их последствия — только ваши.</p>
 
       ${h('1. Отказ от ответственности')}
       <ul style="margin:4px 0;padding-left:18px;line-height:1.6">
@@ -1610,7 +1610,7 @@
       const w = [3, 12, 11, 11, 11, 17, 17, 10, 9, 8];
       const pad = (v, n) => { const s = String(v); return s.length >= n ? s : s + ' '.repeat(n - s.length); };
       const line = (arr) => arr.map((v, k) => pad(v, w[k])).join(' ');
-      const lines = ['Журнал сделок — Lun_term (' + fmtTs(Date.now()) + ')', '', line(headers), '-'.repeat(w.reduce((a, b) => a + b + 1, 0))];
+      const lines = ['Журнал сделок — Astro-Gann (' + fmtTs(Date.now()) + ')', '', line(headers), '-'.repeat(w.reduce((a, b) => a + b + 1, 0))];
       rows.forEach((r) => lines.push(line(r)));
       lines.push('');
       lines.push('Сделок: ' + T.length + '   Винрейт: ' + wr.toFixed(0) + '%   Сумма PnL: ' + sumPnl.toFixed(2) + '%   Сумма R: ' + sumR.toFixed(2));
@@ -1922,6 +1922,11 @@
     const p = ensureStylePanel();
     const ed = ov.extendData && typeof ov.extendData === 'object' ? ov.extendData : {};
     const st = Object.assign(defOvStyle(), ed.style || {});
+    // для встроенных фигур текущий цвет может лежать в overlay.styles.line
+    const kline = ov.styles && ov.styles.line;
+    if (kline && kline.color) st.color = kline.color;
+    if (kline && kline.size) st.size = kline.size;
+    if (kline && kline.style === 'dashed') st.dash = (kline.dashedValue && kline.dashedValue[0] <= 2) ? 'dotted' : 'dashed';
     p.querySelector('#sp-name').textContent = OV_NAMES[ov.name] || 'Объект';
     p.querySelector('#sp-color').value = /^#([0-9a-f]{6})$/i.test(st.color) ? st.color : '#f0c040';
     p.querySelector('#sp-size').value = st.size || 1.4;
@@ -1977,7 +1982,23 @@
     const ed = Object.assign({}, (ov.extendData && typeof ov.extendData === 'object') ? ov.extendData : {});
     ed.style = { color, size, dash, fill, fillColor: hexToRgba(color, 0.14) };
     ov.extendData = ed; ov.lock = lock;
-    try { state.chart.overrideOverlay({ id, extendData: ed, lock }); } catch (e) {}
+    // Наши lun_* оверлеи читают стиль из extendData.style. А ВСТРОЕННЫЕ фигуры
+    // KLineChart (segment «Трендовая», horizontalStraightLine «Уровень», лучи…)
+    // берут стиль из overlay.styles — поэтому задаём и его, иначе цвет/толщина/тип
+    // не применялись (линия оставалась синей по умолчанию).
+    const isDash = dash !== 'solid', dv = dash === 'dotted' ? [2, 3] : [6, 4];
+    const bStyle = isDash ? 'dashed' : 'solid';
+    const fillColor = hexToRgba(color, 0.14), shape = fill ? 'stroke_fill' : 'stroke';
+    const kStyles = {
+      line: { color, size, style: bStyle, dashedValue: dv },
+      rect: { style: shape, color: fillColor, borderColor: color, borderSize: size, borderStyle: bStyle, borderDashedValue: dv },
+      polygon: { style: shape, color: fillColor, borderColor: color, borderSize: size, borderStyle: bStyle, borderDashedValue: dv },
+      circle: { style: shape, color: fillColor, borderColor: color, borderSize: size, borderStyle: bStyle },
+      arc: { color, size, style: bStyle, dashedValue: dv },
+      text: { color, size: Math.max(10, size * 8) },
+    };
+    ov.styles = kStyles;
+    try { state.chart.overrideOverlay({ id, extendData: ed, styles: kStyles, lock }); } catch (e) {}
     recordOverlay(ov);
   }
 

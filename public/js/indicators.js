@@ -824,8 +824,16 @@
       const b = bars[i];
       const hh = b.high > prevH, ll = b.low < prevL;
       if (!hh && !ll) continue;                             // внутренний бар — пропускаем
-      // внешний бар (пробил и вершину, и низину) — направление по закрытию свечи
-      const bd = (hh && ll) ? (b.close >= b.open ? 1 : -1) : (hh ? 1 : -1);
+      // Внешний бар (пробил и вершину, и низину): если он ставит НОВЫЙ экстремум
+      // тренда (в аптренде — выше текущей вершины свинга; в даунтренде — ниже
+      // низины) — считаем его продолжением тренда (шпиль-максимум остаётся вершиной
+      // свинга, даже если свеча закрылась вниз). Иначе — контр-бар.
+      let bd;
+      if (hh && ll) {
+        if (dir > 0) bd = (extVal == null || b.high >= extVal) ? 1 : -1;
+        else if (dir < 0) bd = (extVal == null || b.low <= extVal) ? -1 : 1;
+        else bd = (b.close >= b.open) ? 1 : -1;
+      } else bd = hh ? 1 : -1;
       prevH = b.high; prevL = b.low;
       if (dir === 0) { dir = bd; extIdx = i; extVal = (dir > 0 ? b.high : b.low); opp = 0; oppIdx = -1; continue; }
       if (bd === dir) {

@@ -48,7 +48,7 @@ function tg_link($pdo, $token, $dir) {
       $code = strtoupper($m[1]);
       $st = $pdo->prepare('UPDATE users SET tg_chat = ?, tg_code = NULL WHERE tg_code = ?');
       $st->execute([(string)$chat, $code]);
-      if ($st->rowCount() && $token) tg_send($token, $chat, '✅ Telegram привязан к Lun_term. Сюда будут приходить алерты.');
+      if ($st->rowCount() && $token) tg_send($token, $chat, '✅ Telegram привязан к Astro-Gann. Сюда будут приходить алерты.');
     }
   }
   @file_put_contents($offFile, $offset);
@@ -79,7 +79,7 @@ function current_price($provider, $instrument) {
 
 /* ---- уведомление ---- */
 function notify($pdo, $TG, $a) {
-  $subject = 'Lun_term алерт: ' . $a['title'];
+  $subject = 'Astro-Gann алерт: ' . $a['title'];
   $body = $a['title'] . "\n" . ($a['kind'] === 'price'
     ? ('Цена ' . $a['instrument'] . ' ' . $a['op'] . ' ' . $a['level'])
     : ('Астро-событие наступило: ' . date('Y-m-d H:i', (int)($a['fire_ts'] / 1000))));
