@@ -1430,6 +1430,61 @@
   kc.registerIndicator({ name: 'PlanetSq9m', shortName: 'Sq9 планет · 1–100', series: 'price', figures: [], calc: (dl) => dl.map((d) => d.timestamp), draw: planetSq9Draw(100) });
   kc.registerIndicator({ name: 'PlanetSq9s', shortName: 'Sq9 планет · ≤0,01', series: 'price', figures: [], calc: (dl) => dl.map((d) => d.timestamp), draw: planetSq9Draw(10000) });
 
+  /* ============ Стрелки массового открытия физлиц (FUTOI) ============
+   * extendData.arrows: [{ts, up?, down?}] — up/down = число физлиц, открывших
+   * лонг/шорт в свече (уже прошли порог). Открытие вверх → зелёная стрелка ПОД
+   * свечой, вниз → красная НАД свечой, рядом — количество. Данные считает app.js
+   * по истории FUTOI (интрадей-срезы MOEX), тут только рисуем. */
+  function futoiTri(ctx, x, y, s, up) { ctx.beginPath(); if (up) { ctx.moveTo(x, y); ctx.lineTo(x - s, y + s * 1.4); ctx.lineTo(x + s, y + s * 1.4); } else { ctx.moveTo(x, y); ctx.lineTo(x - s, y - s * 1.4); ctx.lineTo(x + s, y - s * 1.4); } ctx.closePath(); ctx.fill(); }
+  kc.registerIndicator({
+    name: 'FutoiArrows', shortName: 'Физлица ▲▼', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
+      const ed = indicator.extendData || {}, arr = ed.arrows; if (!arr || !arr.length) return true;
+      const list = chart.getDataList(); if (!list.length) return true;
+      const W = bounding.width;
+      const t0 = list[0].timestamp, t1 = list[list.length - 1].timestamp;
+      const idxOf = (ts) => { if (ts <= t0) return 0; if (ts >= t1) return list.length - 1; let lo = 0, hi = list.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) lo = m; else hi = m; } return (ts - list[lo].timestamp) <= (list[hi].timestamp - ts) ? lo : hi; };
+      ctx.font = '9px system-ui, sans-serif'; ctx.textAlign = 'center';
+      arr.forEach((a) => {
+        const i = idxOf(a.ts), b = list[i]; if (!b) return;
+        const x = xAxis.convertToPixel(i); if (x < -12 || x > W + 12) return;
+        if (a.up) { const y = yAxis.convertToPixel(b.low) + 9; ctx.fillStyle = 'rgba(38,166,154,0.95)'; futoiTri(ctx, x, y, 5, true); ctx.fillStyle = '#7fe0c0'; ctx.textBaseline = 'top'; ctx.fillText(String(a.up), x, y + 9); }
+        if (a.down) { const y = yAxis.convertToPixel(b.high) - 9; ctx.fillStyle = 'rgba(239,83,80,0.95)'; futoiTri(ctx, x, y, 5, false); ctx.fillStyle = '#f0a0a0'; ctx.textBaseline = 'bottom'; ctx.fillText(String(a.down), x, y - 9); }
+      });
+      return true;
+    },
+  });
+
+  /* ============ Опционные уровни (макс-ОИ страйки = «стенки») ============
+   * extendData.levels: [{strike, type:'C'|'P', oi, expiry, startTs?}]. Call-стенки
+   * (сопротивление) — красноватые, Put-стенки (поддержка) — зеленоватые.
+   * Линия тянется от начала торга серии (startTs, если задан) до правого края. */
+  kc.registerIndicator({
+    name: 'OptionLevels', shortName: 'Опционы: стенки', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
+      const ed = indicator.extendData || {}, lv = ed.levels; if (!lv || !lv.length) return true;
+      const list = chart.getDataList(); if (!list.length) return true;
+      const W = bounding.width, H = bounding.height;
+      const t0 = list[0].timestamp, t1 = list[list.length - 1].timestamp;
+      const step = list.length > 1 ? (t1 - t0) / (list.length - 1) : 1;
+      const xOf = (ts) => { if (ts == null) return 0; if (ts <= t0) return 0; if (ts >= t1) return xAxis.convertToPixel(list.length - 1 + (ts - t1) / (step || 1)); let lo = 0, hi = list.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) lo = m; else hi = m; } const sp = (list[hi].timestamp - list[lo].timestamp) || 1; return xAxis.convertToPixel(lo + (ts - list[lo].timestamp) / sp); };
+      ctx.font = '10px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+      lv.forEach((L) => {
+        const y = yAxis.convertToPixel(L.strike); if (y < 0 || y > H) return;
+        const call = L.type === 'C';
+        const col = call ? 'rgba(239,83,80,0.85)' : 'rgba(38,166,154,0.85)';
+        const x1 = xOf(L.startTs);
+        ctx.strokeStyle = col; ctx.lineWidth = 1.4; ctx.setLineDash(L.rank === 0 ? [] : [6, 4]);
+        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = call ? '#f0a0a0' : '#7fe0c0';
+        ctx.fillText((call ? 'CALL ' : 'PUT ') + L.strike + '  OI ' + L.oi + (L.expiry ? '  →' + L.expiry.slice(5) : ''), Math.max(2, x1 + 4), y - 2);
+      });
+      return true;
+    },
+  });
+
   /* ============ Астро-Ганн: затмения (вертикали) ============ */
   kc.registerIndicator({
     name: 'Eclipses', shortName: 'Затмения', series: 'price', figures: [],

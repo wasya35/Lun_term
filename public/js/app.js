@@ -1326,6 +1326,109 @@
     document.querySelectorAll('[data-sync^="swing:"]').forEach((b) => { b.classList.toggle('active', +b.dataset.sync.split(':')[1] === n); });
   }
 
+  /* ---------- стрелки массового открытия физлиц (FUTOI) ---------- */
+  const futoiCode = (ins, ticker) => { const t = ticker || ins.ticker || ''; return t.length > 2 ? t.slice(0, -2) : (ins.assetCode || t); };
+  const futoiTs = (r) => { const d = r.tradedate || r.TRADEDATE || '', t = r.tradetime || r.TRADETIME || '00:00:00'; if (!d) return null; const ms = Date.parse(String(d) + 'T' + String(t) + '+03:00'); return Number.isFinite(ms) ? ms : null; };
+  const futoiNum = (r, side) => { const keys = side === 'long' ? ['pos_long_num', 'POS_LONG_NUM', 'pos_long', 'POS_LONG'] : ['pos_short_num', 'POS_SHORT_NUM', 'pos_short', 'POS_SHORT']; for (const k of keys) if (r[k] != null) return +r[k] || 0; return 0; };
+  async function buildFutoiArrows(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    const ins = slot.instrument; if ((ins.provider || 'moex') !== 'moex') { alert('Физлица/юрлица — только фьючерсы MOEX.'); return; }
+    let list; try { list = c.getDataList(); } catch (e) { return; } if (!list || !list.length) { alert('Нет данных для расчёта.'); return; }
+    const ticker = await window.LunData.resolveTicker(ins);
+    const code = futoiCode(ins, ticker);
+    const tfMs = tfMsOf(slot.tf);
+    const first = list[0].timestamp, last = list[list.length - 1].timestamp;
+    const fromMs = Math.max(first, last - 120 * 86400000);   // интрадей FUTOI объёмный — окно ≤120 дней
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+    let rows = [];
+    try { rows = await window.LunISS.fetchFUTOI(code, fmt(fromMs), fmt(last + 86400000)); }
+    catch (e) { alert('FUTOI не загрузился (' + code + '): ' + e.message); return; }
+    const fiz = rows.filter((r) => String(r.clgroup || r.CLGROUP || '').toUpperCase() === 'FIZ')
+      .map((r) => ({ ts: futoiTs(r), l: futoiNum(r, 'long'), s: futoiNum(r, 'short') }))
+      .filter((r) => r.ts).sort((a, b) => a.ts - b.ts);
+    if (!fiz.length) { alert('FUTOI по «' + code + '» пуст (нет данных физлиц за период).'); return; }
+    // разложить срезы по свечам (первый/последний в окне свечи)
+    const buckets = new Map();
+    const idxOf = (ts) => { if (ts <= first) return 0; if (ts >= last) return list.length - 1; let lo = 0, hi = list.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) lo = m; else hi = m; } return lo; };
+    for (const sn of fiz) { const i = idxOf(sn.ts); const b = list[i]; if (!b || sn.ts < b.timestamp || sn.ts >= b.timestamp + tfMs) continue; let e = buckets.get(b.timestamp); if (!e) { e = { first: sn, last: sn }; buckets.set(b.timestamp, e); } else e.last = sn; }
+    const thr = (window.LUN.FUTOI && window.LUN.FUTOI.threshold) || 100;
+    const arrows = [];
+    buckets.forEach((e, ts) => { if (e.first === e.last) return; const dL = e.last.l - e.first.l, dS = e.last.s - e.first.s; const a = { ts }; if (dL >= thr) a.up = Math.round(dL); if (dS >= thr) a.down = Math.round(dS); if (a.up || a.down) arrows.push(a); });
+    slot.futoi = { arrows, code, thr };
+    applyFutoiArrows(slot);
+    if (!arrows.length) alert('Открытий физлиц > ' + thr + ' в свечах за период не найдено. Попробуйте M15/H1 или меньший порог.');
+  }
+  function applyFutoiArrows(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {}
+    const f = slot.futoi; if (!f || !f.arrows || !f.arrows.length) { slot.futoiOn = false; syncFutoiBtn(slot); return; }
+    try { c.createIndicator({ name: 'FutoiArrows', paneId: 'candle_pane', extendData: { arrows: f.arrows } }, true); slot.futoiOn = true; } catch (e) { slot.futoiOn = false; }
+    syncFutoiBtn(slot);
+  }
+  function removeFutoiArrows(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {} } slot.futoi = null; slot.futoiOn = false; syncFutoiBtn(slot); scheduleWsSave(); }
+  function syncFutoiBtn(slot) { slot = slot || state; if (slot !== state) return; const b = document.querySelector('[data-sync="futoiarr"]'); if (b) b.classList.toggle('active', !!slot.futoiOn); }
+
+  /* ---------- опционные уровни (макс-ОИ страйки) ---------- */
+  async function buildOptionLevels(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    const ins = slot.instrument; if ((ins.provider || 'moex') !== 'moex') { alert('Опционные уровни — только фьючерсы MOEX.'); return; }
+    const ticker = await window.LunData.resolveTicker(ins);
+    const asset = futoiCode(ins, ticker);
+    let opts = [];
+    try { opts = await window.LunISS.fetchOptions(asset); }
+    catch (e) { alert('Опционы не загрузились (' + asset + '): ' + e.message); return; }
+    if (!opts.length) { alert('Опционы по «' + asset + '» не найдены (возможен другой код/формат).'); return; }
+    const O = window.LUN.OPTLEV || { series: 'month', topN: 3 };
+    const today = new Date().toISOString().slice(0, 10);
+    // ближайшая экспирация выбранного класса (не прошедшая)
+    const ofClass = opts.filter((o) => o.klass === O.series && o.expiry >= today);
+    if (!ofClass.length) { alert('Нет серии «' + O.series + '» с будущей экспирацией.'); return; }
+    let expiry = ofClass.map((o) => o.expiry).sort()[0];
+    const series = ofClass.filter((o) => o.expiry === expiry && o.oi > 0);
+    if (!series.length) { alert('В серии ' + expiry + ' нет открытого интереса.'); return; }
+    const startTs = list0Ts(slot);   // «начало торга»: старта нет в ISS быстро — берём левый край данных
+    const topBy = (type) => series.filter((o) => o.type === type).sort((a, b) => b.oi - a.oi).slice(0, Math.max(1, O.topN)).map((o, i) => ({ strike: o.strike, type, oi: o.oi, expiry, startTs, rank: i }));
+    const levels = topBy('C').concat(topBy('P'));
+    slot.optlev = { levels, expiry, series: O.series };
+    applyOptionLevels(slot);
+  }
+  function list0Ts(slot) { try { const l = slot.chart.getDataList(); return l && l.length ? l[0].timestamp : null; } catch (e) { return null; } }
+  function applyOptionLevels(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {}
+    const o = slot.optlev; if (!o || !o.levels || !o.levels.length) { slot.optlevOn = false; syncOptBtn(slot); return; }
+    try { c.createIndicator({ name: 'OptionLevels', paneId: 'candle_pane', extendData: { levels: o.levels } }, true); slot.optlevOn = true; } catch (e) { slot.optlevOn = false; }
+    syncOptBtn(slot);
+  }
+  function removeOptionLevels(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} } slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); scheduleWsSave(); }
+  function syncOptBtn(slot) { slot = slot || state; if (slot !== state) return; const b = document.querySelector('[data-sync="optlev"]'); if (b) b.classList.toggle('active', !!slot.optlevOn); }
+  function optionLevelsModal() {
+    const O = window.LUN.OPTLEV || (window.LUN.OPTLEV = { series: 'month', topN: 3 });
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
+    const ser = [['week', 'недельные'], ['month', 'месячные'], ['quarter', 'квартальные']];
+    openModal('📊 Опционные уровни (стенки ОИ)', `
+      <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;max-width:420px">
+        <div style="color:#8b93a7;font-size:12px">Строит горизонтали на страйках с максимальным открытым интересом (CALL — сопротивление, PUT — поддержка) выбранной серии экспирации. Линия — от левого края данных до правого.</div>
+        <label>Серия: <select id="ol-series" style="${ss}">${ser.map(([v, t]) => `<option value="${v}"${O.series === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+        <label>Сколько стенок с каждой стороны: <select id="ol-top" style="${ss}">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${(O.topN || 3) === n ? ' selected' : ''}>${n}</option>`).join('')}</select></label>
+        <button id="ol-apply" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px 16px;cursor:pointer">Построить</button>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#ol-apply').onclick = () => { O.series = bg.querySelector('#ol-series').value; O.topN = +bg.querySelector('#ol-top').value || 3; bg.remove(); buildOptionLevels(state); scheduleWsSave(); };
+  }
+  function futoiSettingsModal() {
+    const F = window.LUN.FUTOI || (window.LUN.FUTOI = { threshold: 100 });
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px;width:90px';
+    openModal('▲▼ Физлица — порог', `
+      <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;max-width:420px">
+        <div style="color:#8b93a7;font-size:12px">Стрелка рисуется, если за свечу число физлиц, открывших позицию в одну сторону, изменилось больше порога. Вверх → зелёная под свечой, вниз → красная над свечой.</div>
+        <label>Порог (число физлиц): <input id="ft-thr" type="number" min="1" step="1" value="${F.threshold || 100}" style="${ss}"></label>
+        <button id="ft-apply" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px 16px;cursor:pointer">Применить и построить</button>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#ft-apply').onclick = () => { F.threshold = Math.max(1, +bg.querySelector('#ft-thr').value || 100); bg.remove(); buildFutoiArrows(state); scheduleWsSave(); };
+  }
+
   /* ---------- настройки рисования (притяжка + Gann Box прогноз) ---------- */
   function drawSettingsModal() {
     const B = window.LUN.GANNTOOLS.box || (window.LUN.GANNTOOLS.box = {});
@@ -1418,6 +1521,12 @@
     // остаются (не перестраиваются). При смене ИНСТРУМЕНТА (insChanged) — снимаем.
     if (insChanged) { slot.swings = null; slot.swingsOn = false; }
     setTimeout(() => { try { applySwings(slot); } catch (e) {} }, 960);
+    // стрелки физлиц привязаны к ТФ → снимаем при любой перезагрузке (перестроить по кнопке).
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {}
+    slot.futoi = null; slot.futoiOn = false; syncFutoiBtn(slot);
+    // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
+    if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
+    else if (slot.optlev) setTimeout(() => { try { applyOptionLevels(slot); } catch (e) {} }, 980);
     // много-экранное зеркало рисунков (одинаковый инструмент) — после отрисовки истории
     if (slot === state && slots.length > 1) setTimeout(() => { try { mirrorToSiblings(state); } catch (e) {} }, 1050);
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
@@ -2150,7 +2259,7 @@
       drawings: Object.values(s.drawings || {}),
     };
   }
-  const IND_SKIP = { GannSquareLevels: 1, OIExtremes: 1, AstroEventMarks: 1, CycleProjection: 1, GannSquaring: 1, GannRetr: 1, GannCycles: 1, GannSwings: 1, VWAP_1: 1, VWAP_2: 1, VWAP_3: 1 };
+  const IND_SKIP = { GannSquareLevels: 1, OIExtremes: 1, AstroEventMarks: 1, CycleProjection: 1, GannSquaring: 1, GannRetr: 1, GannCycles: 1, GannSwings: 1, VWAP_1: 1, VWAP_2: 1, VWAP_3: 1, FutoiArrows: 1, OptionLevels: 1 };
   function applyWsIndicators(ind) {
     if (!ind) return;
     (ind.candle || []).forEach((n) => { if (IND_SKIP[n]) return; try { state.chart.createIndicator({ name: n, paneId: 'candle_pane' }, true); state.candleInds[n] = true; } catch (e) {} });
@@ -2646,6 +2755,11 @@
         if (on) { state.chart.createIndicator({ name: 'GannCycles', paneId: 'candle_pane' }, true); state.candleInds.GannCycles = true; }
         else removeCandInd('GannCycles');
       }, false, 'Авто-пивот на последнем видимом экстремуме');
+      gsub('Опционы / физлица (MOEX, по истории)');
+      mkBtn(gannWrap, '📊 Опционные уровни (стенки ОИ)…', () => { closeMenus(); optionLevelsModal(); }, false, 'Макс-ОИ страйки CALL/PUT выбранной серии (нед/мес/квартал) горизонталями').dataset.sync = 'optlev';
+      mkBtn(gannWrap, '✕ убрать опционные уровни', () => { closeMenus(); removeOptionLevels(state); }, false, 'Снять опционные стенки');
+      mkBtn(gannWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
+      mkBtn(gannWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');
       gsub('Астро-Ганн');
       mkBtn(gannWrap, '🪐 Настроить планетарные линии…', () => { closeMenus(); astroGannModal(); }, false, 'Планеты, гео/гелио, масштаб цена/градус');
       [['PlanetLines', '🪐 Планетарные линии → цена', 'Долгота планеты как ценовой уровень (ползёт во времени)'],
@@ -2896,6 +3010,8 @@
       case 'oi': return !!state.oiPane;
       case 'vwapmulti': return !!state.vwapOn;
       case 'swing': return !!(state.swings && state.swingsOn && state.swings.nbars === +arg);
+      case 'futoiarr': return !!state.futoiOn;
+      case 'optlev': return !!state.optlevOn;
     }
     return false;
   }

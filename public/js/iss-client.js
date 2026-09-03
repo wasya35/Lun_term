@@ -264,5 +264,50 @@
     return out;
   }
 
-  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchOIHistory };
+  // Разбор кода опциона FORTS -> {strike, type:'C'|'P'}. Поддержаны оба формата:
+  //  новый: ...CA65000 / ...PA65000 (тип+страйк в конце);
+  //  старый: <asset><strike><месяц-буква><год>, где A–L=CALL, M–X=PUT.
+  function parseOptSecid(secid, asset) {
+    const s = String(secid || '');
+    let m = s.match(/([CP])A?(\d{2,8})$/i);
+    if (m) { const st = +m[2]; if (st > 0) return { type: m[1].toUpperCase(), strike: st }; }
+    let t = s; if (asset && t.toUpperCase().indexOf(asset.toUpperCase()) === 0) t = t.slice(asset.length);
+    m = t.match(/^(\d{2,7})([A-X])/i);
+    if (m) { const st = +m[1]; if (st > 0) { const ml = m[2].toUpperCase(); return { type: (ml >= 'A' && ml <= 'L') ? 'C' : 'P', strike: st }; } }
+    return null;
+  }
+  // Класс серии по дате экспирации: квартал (3/6/9/12, 3-я неделя), месяц (3-я
+  // неделя прочих месяцев), иначе неделя.
+  function classifyExpiry(d) {
+    const p = String(d || '').split('-'); if (p.length < 3) return 'week';
+    const M = +p[1], D = +p[2], thirdWeek = D >= 15 && D <= 21;
+    if (thirdWeek && (M === 3 || M === 6 || M === 9 || M === 12)) return 'quarter';
+    if (thirdWeek) return 'month';
+    return 'week';
+  }
+  // Опционы FORTS по базовому активу (asset='Si'/'RI'/'BR'/'GD'…): страйки, тип,
+  // дата экспирации, открытый интерес. ОИ берём из marketdata.OPENPOSITION, при
+  // отсутствии — из securities.PREVOPENPOSITION (вчерашний). Мёржим по SECID
+  // (устойчиво к рассинхрону страниц securities/marketdata).
+  async function fetchOptions(asset) {
+    const url = 'https://iss.moex.com/iss/engines/futures/markets/options/securities.json'
+      + '?iss.meta=off&securities.columns=SECID,SHORTNAME,LASTDELDATE,PREVOPENPOSITION&marketdata.columns=SECID,OPENPOSITION';
+    const pages = await getAllPages(url, 'securities', 80);
+    const meta = {}, oi = {};
+    for (const j of pages) {
+      for (const o of rowsToObjects(j.securities)) if (o.SECID) meta[o.SECID] = o;
+      for (const o of rowsToObjects(j.marketdata)) if (o.SECID && o.OPENPOSITION != null) oi[o.SECID] = +o.OPENPOSITION || 0;
+    }
+    const out = [], A = String(asset || '').toUpperCase();
+    for (const secid in meta) {
+      if (A && secid.slice(0, A.length).toUpperCase() !== A) continue;
+      const pr = parseOptSecid(secid, asset); if (!pr) continue;
+      const m = meta[secid];
+      let o = oi[secid]; if (o == null) o = +m.PREVOPENPOSITION || 0;
+      out.push({ secid, strike: pr.strike, type: pr.type, expiry: m.LASTDELDATE || '', klass: classifyExpiry(m.LASTDELDATE), oi: o });
+    }
+    return out;
+  }
+
+  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchOIHistory, fetchOptions, parseOptSecid, classifyExpiry };
 })();
