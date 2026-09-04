@@ -1345,18 +1345,32 @@
     catch (e) { alert('FUTOI не загрузился (' + code + '): ' + e.message); return; }
     const fiz = rows.filter((r) => String(r.clgroup || r.CLGROUP || '').toUpperCase() === 'FIZ')
       .map((r) => ({ ts: futoiTs(r), l: futoiNum(r, 'long'), s: futoiNum(r, 'short') }))
-      .filter((r) => r.ts).sort((a, b) => a.ts - b.ts);
-    if (!fiz.length) { alert('FUTOI по «' + code + '» пуст (нет данных физлиц за период).'); return; }
-    // разложить срезы по свечам (первый/последний в окне свечи)
-    const buckets = new Map();
-    const idxOf = (ts) => { if (ts <= first) return 0; if (ts >= last) return list.length - 1; let lo = 0, hi = list.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) lo = m; else hi = m; } return lo; };
-    for (const sn of fiz) { const i = idxOf(sn.ts); const b = list[i]; if (!b || sn.ts < b.timestamp || sn.ts >= b.timestamp + tfMs) continue; let e = buckets.get(b.timestamp); if (!e) { e = { first: sn, last: sn }; buckets.set(b.timestamp, e); } else e.last = sn; }
+      .filter((r) => r.ts && (r.l || r.s)).sort((a, b) => a.ts - b.ts);
+    if (!fiz.length) { alert('FUTOI по «' + code + '» пуст (нет данных физлиц за период). Возможно, у этого актива нет FUTOI.'); return; }
+    // Значение (число физлиц long/short) на момент T = последний срез с ts<=T
+    // (ступенчатая функция). Дельта за свечу = значение в конце − в начале свечи.
+    // Так работает и для интрадей-срезов, и для дневных (дельта ложится на свечу,
+    // где случилось изменение).
+    const tsArr = fiz.map((r) => r.ts);
+    const valAt = (T) => { let lo = 0, hi = tsArr.length - 1, k = -1; while (lo <= hi) { const m = (lo + hi) >> 1; if (tsArr[m] <= T) { k = m; lo = m + 1; } else hi = m - 1; } return k < 0 ? null : fiz[k]; };
     const thr = (window.LUN.FUTOI && window.LUN.FUTOI.threshold) || 100;
     const arrows = [];
-    buckets.forEach((e, ts) => { if (e.first === e.last) return; const dL = e.last.l - e.first.l, dS = e.last.s - e.first.s; const a = { ts }; if (dL >= thr) a.up = Math.round(dL); if (dS >= thr) a.down = Math.round(dS); if (a.up || a.down) arrows.push(a); });
+    for (const b of list) {
+      if (b.timestamp < fromMs) continue;
+      const a0 = valAt(b.timestamp - 1), a1 = valAt(b.timestamp + tfMs - 1);
+      if (!a0 || !a1 || a0 === a1) continue;
+      const dL = a1.l - a0.l, dS = a1.s - a0.s;
+      const a = { ts: b.timestamp };
+      if (dL >= thr) a.up = Math.round(dL);
+      if (dS >= thr) a.down = Math.round(dS);
+      if (a.up || a.down) arrows.push(a);
+    }
     slot.futoi = { arrows, code, thr };
     applyFutoiArrows(slot);
-    if (!arrows.length) alert('Открытий физлиц > ' + thr + ' в свечах за период не найдено. Попробуйте M15/H1 или меньший порог.');
+    if (!arrows.length) {
+      const times = new Set(fiz.map((r) => r.ts)).size;
+      alert('Открытий физлиц ≥ ' + thr + ' в свечах не найдено.\nСрезов FUTOI: ' + fiz.length + ', уникальных моментов: ' + times + '.\n' + (times < 5 ? 'Данные, похоже, только дневные — попробуйте свежий период / D1, либо меньший порог.' : 'Попробуйте меньший порог.'));
+    }
   }
   function applyFutoiArrows(slot) {
     slot = slot || state; const c = slot && slot.chart; if (!c) return;
@@ -1919,6 +1933,16 @@
         if (oid) state.drawings[oid] = { name: 'lun_gannbox', points: clonePoints(np), extendData: ed2 };
       } catch (e) {}
     }
+    // прогнозные боксы уходят ВПРАВО в «будущее» (за последний бар) — раздвигаем
+    // правый отступ, иначе их не видно (пустой области справа не хватает).
+    try {
+      const bs = (state.chart.getBarSpace() && state.chart.getBarSpace().bar) || 6;
+      const future = (Math.max(i0, i1) + cnt * di) - (list.length - 1);
+      if (future > 0 && state.chart.setOffsetRightDistance) {
+        const w = (state.cellEl && state.cellEl.clientWidth) || 900;
+        state.chart.setOffsetRightDistance(Math.max(80, Math.min(w * 0.9, (future + 2) * bs)));
+      }
+    } catch (e) {}
     scheduleWsSave();
   }
   function overlayEvents() {

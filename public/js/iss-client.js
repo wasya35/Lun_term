@@ -285,26 +285,26 @@
     if (thirdWeek) return 'month';
     return 'week';
   }
-  // Опционы FORTS по базовому активу (asset='Si'/'RI'/'BR'/'GD'…): страйки, тип,
-  // дата экспирации, открытый интерес. ОИ берём из marketdata.OPENPOSITION, при
-  // отсутствии — из securities.PREVOPENPOSITION (вчерашний). Мёржим по SECID
-  // (устойчиво к рассинхрону страниц securities/marketdata).
+  // Опционы FORTS по базовому активу (asset='Si'/'RI'/'BR'/'GD'…). У MOEX в
+  // securities есть готовые колонки STRIKE, OPTIONTYPE (C/P), LASTDELDATE,
+  // ASSETCODE, UNDERLYINGASSET, PREVOPENPOSITION — берём прямо их (без разбора
+  // SECID). ОИ — PREVOPENPOSITION (стенки меняются медленно). Тянем только
+  // securities и только нужные колонки (меньше объём).
   async function fetchOptions(asset) {
     const url = 'https://iss.moex.com/iss/engines/futures/markets/options/securities.json'
-      + '?iss.meta=off&securities.columns=SECID,SHORTNAME,LASTDELDATE,PREVOPENPOSITION&marketdata.columns=SECID,OPENPOSITION';
-    const pages = await getAllPages(url, 'securities', 80);
-    const meta = {}, oi = {};
-    for (const j of pages) {
-      for (const o of rowsToObjects(j.securities)) if (o.SECID) meta[o.SECID] = o;
-      for (const o of rowsToObjects(j.marketdata)) if (o.SECID && o.OPENPOSITION != null) oi[o.SECID] = +o.OPENPOSITION || 0;
-    }
-    const out = [], A = String(asset || '').toUpperCase();
-    for (const secid in meta) {
-      if (A && secid.slice(0, A.length).toUpperCase() !== A) continue;
-      const pr = parseOptSecid(secid, asset); if (!pr) continue;
-      const m = meta[secid];
-      let o = oi[secid]; if (o == null) o = +m.PREVOPENPOSITION || 0;
-      out.push({ secid, strike: pr.strike, type: pr.type, expiry: m.LASTDELDATE || '', klass: classifyExpiry(m.LASTDELDATE), oi: o });
+      + '?iss.meta=off&iss.only=securities'
+      + '&securities.columns=SECID,ASSETCODE,UNDERLYINGASSET,OPTIONTYPE,STRIKE,LASTDELDATE,PREVOPENPOSITION';
+    const pages = await getAllPages(url, 'securities', 160);
+    const A = String(asset || '').toUpperCase();
+    const out = [];
+    for (const j of pages) for (const o of rowsToObjects(j.securities)) {
+      const ac = String(o.ASSETCODE || '').toUpperCase();
+      const ua = String(o.UNDERLYINGASSET || '').toUpperCase();
+      if (A && ac !== A && ua.slice(0, A.length) !== A) continue;
+      const type = String(o.OPTIONTYPE || '').toUpperCase().charAt(0);
+      const strike = +o.STRIKE;
+      if (!(strike > 0) || (type !== 'C' && type !== 'P')) continue;
+      out.push({ secid: o.SECID, strike, type, expiry: o.LASTDELDATE || '', klass: classifyExpiry(o.LASTDELDATE), oi: +o.PREVOPENPOSITION || 0 });
     }
     return out;
   }
