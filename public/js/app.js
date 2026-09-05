@@ -599,8 +599,25 @@
 
   /* ---------- инструменты Ганна ---------- */
   function removeCandInd(name) { try { state.chart.removeIndicator({ paneId: 'candle_pane', name }); } catch (e) {} delete state.candleInds[name]; }
-  // запустить рисование оверлея (первый клик = пивот/угол, второй = охват)
-  const defOvStyle = () => Object.assign({}, window.LUN_OVERLAY_DEF_STYLE || { color: '#f0c040', size: 1.4, dash: 'solid', fill: false, fillColor: 'rgba(240,192,64,0.14)' });
+  // типы линий (пресеты стиля). Текущий тип применяется к НОВЫМ рисункам.
+  const lineTypeById = (id) => (window.LUN.LINETYPES || []).find((t) => t.id === id);
+  const curLineType = () => lineTypeById(window.LUN.CUR_LINETYPE) || (window.LUN.LINETYPES && window.LUN.LINETYPES[0]);
+  // запустить рисование оверлея (первый клик = пивот/угол, второй = охват).
+  // Стиль нового оверлея = стиль ТЕКУЩЕГО типа линии (ltype — маркер типа).
+  const defOvStyle = () => {
+    const t = curLineType();
+    const s = t ? { color: t.color, size: t.size, dash: t.dash, fill: !!t.fill } : { color: '#f0c040', size: 1.4, dash: 'solid', fill: false };
+    s.fillColor = hexToRgba(s.color, 0.14); s.ltype = t ? t.id : null;
+    return s;
+  };
+  // стиль в формате KLineChart (для ВСТРОЕННЫХ фигур: segment «Трендовая»,
+  // horizontalStraightLine «Уровень», лучи — они берут стиль из overlay.styles,
+  // а не из нашего extendData.style). Наши lun_* его игнорируют — не мешает.
+  function klineStylesFrom(st) {
+    const isDash = st.dash !== 'solid', dv = st.dash === 'dotted' ? [2, 3] : [6, 4], bStyle = isDash ? 'dashed' : 'solid';
+    const fc = st.fillColor || hexToRgba(st.color, 0.14), shape = st.fill ? 'stroke_fill' : 'stroke';
+    return { line: { color: st.color, size: st.size, style: bStyle, dashedValue: dv }, rect: { style: shape, color: fc, borderColor: st.color, borderSize: st.size, borderStyle: bStyle, borderDashedValue: dv }, polygon: { style: shape, color: fc, borderColor: st.color, borderSize: st.size, borderStyle: bStyle, borderDashedValue: dv }, circle: { style: shape, color: fc, borderColor: st.color, borderSize: st.size, borderStyle: bStyle }, arc: { color: st.color, size: st.size, style: bStyle, dashedValue: dv }, text: { color: st.color } };
+  }
   // двойной клик в правый-нижний угол осей → последняя цена в центр экрана
   function recenterLastPrice(slot) {
     slot = slot || state; const c = slot.chart;
@@ -720,7 +737,7 @@
       if (type === 'grid') startOverlay('lun_gannsquare', { divisions }); else startOverlay('lun_gannbox');
     };
   }
-  function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); state.chart.createOverlay(Object.assign({ name, extendData: Object.assign({ style: defOvStyle() }, extendData) }, ev)); }
+  function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); const style = defOvStyle(); state.chart.createOverlay(Object.assign({ name, extendData: Object.assign({ style }, extendData), styles: klineStylesFrom(style) }, ev)); }
   // масштаб 1×1 (цена на бар) для сквоузинга: авто / ручной
   function scaleModal() {
     const cfg = window.LUN.GANNTOOLS.scale || (window.LUN.GANNTOOLS.scale = {});
@@ -1478,6 +1495,79 @@
     };
   }
 
+  /* ---------- типы линий (пресеты стиля) ---------- */
+  // Селектор текущего типа в меню «Рисование». Пересобирается при изменении списка.
+  function buildLineTypeSelector(wrap) {
+    let box = wrap.querySelector('#lt-box');
+    if (!box) { box = document.createElement('div'); box.id = 'lt-box'; box.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 2px 8px;border-bottom:1px solid #232b3a;margin-bottom:6px'; wrap.insertBefore(box, wrap.firstChild); }
+    const cur = window.LUN.CUR_LINETYPE;
+    box.innerHTML = '<span style="color:#8b93a7;font-size:12px">Тип линии:</span>';
+    const sel = document.createElement('select');
+    sel.style.cssText = 'flex:1;background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 6px;font-size:12px';
+    (window.LUN.LINETYPES || []).forEach((t) => { const o = document.createElement('option'); o.value = t.id; o.textContent = t.name; if (t.id === cur) o.selected = true; sel.appendChild(o); });
+    sel.onchange = () => { window.LUN.CUR_LINETYPE = sel.value; scheduleWsSave(); };
+    const sw = document.createElement('span'); sw.style.cssText = 'width:14px;height:14px;border-radius:3px;border:1px solid #2a3242;background:' + ((curLineType() || {}).color || '#f0c040');
+    sel.addEventListener('change', () => { sw.style.background = (curLineType() || {}).color || '#f0c040'; });
+    box.appendChild(sel); box.appendChild(sw);
+  }
+  function refreshLineTypeSelector() { const w = document.getElementById('drawtools'); if (w) buildLineTypeSelector(w); }
+  const dashLabel = { solid: 'сплошная', dashed: 'пунктир', dotted: 'точки' };
+  function lineTypesModal() {
+    const L = window.LUN.LINETYPES || (window.LUN.LINETYPES = []);
+    const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:5px;padding:3px 6px;font-size:12px';
+    const row = (t, i) => `
+      <div data-i="${i}" style="display:flex;align-items:center;gap:6px;border:1px solid #232b3a;border-radius:7px;padding:6px 8px;flex-wrap:wrap">
+        <input class="lt-name" value="${t.name}" style="${ss};width:150px">
+        <input class="lt-color" type="color" value="${/^#([0-9a-f]{6})$/i.test(t.color) ? t.color : '#f0c040'}" style="width:34px;height:24px;background:#0b0e14;border:1px solid #2a3242;border-radius:5px">
+        <label style="color:#8b93a7;font-size:11px">толщ.<input class="lt-size" type="number" min="0.5" max="6" step="0.5" value="${t.size || 1.4}" style="${ss};width:56px;margin-left:3px"></label>
+        <select class="lt-dash" style="${ss}">${['solid', 'dashed', 'dotted'].map((d) => `<option value="${d}"${t.dash === d ? ' selected' : ''}>${dashLabel[d]}</option>`).join('')}</select>
+        <label style="color:#8b93a7;font-size:11px"><input class="lt-fill" type="checkbox"${t.fill ? ' checked' : ''}> заливка</label>
+        <span style="flex:1"></span>
+        ${t.preset ? '<span style="color:#8b93a7;font-size:11px">пресет</span>' : '<button class="lt-del" style="background:#2a1720;color:#ef8a88;border:1px solid #5a2b33;border-radius:5px;padding:3px 8px;cursor:pointer;font-size:12px">удалить</button>'}
+      </div>`;
+    openModal('🎚 Типы линий', `
+      <div style="display:flex;flex-direction:column;gap:10px;font-size:13px;max-width:560px">
+        <div style="color:#8b93a7;font-size:12px">Пресеты стиля для линий/лучей/прямоугольников. Меняй цвет/толщину/тип, добавляй свои. Выбранный в меню «Рисование» тип применяется к новым рисункам.</div>
+        <div id="lt-list" style="display:flex;flex-direction:column;gap:8px;max-height:52vh;overflow:auto">${L.map(row).join('')}</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="lt-new" placeholder="новый тип — название" style="${ss};width:180px">
+          <button id="lt-add" style="background:#123a2a;color:#8fe0b8;border:1px solid #2a5a3a;border-radius:6px;padding:6px 12px;cursor:pointer">+ добавить тип</button>
+          <span style="flex:1"></span>
+          <button id="lt-save" style="background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:7px 16px;cursor:pointer">Сохранить</button>
+        </div>
+      </div>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    const collect = () => {
+      bg.querySelectorAll('#lt-list > div[data-i]').forEach((el) => {
+        const i = +el.dataset.i, t = L[i]; if (!t) return;
+        t.name = el.querySelector('.lt-name').value.trim() || t.name;
+        t.color = el.querySelector('.lt-color').value;
+        t.size = Math.max(0.5, +el.querySelector('.lt-size').value || 1.4);
+        t.dash = el.querySelector('.lt-dash').value;
+        t.fill = el.querySelector('.lt-fill').checked;
+      });
+    };
+    bg.querySelectorAll('.lt-del').forEach((b) => b.onclick = () => { collect(); const i = +b.closest('[data-i]').dataset.i; L.splice(i, 1); bg.remove(); lineTypesModal(); });
+    bg.querySelector('#lt-add').onclick = () => {
+      collect(); const nm = bg.querySelector('#lt-new').value.trim() || ('Тип ' + (L.length + 1));
+      const id = 'lt' + Date.now().toString(36);
+      L.push({ id, name: nm, color: '#f0c040', size: 1.4, dash: 'solid', fill: false });
+      bg.remove(); lineTypesModal();
+    };
+    bg.querySelector('#lt-save').onclick = () => { collect(); refreshLineTypeSelector(); if (state.selectedOverlay) showStylePanel(state.selectedOverlay); scheduleWsSave(); bg.remove(); };
+  }
+  // применить выбранный тип к ВЫДЕЛЕННОМУ оверлею
+  function applyTypeToSelected(id) {
+    const t = lineTypeById(id), ov = state.selectedOverlay; if (!t || !ov || !state.selectedOverlayId) return;
+    const ed = Object.assign({}, (ov.extendData && typeof ov.extendData === 'object') ? ov.extendData : {});
+    ed.style = { color: t.color, size: t.size, dash: t.dash, fill: !!t.fill, fillColor: hexToRgba(t.color, 0.14), ltype: t.id };
+    ov.extendData = ed;
+    const isDash = t.dash !== 'solid', dv = t.dash === 'dotted' ? [2, 3] : [6, 4], bStyle = isDash ? 'dashed' : 'solid', fc = hexToRgba(t.color, 0.14), shape = t.fill ? 'stroke_fill' : 'stroke';
+    ov.styles = { line: { color: t.color, size: t.size, style: bStyle, dashedValue: dv }, rect: { style: shape, color: fc, borderColor: t.color, borderSize: t.size, borderStyle: bStyle, borderDashedValue: dv }, polygon: { style: shape, color: fc, borderColor: t.color, borderSize: t.size, borderStyle: bStyle, borderDashedValue: dv }, arc: { color: t.color, size: t.size }, text: { color: t.color } };
+    try { state.chart.overrideOverlay({ id: state.selectedOverlayId, extendData: ed, styles: ov.styles }); } catch (e) {}
+    recordOverlay(ov); showStylePanel(ov);
+  }
+
   /* ---------- загрузка инструмента/ТФ ---------- */
   async function load(slot) {
     slot = slot || state;
@@ -1489,7 +1579,12 @@
     if (slot._loadedInsId && slot._loadedInsId !== insId) {
       slot.drawStore = slot.drawStore || {};
       slot.drawStore[slot._loadedInsId] = Object.values(slot.drawings || {}).map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }));
-      Object.keys(slot.drawings || {}).forEach((id) => { try { c.removeOverlay(id); } catch (e) {} });
+      // ВСЕ рисунки старого инструмента снимаем разом (removeOverlay без аргумента =
+      // «удалить все»): KLineChart при setSymbol их сам НЕ убирает, а поштучный
+      // removeOverlay(строка) в этой сборке ненадёжен — из-за этого рисунки
+      // «протекали» на новый инструмент. Индикаторы (свинги/ОИ/опционы) не оверлеи —
+      // их это не трогает.
+      try { c.removeOverlay(); } catch (e) {}
       slot.drawings = {};
     }
     slot._loadedInsId = insId;
@@ -1525,6 +1620,7 @@
     // восстановить рисунки нового инструмента (после подгрузки истории)
     if (slot.drawStore && slot.drawStore[insId] && slot.drawStore[insId].length) {
       setTimeout(() => {
+        if (slot._loadedInsId !== insId) return;   // за это время инструмент сменили — не восстанавливаем чужое
         (slot.drawStore[insId] || []).forEach((d) => {
           try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = d; } catch (e) {}
         });
@@ -2035,6 +2131,7 @@
     p.style.cssText = 'position:fixed;top:96px;right:12px;z-index:45;width:214px;background:#121722;border:1px solid #232b3a;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:10px 12px;font-size:12px;color:#d7deea;display:none';
     const row = 'display:flex;justify-content:space-between;align-items:center;margin:5px 0';
     p.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b id="sp-name">Объект</b><span id="sp-close" style="cursor:pointer;color:#8b93a7;font-size:16px">×</span></div>
+      <label style="${row}">Тип <select id="sp-type" style="background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px;max-width:130px"></select></label>
       <label style="${row}">Цвет <input id="sp-color" type="color" style="width:44px;height:24px;background:none;border:1px solid #232b3a;border-radius:4px"></label>
       <label style="${row}">Толщина <input id="sp-size" type="range" min="1" max="6" step="0.5" style="width:110px"></label>
       <label style="${row}">Линия <select id="sp-dash" style="background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"><option value="solid">сплошная</option><option value="dashed">пунктир</option><option value="dotted">точки</option></select></label>
@@ -2046,6 +2143,7 @@
     p.querySelector('#sp-close').onclick = hideStylePanel;
     p.querySelector('#sp-del').onclick = () => { deleteSelected(); hideStylePanel(); };
     ['#sp-color', '#sp-size', '#sp-dash', '#sp-fill', '#sp-lock'].forEach((id) => { const el = p.querySelector(id); el.oninput = applySelStyle; el.onchange = applySelStyle; });
+    p.querySelector('#sp-type').onchange = (e) => { if (e.target.value) applyTypeToSelected(e.target.value); };
     p.querySelector('#sp-angle').oninput = applyGannAngle;
     p.querySelector('#sp-angle-clr').onclick = () => { p.querySelector('#sp-angle').value = ''; applyGannAngle(); };
     stylePanelEl = p; return p;
@@ -2061,6 +2159,9 @@
     if (kline && kline.size) st.size = kline.size;
     if (kline && kline.style === 'dashed') st.dash = (kline.dashedValue && kline.dashedValue[0] <= 2) ? 'dotted' : 'dashed';
     p.querySelector('#sp-name').textContent = OV_NAMES[ov.name] || 'Объект';
+    // селектор типа линии (пресета)
+    const tsel = p.querySelector('#sp-type');
+    if (tsel) { const curId = (ed.style && ed.style.ltype) || ''; tsel.innerHTML = '<option value="">— свой —</option>' + (window.LUN.LINETYPES || []).map((t) => `<option value="${t.id}"${t.id === curId ? ' selected' : ''}>${t.name}</option>`).join(''); }
     p.querySelector('#sp-color').value = /^#([0-9a-f]{6})$/i.test(st.color) ? st.color : '#f0c040';
     p.querySelector('#sp-size').value = st.size || 1.4;
     p.querySelector('#sp-dash').value = st.dash || 'solid';
@@ -2272,6 +2373,7 @@
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
       swings: s.swings || null,
       draw: { snap: !!window.LUN.SNAP, boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
+      lineTypes: window.LUN.LINETYPES || null, curLineType: window.LUN.CUR_LINETYPE || null, deltaReset: (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day',
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
         volume: !!s.volumePane, delta: !!s.deltaPane, markov: !!s.markovPanes, oi: !!s.oiPane,
@@ -2330,11 +2432,15 @@
       }
       if (ws.swings && ws.swings.pivots && ws.swings.pivots.length > 1) state.swings = ws.swings;
       if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; window.LUN.GANNTOOLS.box.forecastDir = ws.draw.boxForecastDir || 'auto'; } }
+      if (Array.isArray(ws.lineTypes) && ws.lineTypes.length) window.LUN.LINETYPES = ws.lineTypes;
+      if (ws.curLineType) window.LUN.CUR_LINETYPE = ws.curLineType;
+      if (ws.deltaReset) { window.LUN.DELTA = window.LUN.DELTA || {}; window.LUN.DELTA.reset = ws.deltaReset; }
       if (ws.history !== undefined) window.LUN_HISTORY = ws.history;
       if (ws.instrument) state.instrument = ws.instrument;
       if (ws.tf) { const tf = window.LUN.TIMEFRAMES.find((t) => t.id === ws.tf); if (tf) state.tf = tf; }
       await load(state);
       applyChartLook();
+      try { refreshLineTypeSelector(); const dm = document.querySelector('[data-role="deltamode"]'); if (dm) dm.textContent = 'Δ режим: ' + ((window.LUN.DELTA && window.LUN.DELTA.reset) === 'none' ? 'все бары' : 'день'); } catch (e) {}
       setTimeout(() => { applyWsIndicators(ws.inds); applyWsDrawings(ws.drawings); syncToolbar(); applyingWs = false; }, 1000);
     } catch (e) { applyingWs = false; }
   }
@@ -2409,15 +2515,16 @@
   function startDraw(toolId) {
     closeMenus();
     const ev = overlayEvents();
+    const style = defOvStyle(), kst = klineStylesFrom(style);
     if (toolId === 'lun_text') {
       const t = window.prompt('Текст метки:', '');
       if (t === null) return;
-      state.chart.createOverlay(Object.assign({ name: 'lun_text', extendData: { text: t, style: defOvStyle() } }, ev));
+      state.chart.createOverlay(Object.assign({ name: 'lun_text', extendData: { text: t, style }, styles: kst }, ev));
     } else if (toolId === 'lun_hray') {
       const n = (window.LUN.HRAY && window.LUN.HRAY.maxCrossings) || 2;
-      state.chart.createOverlay(Object.assign({ name: 'lun_hray', extendData: { maxCrossings: n, style: defOvStyle() } }, ev));
+      state.chart.createOverlay(Object.assign({ name: 'lun_hray', extendData: { maxCrossings: n, style }, styles: kst }, ev));
     } else {
-      state.chart.createOverlay(Object.assign({ name: toolId, extendData: { style: defOvStyle() } }, ev));
+      state.chart.createOverlay(Object.assign({ name: toolId, extendData: { style }, styles: kst }, ev));
     }
   }
 
@@ -2683,7 +2790,15 @@
     mkBtn(indWrap, 'Δ дельта', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
       if (on) createDeltaPane(); else if (state.deltaPane) { state.chart.removeIndicator({ paneId: state.deltaPane }); state.deltaPane = null; }
-    }, false, 'Дневная кумулятивная дельта (аппрокс. по OHLC)').dataset.sync = 'delta';
+    }, false, 'Кумулятивная дельта (аппрокс. по OHLC). Режим сброса — соседняя кнопка').dataset.sync = 'delta';
+    // режим дельты: сброс внутри дня / сплошной по всем барам
+    const deltaModeBtn = mkBtn(indWrap, 'Δ режим: ' + ((window.LUN.DELTA && window.LUN.DELTA.reset) === 'none' ? 'все бары' : 'день'), (b) => {
+      window.LUN.DELTA.reset = (window.LUN.DELTA.reset === 'none') ? 'day' : 'none';
+      b.textContent = 'Δ режим: ' + (window.LUN.DELTA.reset === 'none' ? 'все бары' : 'день');
+      if (state.deltaPane) { try { state.chart.removeIndicator({ paneId: state.deltaPane }); } catch (e) {} state.deltaPane = null; createDeltaPane(); }
+      scheduleWsSave();
+    }, false, 'Сброс дельты: «день» (внутри суток) или «все бары» (сплошное накопление)');
+    deltaModeBtn.dataset.role = 'deltamode';
     // марковский режим: лента BEAR/SIDE/BULL + панель сигнала + матрица
     const mkBtnRef = mkBtn(indWrap, 'Марков', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
@@ -2858,11 +2973,15 @@
     }
 
     const drawWrap = document.getElementById('drawtools');
+    // выбор ТЕКУЩЕГО типа линии — применяется к следующим рисункам (трендовая,
+    // горизонталь, луч, прямоугольник). Тип = пресет стиля (цвет/толщина/пунктир).
+    buildLineTypeSelector(drawWrap);
     DRAW_TOOLS.forEach((t) => {
       const b = mkBtn(drawWrap, t.label, () => startDraw(t.id), false, t.label + (t.key ? ' (' + t.key.toUpperCase() + ')' : ''));
       if (t.key) b.innerHTML = t.label + '<span class="hk">' + t.key.toUpperCase() + '</span>';   // хоткей справа
       regHotkey(t.key, () => startDraw(t.id));
     });
+    mkBtn(drawWrap, '🎚 Типы линий (добавить/править)…', () => { closeMenus(); lineTypesModal(); }, false, 'Пресеты стиля линий: поддержка/сопротивление, трендовая, брейкер/ордер-блок, имбаланс, дивергенции + свои');
     mkBtn(drawWrap, '⚙ Настройки рисования (притяжка, Gann Box прогноз)…', () => { closeMenus(); drawSettingsModal(); }, false, 'Притяжка к вершинам баров, прогнозные Gann Box по диагонали');
     mkBtn(drawWrap, '✕ очистить всё', () => { closeMenus(); state.chart.removeOverlay(); }).className = 'danger';
     const drawNote = document.createElement('div'); drawNote.className = 'menu-note';

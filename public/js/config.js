@@ -371,6 +371,22 @@ LUN.FUTOI = { threshold: 100 };
 // Опционные уровни: серия (week/month/quarter) и сколько «стенок» (макс-ОИ страйков)
 // по каждой стороне (call/put) рисовать.
 LUN.OPTLEV = { series: 'month', topN: 3 };
+// Кумулятивная дельта: сброс накопления — 'day' (внутри дня) или 'none' (все бары).
+LUN.DELTA = { reset: 'day' };
+// Типы линий (как в TradingView): пресеты стиля для разных ситуаций. Применяются
+// к ЛЮБОМУ инструменту рисования (трендовая, горизонталь, луч, прямоугольник).
+// Пользователь может добавлять свои типы. preset:true — встроенный (не удалить).
+LUN.LINETYPES = [
+  { id: 'trend',      name: 'Трендовая',       color: '#3aa0ff', size: 1.6, dash: 'solid',  fill: false, preset: true },
+  { id: 'support',    name: 'Поддержка',       color: '#26a69a', size: 1.6, dash: 'solid',  fill: false, preset: true },
+  { id: 'resistance', name: 'Сопротивление',   color: '#ef5350', size: 1.6, dash: 'solid',  fill: false, preset: true },
+  { id: 'breaker',    name: 'Брейкер-блок',    color: '#e0a030', size: 1.4, dash: 'solid',  fill: true,  preset: true },
+  { id: 'orderblock', name: 'Ордер-блок',      color: '#9b6bff', size: 1.4, dash: 'solid',  fill: true,  preset: true },
+  { id: 'imbalance',  name: 'Имбаланс (FVG)',  color: '#f0c040', size: 1.0, dash: 'dashed', fill: true,  preset: true },
+  { id: 'div_top',    name: 'Дивергенция ↑',   color: '#d23af0', size: 1.4, dash: 'dashed', fill: false, preset: true },
+  { id: 'div_bottom', name: 'Дивергенция ↓',   color: '#2ad0d0', size: 1.4, dash: 'dashed', fill: false, preset: true },
+];
+LUN.CUR_LINETYPE = 'trend';   // тип, применяемый к НОВЫМ рисункам
 
 /* Разделитель половины знака: 15° (середина). Ставится одна тонкая линия на 15°,
  * граница знака (30°/0°) — ярче. */

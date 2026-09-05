@@ -371,15 +371,15 @@
   // доля дня = (close-open)/(high-low), знак = направление; накопление за сутки (МСК).
   kc.registerIndicator({
     name: 'CumDelta',
-    shortName: 'Δ кум · день',
+    shortName: 'Δ кум',
     series: 'normal',
     figures: [{ key: 'cd', title: 'Δ: ', type: 'line' }],
     styles: () => ({ lines: [{ color: '#4aa3df', size: 1.4 }] }),
     calc: (dataList) => {
+      const reset = (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day';
       let day = null, cum = 0;
       return dataList.map((d) => {
-        const dk = Math.floor((d.timestamp + MSK_OFFSET) / 86400000);
-        if (dk !== day) { day = dk; cum = 0; }
+        if (reset === 'day') { const dk = Math.floor((d.timestamp + MSK_OFFSET) / 86400000); if (dk !== day) { day = dk; cum = 0; } }
         const rng = (d.high - d.low) || 0;
         let f = rng > 0 ? (d.close - d.open) / rng : Math.sign(d.close - d.open);
         f = Math.max(-1, Math.min(1, f));
