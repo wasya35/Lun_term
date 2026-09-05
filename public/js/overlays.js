@@ -224,7 +224,8 @@
       for (let k = 0; k < N; k++) {
         const yTop = yAxis.convertToPixel(minL + (k + 1) * binH), yBot = yAxis.convertToPixel(minL + k * binH);
         const w = Math.max(1, maxW * (vol[k] / maxV)), inVA = k >= loK && k <= hiK;
-        const color = k === pocK ? 'rgba(240,140,40,0.9)' : (inVA ? 'rgba(90,150,200,0.7)' : 'rgba(90,150,200,0.4)');
+        // полупрозрачные бары — чтобы сквозь профиль был виден график
+        const color = k === pocK ? 'rgba(240,140,40,0.42)' : (inVA ? 'rgba(90,150,200,0.30)' : 'rgba(90,150,200,0.16)');
         figs.push({ type: 'rect', attrs: { x: xLeft, y: yTop, width: w, height: Math.max(1, yBot - yTop - 1) }, styles: { style: 'fill', color } });
       }
       const pocPrice = minL + (pocK + 0.5) * binH;
@@ -298,14 +299,20 @@
     },
   });
 
-  /* --- текстовая метка (extendData.text) --- */
+  /* --- текстовая метка (extendData.text) ---
+   * ed.text — содержимое (правится в панели свойств), ed.fontSize — размер,
+   * ed.bg — рисовать ли фон/рамку вокруг текста (вкл/выкл в панели). */
   kc.registerOverlay({
     name: 'lun_text', totalStep: 2, needDefaultPointFigure: false,
     createPointFigures: ({ coordinates, overlay }) => {
       if (coordinates.length < 1) return [];
       const ed = overlay.extendData, st = styleOf(overlay);
-      const text = (ed && typeof ed === 'object' ? ed.text : ed) || 'текст';
-      return [{ type: 'text', attrs: { x: coordinates[0].x, y: coordinates[0].y, text: String(text), baseline: 'bottom' }, styles: { color: st.color, size: 14, family: 'system-ui, sans-serif' } }];
+      const isObj = ed && typeof ed === 'object';
+      const text = (isObj ? ed.text : ed) || 'текст';
+      const size = (isObj && ed.fontSize) || 14;
+      const styles = { color: st.color, size, family: 'system-ui, sans-serif' };
+      if (isObj && ed.bg) { styles.backgroundColor = 'rgba(18,23,34,0.82)'; styles.borderColor = st.color; styles.borderSize = 1; styles.paddingLeft = 5; styles.paddingRight = 5; styles.paddingTop = 3; styles.paddingBottom = 3; styles.borderRadius = 4; }
+      return [{ type: 'text', attrs: { x: coordinates[0].x, y: coordinates[0].y, text: String(text), baseline: 'bottom' }, styles }];
     },
   });
 })();

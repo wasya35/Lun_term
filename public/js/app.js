@@ -2226,6 +2226,11 @@
       <label style="${row}">Толщина <input id="sp-size" type="range" min="1" max="6" step="0.5" style="width:110px"></label>
       <label style="${row}">Линия <select id="sp-dash" style="background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"><option value="solid">сплошная</option><option value="dashed">пунктир</option><option value="dotted">точки</option></select></label>
       <label style="${row}">Заливка <input id="sp-fill" type="checkbox"></label>
+      <div id="sp-text-row" style="display:none;flex-direction:column;gap:5px;border-top:1px solid #232b3a;margin-top:6px;padding-top:8px">
+        <label style="display:flex;flex-direction:column;gap:3px">Текст<input id="sp-text" style="background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:4px"></label>
+        <label style="${row}">Размер <input id="sp-fontsize" type="number" min="8" max="60" style="width:64px;background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"></label>
+        <label style="${row}">Фон вокруг <input id="sp-textbg" type="checkbox"></label>
+      </div>
       <label style="${row}">🔒 Блокировка <input id="sp-lock" type="checkbox"></label>
       <div id="sp-angle-row" style="${row};display:none;border-top:1px solid #232b3a;margin-top:6px;padding-top:8px">Угол ∠ <span><input id="sp-angle" type="number" step="any" style="width:96px;background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"> <span id="sp-angle-clr" title="Вернуть по 2 точкам" style="cursor:pointer;color:#8b93a7">↺</span></span></div>
       <button id="sp-del" style="width:100%;margin-top:8px;background:#2a1720;color:#ef8a88;border:1px solid #5a2b33;border-radius:6px;padding:6px;cursor:pointer">Удалить (Del)</button>`;
@@ -2234,6 +2239,9 @@
     p.querySelector('#sp-del').onclick = () => { deleteSelected(); hideStylePanel(); };
     ['#sp-color', '#sp-size', '#sp-dash', '#sp-fill', '#sp-lock'].forEach((id) => { const el = p.querySelector(id); el.oninput = applySelStyle; el.onchange = applySelStyle; });
     p.querySelector('#sp-type').onchange = (e) => { if (e.target.value) applyTypeToSelected(e.target.value); };
+    p.querySelector('#sp-text').oninput = applyTextSettings;
+    p.querySelector('#sp-fontsize').onchange = applyTextSettings; p.querySelector('#sp-fontsize').oninput = applyTextSettings;
+    p.querySelector('#sp-textbg').onchange = applyTextSettings;
     p.querySelector('#sp-angle').oninput = applyGannAngle;
     p.querySelector('#sp-angle-clr').onclick = () => { p.querySelector('#sp-angle').value = ''; applyGannAngle(); };
     stylePanelEl = p; return p;
@@ -2265,7 +2273,25 @@
       if (typeof ed.gannAngle === 'number' && ed.gannAngle > 0) ai.value = ed.gannAngle;
       else { const cur = gannAngleOf(ov); ai.value = cur != null ? +cur.toFixed(cur < 10 ? 3 : 1) : ''; ai.placeholder = 'по 2 точкам'; }
     } else angleRow.style.display = 'none';
+    // строка текста — только для метки: редактирование, размер, фон вкл/выкл
+    const textRow = p.querySelector('#sp-text-row');
+    if (ov.name === 'lun_text') {
+      textRow.style.display = 'flex';
+      p.querySelector('#sp-text').value = (ed.text != null ? ed.text : '');
+      p.querySelector('#sp-fontsize').value = ed.fontSize || 14;
+      p.querySelector('#sp-textbg').checked = !!ed.bg;
+    } else textRow.style.display = 'none';
     p.style.display = 'block';
+  }
+  function applyTextSettings() {
+    const id = state.selectedOverlayId, ov = state.selectedOverlay; if (!id || !ov || ov.name !== 'lun_text' || !stylePanelEl) return;
+    const ed = Object.assign({}, (ov.extendData && typeof ov.extendData === 'object') ? ov.extendData : {});
+    ed.text = stylePanelEl.querySelector('#sp-text').value;
+    ed.fontSize = Math.max(8, Math.min(60, +stylePanelEl.querySelector('#sp-fontsize').value || 14));
+    ed.bg = stylePanelEl.querySelector('#sp-textbg').checked;
+    ov.extendData = ed;
+    try { state.chart.overrideOverlay({ id, extendData: ed }); } catch (e) {}
+    recordOverlay(ov);
   }
   // текущий угол линии Ганна (цена/бар) по её двум точкам
   function gannAngleOf(ov) {
