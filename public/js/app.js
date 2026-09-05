@@ -1568,6 +1568,96 @@
     recordOverlay(ov); showStylePanel(ov);
   }
 
+  /* ---------- линейка (измерение: Δ цена/%, бары, время) ---------- */
+  let measureMode = false, mLayer = null, mBox = null, mLabel = null, mDrag = null;
+  const fmtDur = (ms) => { const d = Math.floor(ms / 86400000), h = Math.floor(ms % 86400000 / 3600000), m = Math.floor(ms % 3600000 / 60000); if (d > 0) return d + 'д' + (h ? ' ' + h + 'ч' : ''); if (h > 0) return h + 'ч' + (m ? ' ' + m + 'м' : ''); return m + 'м'; };
+  function ensureMeasure() {
+    if (mLayer) return;
+    const host = document.getElementById('chart'); if (host) host.style.position = 'relative';
+    mLayer = document.createElement('div'); mLayer.style.cssText = 'position:absolute;inset:0;z-index:40;cursor:crosshair;display:none';
+    (host || document.body).appendChild(mLayer);
+    mBox = document.createElement('div'); mBox.style.cssText = 'position:fixed;border:1px solid #3aa0ff;background:rgba(58,160,255,0.10);pointer-events:none;display:none;z-index:251';
+    mLabel = document.createElement('div'); mLabel.style.cssText = 'position:fixed;z-index:252;background:#121722;border:1px solid #2a3a4f;border-radius:6px;padding:4px 8px;font-size:12px;color:#d7deea;pointer-events:none;white-space:nowrap;display:none;box-shadow:0 6px 20px rgba(0,0,0,.5)';
+    document.body.appendChild(mBox); document.body.appendChild(mLabel);
+    mLayer.addEventListener('mousedown', measureDown);
+  }
+  const measureSlotAt = (x, y) => slots.find((s) => { if (!s.cellEl) return false; const r = s.cellEl.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
+  const measureCoord = (slot, x, y) => { try { const r = slot.cellEl.getBoundingClientRect(); return slot.chart.convertFromPixel({ x: x - r.left, y: y - r.top }, { paneId: 'candle_pane' }); } catch (e) { return null; } };
+  function measureDown(e) {
+    if (e.button !== 0) return; e.preventDefault();
+    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot) return;
+    const c0 = measureCoord(slot, e.clientX, e.clientY); if (!c0) return;
+    mDrag = { slot, x0: e.clientX, y0: e.clientY, c0 };
+    mBox.style.display = 'block'; mLabel.style.display = 'block';
+    window.addEventListener('mousemove', measureMove); window.addEventListener('mouseup', measureUp);
+    measureMove(e);
+  }
+  function measureMove(e) {
+    if (!mDrag) return; const { slot, x0, y0, c0 } = mDrag;
+    const L = Math.min(x0, e.clientX), T = Math.min(y0, e.clientY), W = Math.abs(e.clientX - x0), H = Math.abs(e.clientY - y0);
+    mBox.style.left = L + 'px'; mBox.style.top = T + 'px'; mBox.style.width = W + 'px'; mBox.style.height = H + 'px';
+    const c1 = measureCoord(slot, e.clientX, e.clientY); if (!c1) return;
+    const dp = c1.value - c0.value, pct = c0.value ? dp / c0.value * 100 : 0, up = dp >= 0;
+    let list = []; try { list = slot.chart.getDataList(); } catch (_) {}
+    const clamp = (i) => Math.max(0, Math.min(list.length - 1, i));
+    const i0 = c0.dataIndex != null ? Math.round(c0.dataIndex) : null, i1 = c1.dataIndex != null ? Math.round(c1.dataIndex) : null;
+    const bars = (i0 != null && i1 != null) ? Math.abs(i1 - i0) : null;
+    let tstr = '';
+    if (i0 != null && i1 != null && list.length) { const t0 = list[clamp(i0)].timestamp, t1 = list[clamp(i1)].timestamp; if (t0 != null && t1 != null) tstr = ' · ' + fmtDur(Math.abs(t1 - t0)); }
+    const prec = (slot.instrument.pricePrecision != null) ? slot.instrument.pricePrecision : 2;
+    mBox.style.borderColor = up ? '#26a69a' : '#ef5350'; mBox.style.background = up ? 'rgba(38,166,154,0.12)' : 'rgba(239,83,80,0.12)';
+    mLabel.style.borderColor = up ? '#2a5a3a' : '#5a2a30';
+    mLabel.innerHTML = '<b style="color:' + (up ? '#7fe0c0' : '#f0a0a0') + '">' + (up ? '+' : '') + dp.toFixed(prec) + '  (' + (up ? '+' : '') + pct.toFixed(2) + '%)</b>' + (bars != null ? '<span style="color:#8b93a7"> · ' + bars + ' бар' + tstr + '</span>' : '');
+    mLabel.style.left = Math.min(window.innerWidth - mLabel.offsetWidth - 6, e.clientX + 14) + 'px';
+    mLabel.style.top = Math.max(6, T - 30) + 'px';
+  }
+  function measureUp() { window.removeEventListener('mousemove', measureMove); window.removeEventListener('mouseup', measureUp); mDrag = null; }
+  function setMeasure(on) {
+    measureMode = on; ensureMeasure();
+    mLayer.style.display = on ? 'block' : 'none';
+    if (!on) { mBox.style.display = 'none'; mLabel.style.display = 'none'; mDrag = null; }
+    const b = document.querySelector('[data-role="measure"]'); if (b) b.classList.toggle('active', on);
+  }
+
+  /* ---------- Data Window (значения под курсором) ---------- */
+  let dataWinEl = null, dataWinOpen = false;
+  function ensureDataWin() {
+    if (dataWinEl) return dataWinEl;
+    const p = document.createElement('div');
+    p.style.cssText = 'position:fixed;top:96px;left:12px;z-index:44;width:190px;background:#121722;border:1px solid #232b3a;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.5);padding:8px 10px;font-size:12px;color:#d7deea;display:none';
+    p.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b>Data Window</b><span id="dw-close" style="cursor:pointer;color:#8b93a7;font-size:15px">×</span></div><div id="dw-body"></div>';
+    document.body.appendChild(p); p.querySelector('#dw-close').onclick = () => toggleDataWin(false);
+    dataWinEl = p; return p;
+  }
+  function toggleDataWin(on) {
+    ensureDataWin(); dataWinOpen = on; dataWinEl.style.display = on ? 'block' : 'none';
+    const b = document.querySelector('[data-role="datawin"]'); if (b) b.classList.toggle('active', on);
+    if (on) updateDataWin(null);
+  }
+  function updateDataWin(d) {
+    if (!dataWinOpen || !dataWinEl) return;
+    let list = []; try { list = state.chart.getDataList(); } catch (e) {}
+    if (!list.length) { dataWinEl.querySelector('#dw-body').innerHTML = '<span style="color:#8b93a7">нет данных</span>'; return; }
+    let b = null;
+    if (d && d.dataIndex != null && list[d.dataIndex]) b = list[d.dataIndex];
+    else if (d && d.kLineData) b = d.kLineData;
+    if (!b) b = list[list.length - 1];
+    const prec = (state.instrument.pricePrecision != null) ? state.instrument.pricePrecision : 2;
+    const dt = new Date(b.timestamp), p2 = (x) => (x < 10 ? '0' + x : x);
+    const dd = p2(dt.getDate()) + '.' + p2(dt.getMonth() + 1) + '.' + dt.getFullYear() + ' ' + p2(dt.getHours()) + ':' + p2(dt.getMinutes());
+    const chg = b.close - b.open, pct = b.open ? chg / b.open * 100 : 0, up = chg >= 0;
+    const num = (v) => (v != null ? Number(v).toLocaleString('ru-RU') : '—');
+    const rowk = (k, v, c) => '<div style="display:flex;justify-content:space-between;margin:2px 0"><span style="color:#8b93a7">' + k + '</span><span' + (c ? ' style="color:' + c + '"' : '') + '>' + v + '</span></div>';
+    dataWinEl.querySelector('#dw-body').innerHTML =
+      '<div style="color:#8b93a7;font-size:11px;margin-bottom:4px">' + dd + '</div>' +
+      rowk('O', b.open != null ? b.open.toFixed(prec) : '—') +
+      rowk('H', b.high != null ? b.high.toFixed(prec) : '—') +
+      rowk('L', b.low != null ? b.low.toFixed(prec) : '—') +
+      rowk('C', b.close != null ? b.close.toFixed(prec) : '—') +
+      rowk('Δ', (up ? '+' : '') + chg.toFixed(prec) + ' (' + (up ? '+' : '') + pct.toFixed(2) + '%)', up ? '#26a69a' : '#ef5350') +
+      rowk('Объём', num(b.volume));
+  }
+
   /* ---------- загрузка инструмента/ТФ ---------- */
   async function load(slot) {
     slot = slot || state;
@@ -1942,7 +2032,7 @@
     { id: 'lun_gann',               label: 'Ган 1×1',       key: 'g' },
     { id: 'lun_hray',               label: 'Луч ⨯N',        key: 'h' },
     { id: 'lun_vline',              label: 'Вертикаль (дата)', key: 'v' },
-    { id: 'lun_pos',                label: 'Позиция ⇅ (вход→цель)', key: 'p' },
+    { id: 'lun_pos',                label: '🎯 Позиция R:R (вход→цель, риск/приз)', key: 'p' },
     { id: 'lun_vprofile',           label: 'Об.профиль',    key: 'd' },
   ];
   /* Ctrl + перетаскивание = скопировать оверлей: в начале переноса при зажатом
@@ -2813,6 +2903,13 @@
       else { b.classList.remove('active'); removeOI(state); }
     }, false, 'Открытый интерес и чистые позиции физлиц/юрлиц (FUTOI, только фьючерсы MOEX, дневной)');
     oiBtn.dataset.sync = 'oi';
+    // Data Window — значения бара под курсором
+    mkBtn(indWrap, '🪟 Data Window (значения под курсором)', () => { closeMenus(); toggleDataWin(!dataWinOpen); }, false, 'Окошко O/H/L/C, объём, Δ и % бара под курсором').dataset.role = 'datawin';
+    // MOEX-аналитика (перенесено из «Ганн»): опционные стенки и стрелки физлиц
+    mkBtn(indWrap, '📊 Опционные уровни (стенки ОИ)…', () => { closeMenus(); optionLevelsModal(); }, false, 'Макс-ОИ страйки CALL/PUT выбранной серии (нед/мес/квартал) горизонталями').dataset.sync = 'optlev';
+    mkBtn(indWrap, '✕ убрать опционные уровни', () => { closeMenus(); removeOptionLevels(state); }, false, 'Снять опционные стенки');
+    mkBtn(indWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
+    mkBtn(indWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');
     // базис к споту исходного товара (фьюч − спот, регрессией) + z-score
     const basisBtn = mkBtn(indWrap, 'Базис к споту', (b) => {
       const on = !b.classList.contains('active');
@@ -2894,11 +2991,6 @@
         if (on) { state.chart.createIndicator({ name: 'GannCycles', paneId: 'candle_pane' }, true); state.candleInds.GannCycles = true; }
         else removeCandInd('GannCycles');
       }, false, 'Авто-пивот на последнем видимом экстремуме');
-      gsub('Опционы / физлица (MOEX, по истории)');
-      mkBtn(gannWrap, '📊 Опционные уровни (стенки ОИ)…', () => { closeMenus(); optionLevelsModal(); }, false, 'Макс-ОИ страйки CALL/PUT выбранной серии (нед/мес/квартал) горизонталями').dataset.sync = 'optlev';
-      mkBtn(gannWrap, '✕ убрать опционные уровни', () => { closeMenus(); removeOptionLevels(state); }, false, 'Снять опционные стенки');
-      mkBtn(gannWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
-      mkBtn(gannWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');
       gsub('Астро-Ганн');
       mkBtn(gannWrap, '🪐 Настроить планетарные линии…', () => { closeMenus(); astroGannModal(); }, false, 'Планеты, гео/гелио, масштаб цена/градус');
       [['PlanetLines', '🪐 Планетарные линии → цена', 'Долгота планеты как ценовой уровень (ползёт во времени)'],
@@ -2981,6 +3073,7 @@
       if (t.key) b.innerHTML = t.label + '<span class="hk">' + t.key.toUpperCase() + '</span>';   // хоткей справа
       regHotkey(t.key, () => startDraw(t.id));
     });
+    mkBtn(drawWrap, '📏 Линейка (Δ%, бары)', (b) => { closeMenus(); setMeasure(!measureMode); }, false, 'Измерение: зажми ЛКМ и протяни по графику — покажет изменение цены, %, число баров и время. Повторный клик — выключить').dataset.role = 'measure';
     mkBtn(drawWrap, '🎚 Типы линий (добавить/править)…', () => { closeMenus(); lineTypesModal(); }, false, 'Пресеты стиля линий: поддержка/сопротивление, трендовая, брейкер/ордер-блок, имбаланс, дивергенции + свои');
     mkBtn(drawWrap, '⚙ Настройки рисования (притяжка, Gann Box прогноз)…', () => { closeMenus(); drawSettingsModal(); }, false, 'Притяжка к вершинам баров, прогнозные Gann Box по диагонали');
     mkBtn(drawWrap, '✕ очистить всё', () => { closeMenus(); state.chart.removeOverlay(); }).className = 'danger';
@@ -3194,7 +3287,7 @@
         }, 40);
       });
       // отслеживаем панель под курсором (для удаления двойным кликом)
-      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; }); } catch (e) {}
+      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; if (dataWinOpen && slot === state) updateDataWin(d); }); } catch (e) {}
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
         if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
@@ -3510,6 +3603,7 @@
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       if (document.querySelector('.lun-modal-bg')) return;
+      if (e.key === 'Escape' && measureMode) { e.preventDefault(); setMeasure(false); return; }
       if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedOverlayId) { e.preventDefault(); deleteSelected(); return; }
       if (e.ctrlKey || e.metaKey) {
         const k = keyFromEvent(e);

@@ -144,13 +144,14 @@
     if (x1 <= x0 + 3) x1 = x0 + 40;
     const w = x1 - x0;
     const rewardPct = (tp - e) / e * 100, riskPct = (sl - e) / e * 100;
+    const rr = (sl - e) !== 0 ? Math.abs((tp - e) / (sl - e)) : 0;
     return [
       { type: 'rect', attrs: { x: x0, y: Math.min(yE, yT), width: w, height: Math.abs(yT - yE) }, styles: { style: 'fill', color: 'rgba(38,166,154,0.16)' } },
       { type: 'rect', attrs: { x: x0, y: Math.min(yE, yS), width: w, height: Math.abs(yS - yE) }, styles: { style: 'fill', color: 'rgba(239,83,80,0.16)' } },
       { type: 'line', attrs: { coordinates: [{ x: x0, y: yE }, { x: x1, y: yE }] }, styles: { color: '#c7d0e0', size: 1 } },
       { type: 'line', attrs: { coordinates: [{ x: x0, y: yT }, { x: x1, y: yT }] }, styles: { color: '#26a69a', size: 1, style: 'dashed' } },
       { type: 'line', attrs: { coordinates: [{ x: x0, y: yS }, { x: x1, y: yS }] }, styles: { color: '#ef5350', size: 1, style: 'dashed' } },
-      { type: 'text', attrs: { x: x0 + 3, y: yE - 2, text: (long ? 'ЛОНГ ' : 'ШОРТ ') + e.toFixed(2), baseline: 'bottom' }, ignoreEvent: true, styles: { color: '#0b0e14', backgroundColor: long ? '#26a69a' : '#ef5350', size: 11, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, borderRadius: 3 } },
+      { type: 'text', attrs: { x: x0 + 3, y: yE - 2, text: (long ? 'ЛОНГ ' : 'ШОРТ ') + e.toFixed(2) + '  R:R 1:' + rr.toFixed(1), baseline: 'bottom' }, ignoreEvent: true, styles: { color: '#0b0e14', backgroundColor: long ? '#26a69a' : '#ef5350', size: 11, paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2, borderRadius: 3 } },
       { type: 'text', attrs: { x: x1 - 2, y: yT - 2, text: 'TP ' + tp.toFixed(2) + ' (' + (rewardPct >= 0 ? '+' : '') + rewardPct.toFixed(2) + '%)', baseline: 'bottom', align: 'right' }, ignoreEvent: true, styles: { color: '#26a69a', size: 11 } },
       { type: 'text', attrs: { x: x1 - 2, y: yS + 2, text: 'SL ' + sl.toFixed(2) + ' (' + riskPct.toFixed(2) + '%)', baseline: 'top', align: 'right' }, ignoreEvent: true, styles: { color: '#ef5350', size: 11 } },
     ];
