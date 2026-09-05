@@ -244,6 +244,9 @@
       horizontal: { line: { color: '#6b7280' }, text: { backgroundColor: '#334155' } },
       vertical: { line: { color: '#6b7280' }, text: { backgroundColor: '#334155' } },
     },
+    // легенда: в обычном состоянии — одна строка со свечой (время + OHLCV);
+    // строки индикаторов (VWAP/IVWAP σ и т.п.) показываем только при наведении курсора.
+    indicator: { tooltip: { showRule: 'follow_cross' } },
   };
   // светлая тема графика (chrome — через CSS class body.light)
   const THEME_LIGHT = {
@@ -252,6 +255,7 @@
     xAxis: { axisLine: { color: '#c8ccd6' }, tickText: { color: '#5b6270' } },
     yAxis: { axisLine: { color: '#c8ccd6' }, tickText: { color: '#5b6270' } },
     crosshair: { horizontal: { line: { color: '#9aa0ad' }, text: { backgroundColor: '#5b6270' } }, vertical: { line: { color: '#9aa0ad' }, text: { backgroundColor: '#5b6270' } } },
+    indicator: { tooltip: { showRule: 'follow_cross' } },
   };
   // внешний вид: тема (dark/light) + тип свечей (candle_solid/ohlc=бары)
   let LOOK = { theme: 'dark', candle: 'candle_solid' };
@@ -364,10 +368,11 @@
     wishPane(ALL_ASPECT_PANE, { height: window.LUN.PANE_HEIGHTS.cycle + 4, minHeight: 20, order: 29 });
   }
   function createVolumePane() {
-    state.volumePane = 'pane_volume';
-    // calcParams: [] — объём без скользящих средних
-    state.chart.createIndicator({ name: 'VOL', calcParams: [], paneId: state.volumePane }, false);
-    wishPane(state.volumePane, { height: window.LUN.PANE_HEIGHTS.volume, order: 90 });
+    // объём накладываем прямо на ценовую панель полупрозрачными барами —
+    // за ними виден график (как в TradingView). Отдельной панели больше нет.
+    state.volumePane = 'candle_pane';
+    try { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'VolBottom' }); } catch (e) {}
+    state.chart.createIndicator({ name: 'VolBottom', paneId: 'candle_pane' }, true);
   }
   function createDeltaPane() {
     state.deltaPane = 'pane_delta';
@@ -2390,7 +2395,7 @@
   }
   function newsMoodBadge() {
     let el = document.getElementById('news-mood');
-    if (!el) { const bar = document.querySelector('.statusbar'); if (!bar) return null; el = document.createElement('span'); el.id = 'news-mood'; el.style.cssText = 'cursor:pointer;font-weight:600'; el.title = 'Настроение СМИ по инструменту (клик — открыть новости)'; el.onclick = () => toggleNews(!newsOpen); const anchor = document.getElementById('stream-status'); bar.insertBefore(el, anchor || null); }
+    if (!el) { const dot = document.getElementById('conn-dot'); const bar = dot && dot.parentNode; if (!bar) return null; el = document.createElement('span'); el.id = 'news-mood'; el.title = 'Настроение СМИ по инструменту (клик — открыть новости)'; el.onclick = () => toggleNews(!newsOpen); bar.insertBefore(el, dot); }   // подвал убран — бейдж настроения в верхнем меню, слева от кружка подключения
     return el;
   }
   function updateNewsMood(res, insTitle) {
@@ -2680,11 +2685,14 @@
 
   /* ---------- статус-строка ---------- */
   function updateMoonStatus() {
+    // нижняя строка убрана — обновлять нечего, элемента #moon-now больше нет
+    const el = document.getElementById('moon-now');
+    if (!el) return;
     const info = window.LunAstro.moonInfo(Date.now());
     const s = window.LUN.SIGNS[info.signIndex];
     const c1 = window.LUN.CYCLES[0];
     const z = window.LunAstro.zoneOf(info.lon, c1.zones);
-    document.getElementById('moon-now').innerHTML =
+    el.innerHTML =
       `☾ <b style="color:${s.color}">${s.glyph} ${s.name}</b> ${info.degInSign.toFixed(1)}°` +
       (z ? ` · <span style="color:${window.LUN.BIAS_COLORS[z.bias]}">${z.label}</span>` : '');
   }
@@ -2910,7 +2918,7 @@
     // объём — включён по умолчанию, можно убрать
     mkBtn(indWrap, 'Объём', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
-      if (on) createVolumePane(); else if (state.volumePane) { state.chart.removeIndicator({ paneId: state.volumePane }); state.volumePane = null; }
+      if (on) createVolumePane(); else if (state.volumePane) { state.chart.removeIndicator({ paneId: 'candle_pane', name: 'VolBottom' }); state.volumePane = null; }
     }, true).dataset.sync = 'vol';
     // дневная кумулятивная дельта — по умолчанию выключена (полное отключение)
     mkBtn(indWrap, 'Δ дельта', (b) => {
@@ -3622,10 +3630,12 @@
     setInterval(updateMoonStatus, 60000);
     setInterval(() => scheduleWsSave(), 25000);   // страховочное авто-сохранение рабочего стола
     window.addEventListener('lun:datasource', () => {
-      const el = document.getElementById('datasource');
-      el.textContent = window.LUN_DATA_SOURCE || '';
-      el.title = window.LUN_DATA_ERROR || '';
-      el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
+      const el = document.getElementById('datasource');   // строка-подвал убрана — может отсутствовать
+      if (el) {
+        el.textContent = window.LUN_DATA_SOURCE || '';
+        el.title = window.LUN_DATA_ERROR || '';
+        el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
+      }
       slots.forEach((s) => scheduleApply(s));   // данные загружены — закрепляем высоты панелей всех слотов
       // коннекторы всегда живые: после (пере)загрузки данных переподписываем поток
       // активного слота (вне реплея). Страж целостности в stream.js не даст чужому

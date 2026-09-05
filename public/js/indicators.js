@@ -414,6 +414,42 @@
     },
   });
 
+  /* ============ Объём НА ценовой панели (прозрачный, как в TradingView) ========
+   * Отдельная панель объёма закрывает часть графика; здесь бары объёма рисуются
+   * поверх свечей в нижней ~22% ценовой панели полупрозрачными — за ними виден
+   * график. Высота баров нормируется по максимуму в видимом диапазоне. */
+  kc.registerIndicator({
+    name: 'VolBottom',
+    shortName: 'Объём',
+    series: 'price',                 // накладывается на ценовую панель
+    figures: [],
+    calc: (dataList) => dataList.map((d) => ({
+      vol: d.volume || 0,
+      up: d.close >= d.open,
+    })),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const res = indicator.result; if (!res || !res.length) return true;
+      const H = bounding.height, W = bounding.width;
+      const zoneH = Math.max(28, Math.round(H * 0.22));   // нижняя полоса под объём
+      const base = H;                                     // низ панели
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(res.length, Math.ceil(range.to) + 1);
+      let maxV = 0;
+      for (let i = from; i < to; i++) { const v = res[i] && res[i].vol; if (v > maxV) maxV = v; }
+      if (maxV <= 0) return true;
+      let bw = 6; try { bw = chart.getBarSpace().bar; } catch (e) {}
+      bw = Math.max(1, bw * 0.72);
+      for (let i = from; i < to; i++) {
+        const r = res[i]; if (!r || !r.vol) continue;
+        const x = xAxis.convertToPixel(i);
+        const h = Math.max(1, (r.vol / maxV) * zoneH);
+        ctx.fillStyle = r.up ? 'rgba(38,166,154,0.28)' : 'rgba(239,83,80,0.28)';
+        ctx.fillRect(x - bw / 2, base - h, bw, h);
+      }
+      return true;
+    },
+  });
+
   /* ============ Узлы Луны на цене: 0° (ингрессия) и 15° (середина) ============ */
   kc.registerIndicator({
     name: 'MoonNodes',
