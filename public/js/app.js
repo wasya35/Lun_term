@@ -2455,6 +2455,10 @@
   }
   function captureWorkspace() {
     const s = state;
+    // живые рисунки активного инструмента — в drawStore, чтобы сохранить/синхронизировать
+    // рисунки ВСЕХ инструментов (а не только текущего). Так на другом устройстве и при
+    // переключении инструментов всё возвращается как было.
+    try { s.drawStore = s.drawStore || {}; s.drawStore[favId(s.instrument)] = Object.values(s.drawings || {}).map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock })); } catch (e) {}
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
       trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null, barMode: (window.LUN.BAR && window.LUN.BAR.mode) || 'signed',
@@ -2473,6 +2477,7 @@
         vwap: !!s.vwapOn,
       },
       drawings: Object.values(s.drawings || {}),
+      drawStore: s.drawStore || null,
     };
   }
   const IND_SKIP = { GannSquareLevels: 1, OIExtremes: 1, AstroEventMarks: 1, CycleProjection: 1, GannSquaring: 1, GannRetr: 1, GannCycles: 1, GannSwings: 1, VWAP_1: 1, VWAP_2: 1, VWAP_3: 1, FutoiArrows: 1, OptionLevels: 1 };
@@ -2521,6 +2526,8 @@
         window.LUN.INDICATORS.vwapList = ws.vwapList;
       }
       if (ws.swings && ws.swings.pivots && ws.swings.pivots.length > 1) state.swings = ws.swings;
+      // рисунки ВСЕХ инструментов — из drawStore; активный инструмент восстановит load()
+      if (ws.drawStore && typeof ws.drawStore === 'object') state.drawStore = ws.drawStore;
       if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; window.LUN.GANNTOOLS.box.forecastDir = ws.draw.boxForecastDir || 'auto'; } }
       if (Array.isArray(ws.lineTypes) && ws.lineTypes.length) window.LUN.LINETYPES = ws.lineTypes;
       if (ws.curLineType) window.LUN.CUR_LINETYPE = ws.curLineType;
@@ -2531,7 +2538,10 @@
       await load(state);
       applyChartLook();
       try { refreshLineTypeSelector(); const dm = document.querySelector('[data-role="deltamode"]'); if (dm) dm.textContent = 'Δ режим: ' + ((window.LUN.DELTA && window.LUN.DELTA.reset) === 'none' ? 'все бары' : 'день'); } catch (e) {}
-      setTimeout(() => { applyWsIndicators(ws.inds); applyWsDrawings(ws.drawings); syncToolbar(); applyingWs = false; }, 1000);
+      // если есть drawStore — рисунки активного инструмента восстановит load() из
+      // него (не дублируем через applyWsDrawings). Иначе — старый путь.
+      const dsHas = ws.drawStore && ws.drawStore[favId(state.instrument)];
+      setTimeout(() => { applyWsIndicators(ws.inds); applyWsDrawings(dsHas ? [] : ws.drawings); syncToolbar(); applyingWs = false; }, 1000);
     } catch (e) { applyingWs = false; }
   }
   // Восстановление рабочего стола. Приоритет: сервер (если вошли — свой стол,
@@ -3567,7 +3577,12 @@
       btn.onclick = (e) => { e.stopPropagation(); const menu = btn.parentElement, open = menu.classList.contains('open'); closeMenus(); if (!open) menu.classList.add('open'); };
     });
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
-    if (window.LunStream) window.LunStream.onStatus((txt, color) => { const el = document.getElementById('stream-status'); if (el) { el.textContent = txt; el.style.color = color; } });
+    if (window.LunStream) window.LunStream.onStatus((txt, color) => {
+      const el = document.getElementById('stream-status'); if (el) { el.textContent = txt; el.style.color = color; }
+      // кружок подключения (виден и на мобиле): зелёный — реалтайм, жёлтый —
+      // псевдо/переподключение, серый — выкл.
+      const dot = document.getElementById('conn-dot'); if (dot) { dot.style.background = color; dot.title = txt; }
+    });
     setLayout('1');       // создаёт график(и), панели и загрузку
     // коннекторы включены по умолчанию (stream.js: enabled=true) — цена всегда
     // движется. Достаточно один раз подписать открытые слоты (load() тоже это

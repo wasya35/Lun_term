@@ -373,19 +373,44 @@
     name: 'CumDelta',
     shortName: 'Δ кум',
     series: 'normal',
+    // фигура нужна ТОЛЬКО для значения в легенде — сама линия невидима
+    // (rgba 0), а рисуем вручную (draw) отдельными сегментами по дням, как в
+    // ATAS/TigerTrade: конец одного дня НЕ соединяется с началом следующего.
     figures: [{ key: 'cd', title: 'Δ: ', type: 'line' }],
-    styles: () => ({ lines: [{ color: '#4aa3df', size: 1.4 }] }),
+    styles: () => ({ lines: [{ color: 'rgba(0,0,0,0)', size: 0 }] }),
     calc: (dataList) => {
       const reset = (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day';
       let day = null, cum = 0;
       return dataList.map((d) => {
-        if (reset === 'day') { const dk = Math.floor((d.timestamp + MSK_OFFSET) / 86400000); if (dk !== day) { day = dk; cum = 0; } }
+        const dk = Math.floor((d.timestamp + MSK_OFFSET) / 86400000);
+        if (reset === 'day' && dk !== day) cum = 0;
+        day = dk;
         const rng = (d.high - d.low) || 0;
         let f = rng > 0 ? (d.close - d.open) / rng : Math.sign(d.close - d.open);
         f = Math.max(-1, Math.min(1, f));
         cum += (d.volume || 0) * f;
-        return { cd: cum };
+        return { cd: cum, day: dk };
       });
+    },
+    draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
+      const res = indicator.result; if (!res || !res.length) return true;
+      const reset = (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day';
+      const W = bounding.width, y0 = yAxis.convertToPixel(0);
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(W, y0); ctx.stroke();  // нулевая линия
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from), to = Math.min(res.length, Math.ceil(range.to) + 1);
+      ctx.strokeStyle = '#4aa3df'; ctx.lineWidth = 1.6; ctx.lineJoin = 'round';
+      let started = false, prevDay = null;
+      ctx.beginPath();
+      for (let i = from; i < to; i++) {
+        const d = res[i]; if (!d || d.cd == null) continue;
+        if (reset === 'day' && prevDay != null && d.day !== prevDay) { ctx.stroke(); ctx.beginPath(); started = false; }  // разрыв между днями
+        prevDay = d.day;
+        const x = xAxis.convertToPixel(i), y = yAxis.convertToPixel(d.cd);
+        if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+      }
+      if (started) ctx.stroke();
+      return true;
     },
   });
 

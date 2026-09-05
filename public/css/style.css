@@ -109,4 +109,7 @@ html, body { overflow-x: hidden; }
     min-width: 0; max-height: 78vh; overflow-y: auto; z-index: 200;
   }
   #layouts-drop { left: 6px; right: 6px; }
+  /* нижняя строка компактная: только дата/время + кружок подключения справа */
+  .statusbar { padding: 4px 10px; gap: 6px; }
+  .statusbar .sb-verbose { display: none; }
 }
