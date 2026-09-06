@@ -458,8 +458,7 @@
     wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 11 + i); });
     window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });  // ☉/☿ по умолчанию
-    // «все аспекты» теперь показываются при наведении курсора (updateAspHover), а
-    // не постоянной полосой — панель здесь больше не создаём.
+    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();   // полоса всех аспектов (подписи — на курсор, updateAspHover)
     createVolumePane();
   }
 
@@ -1736,28 +1735,50 @@
     if (top + h > window.innerHeight - 6) top = window.innerHeight - h - 6;
     el.style.left = Math.max(6, left) + 'px'; el.style.top = Math.max(6, top) + 'px';
   }
-  // Сворачиваемая легенда графика (тикер ▸ / раскрытые OHLCV). slot.legendBar —
-  // бар под курсором (иначе последний). slot.legendOpen — раскрыта ли.
+  // Значения активных индикаторов на баре idx — чтобы в раскрытой легенде были ВСЕ
+  // подписи (VWAP, дельта и т.п.), как в штатной легенде, а не только OHLCV.
+  function indicatorLines(slot, idx) {
+    let inds = []; try { inds = slot.chart.getIndicators() || []; } catch (e) { return ''; }
+    if (inds && !Array.isArray(inds)) { try { inds = Array.from(inds.values()).reduce((a, b) => a.concat(b), []); } catch (e) { inds = []; } }
+    let out = '';
+    inds.forEach((ind) => {
+      if (!ind || !ind.figures || !ind.figures.length || !ind.result) return;
+      const res = ind.result[idx]; if (!res) return;
+      const parts = [];
+      ind.figures.forEach((fg) => { if (!fg || fg.key == null) return; const v = res[fg.key]; if (typeof v === 'number' && isFinite(v)) parts.push((fg.title || '') + (Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('ru-RU') : v.toFixed(2))); });
+      if (parts.length) out += `<div class="cl-row" style="color:#8b93a7">${ind.shortName || ind.name}: ${parts.join(' ')}</div>`;
+    });
+    return out;
+  }
+  // Сворачиваемая легенда: по умолчанию только тикер + треугольник ПОД ним.
+  // Наведение (или закреп кликом по треугольнику) раскрывает ВСЕ данные бара
+  // под курсором (иначе последнего): время, OHLC, Δ%, объём и значения индикаторов.
   function renderLegend(slot) {
     const el = slot && slot.legendEl; if (!el) return;
     const ins = slot.instrument || {};
     const tk = ins.ticker || ins.symbol || ins.title || ins.id || '';
-    const tri = slot.legendOpen ? '▾' : '▸';
-    let bar = slot.legendBar;
-    if (!bar) { try { const l = slot.chart.getDataList(); bar = l && l.length ? l[l.length - 1] : null; } catch (e) {} }
-    if (!slot.legendOpen || !bar) { el.innerHTML = `<span class="cl-tk">${tk}</span> <span class="cl-tri">${tri}</span>`; return; }
+    const open = !!(slot.legendPinned || slot.legendHover);
+    const tri = open ? '▴' : '▾';
+    if (!open) { el.innerHTML = `<div class="cl-tk">${tk}</div><div class="cl-tri" title="раскрыть данные">${tri}</div>`; return; }
+    let bar = slot.legendBar, idx = slot.legendIdx;
+    if (!bar) { try { const l = slot.chart.getDataList(); if (l && l.length) { bar = l[l.length - 1]; idx = l.length - 1; } } catch (e) {} }
     const prec = (ins.pricePrecision != null) ? ins.pricePrecision : 2;
-    const up = bar.close >= bar.open, col = up ? '#26a69a' : '#ef5350';
-    const chg = (bar.close || 0) - (bar.open || 0), pct = bar.open ? chg / bar.open * 100 : 0;
-    const dt = new Date(bar.timestamp), ds = dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
     const f = (v) => (v != null ? (+v).toFixed(prec) : '—');
     const num = (v) => v != null ? (+v).toLocaleString('ru-RU') : '—';
-    el.innerHTML = `<div class="cl-head"><span class="cl-tk">${tk}</span> <span style="color:#8b93a7">${slot.tf ? slot.tf.title : ''}</span> <span class="cl-tri">${tri}</span></div>`
-      + `<div class="cl-row" style="color:#8b93a7">${ds}</div>`
-      + `<div class="cl-row">O <b>${f(bar.open)}</b>&nbsp; H <b>${f(bar.high)}</b></div>`
-      + `<div class="cl-row">L <b>${f(bar.low)}</b>&nbsp; C <b style="color:${col}">${f(bar.close)}</b></div>`
-      + `<div class="cl-row" style="color:${col}">Δ ${up ? '+' : ''}${f(chg)} (${up ? '+' : ''}${pct.toFixed(2)}%)</div>`
-      + `<div class="cl-row" style="color:#8b93a7">V ${num(bar.volume)}</div>`;
+    let body = '';
+    if (bar) {
+      const up = bar.close >= bar.open, col = up ? '#26a69a' : '#ef5350';
+      const chg = (bar.close || 0) - (bar.open || 0), pct = bar.open ? chg / bar.open * 100 : 0;
+      const dt = new Date(bar.timestamp), ds = dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      body = `<div class="cl-row" style="color:#8b93a7">${ds}</div>`
+        + `<div class="cl-row">O <b>${f(bar.open)}</b>&nbsp; H <b>${f(bar.high)}</b></div>`
+        + `<div class="cl-row">L <b>${f(bar.low)}</b>&nbsp; C <b style="color:${col}">${f(bar.close)}</b></div>`
+        + `<div class="cl-row" style="color:${col}">Δ ${up ? '+' : ''}${f(chg)} (${up ? '+' : ''}${pct.toFixed(2)}%)</div>`
+        + `<div class="cl-row" style="color:#8b93a7">V ${num(bar.volume)}</div>`;
+      if (idx != null) body += indicatorLines(slot, idx);
+    }
+    el.innerHTML = `<div class="cl-head"><span class="cl-tk">${tk}</span> <span style="color:#8b93a7">${slot.tf ? slot.tf.title : ''}</span></div>`
+      + `<div class="cl-tri" title="свернуть">${tri}</div>` + body;
   }
   function toggleDataWin(on) {
     ensureDataWin(); dataWinOpen = on; dataWinEl.style.display = on ? 'block' : 'none';
@@ -2716,8 +2737,7 @@
     (ind.signs || []).forEach((b, i) => { if (state.signPanes[b]) return; try { if (b === 'Moon') toggleMoonSign(true); else createSignPane(b, 25 + i); } catch (e) {} });
     (ind.cycles || []).forEach((id, i) => { const cy = window.LUN.CYCLES.find((c) => c.id === id); if (cy && !state.cyclePanes[id]) try { createCyclePane(cy, 11 + i); } catch (e) {} });
     (ind.aspects || []).forEach((b, i) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === b); if (pl && !state.aspectPanes[b]) try { createSunAspect(pl, 15 + i); } catch (e) {} });
-    // ind.allAspect (старая полоса) больше не восстанавливаем — режим «на курсор»
-    // управляется флагом LUN.ALL_ASPECTS.enabled из настроек.
+    try { if (ind.allAspect && !state.allAspectPane) createAllAspect(); } catch (e) {}
     try { if (ind.aspsel && !state.aspSelPane && (window.LUN.ASPSEL.blocks || []).length) createAspSelPane(); } catch (e) {}
     try { if (ind.sbc && !state.sbcPane && window.LUN_SBC && window.LUN_SBC.janma) createSBCPane(); } catch (e) {}
     try { if (ind.svir && !state.svirPane) createSvirPane(); } catch (e) {}
@@ -3481,7 +3501,7 @@
       case 'sign': return !!state.signPanes[arg];
       case 'cyc': return !!state.cyclePanes[arg];
       case 'asp': return !!state.aspectPanes[arg];
-      case 'allasp': return !!(window.LUN.ALL_ASPECTS && window.LUN.ALL_ASPECTS.enabled);
+      case 'allasp': return !!state.allAspectPane;
       case 'uranus': return !!state.uranusPane;
       case 'forecast': return !!state.forecastOn;
       case 'oi': return !!state.oiPane;
@@ -3521,9 +3541,10 @@
       // сворачиваемая подпись слева сверху: по умолчанию только тикер + треугольник,
       // при наведении раскрывает время и OHLCV (клик — фиксирует на телефоне)
       const lg = document.createElement('div'); lg.className = 'cell-legend'; cell.appendChild(lg); slot.legendEl = lg;
-      lg.addEventListener('mouseenter', () => { slot.legendOpen = true; renderLegend(slot); });
-      lg.addEventListener('mouseleave', () => { slot.legendOpen = false; renderLegend(slot); });
-      lg.addEventListener('click', (e) => { e.stopPropagation(); slot.legendOpen = !slot.legendOpen; renderLegend(slot); });
+      lg.addEventListener('mouseenter', () => { slot.legendHover = true; renderLegend(slot); });
+      lg.addEventListener('mouseleave', () => { slot.legendHover = false; renderLegend(slot); });
+      // клик по треугольнику — «закрепить» раскрытие (удобно на телефоне)
+      lg.addEventListener('click', (e) => { if (e.target && e.target.classList && e.target.classList.contains('cl-tri')) { e.stopPropagation(); slot.legendPinned = !slot.legendPinned; renderLegend(slot); } });
       cell.addEventListener('mousedown', () => activateSlot(i));
       // клик по ПОЛЮ (не по объекту) — снять выделение и спрятать панель свойств.
       // Если клик попал в объект, sel() обновит lastSelTs и панель останется.
@@ -3534,8 +3555,8 @@
         }, 40);
       });
       // отслеживаем панель под курсором (для удаления двойным кликом)
-      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; let lb = null; if (d) { if (d.kLineData) lb = d.kLineData; else if (d.dataIndex != null) { try { const l = slot.chart.getDataList(); lb = l[d.dataIndex] || null; } catch (e) {} } } slot.legendBar = lb; if (slot.legendOpen) renderLegend(slot); if (slot === state) { if (dataWinOpen) updateDataWin(d); updateAspHover(d); } }); } catch (e) {}
-      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; if (slot.legendOpen) renderLegend(slot); });   // курсор ушёл — прячем подсказку аспектов, легенда → последний бар
+      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; let lb = null, li = null; if (d) { if (d.dataIndex != null) { li = d.dataIndex; try { const l = slot.chart.getDataList(); lb = l[d.dataIndex] || null; } catch (e) {} } if (!lb && d.kLineData) lb = d.kLineData; } slot.legendBar = lb; slot.legendIdx = li; if (slot.legendPinned || slot.legendHover) renderLegend(slot); if (slot === state) { if (dataWinOpen) updateDataWin(d); updateAspHover(d); } }); } catch (e) {}
+      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; slot.legendIdx = null; if (slot.legendPinned || slot.legendHover) renderLegend(slot); });   // курсор ушёл — прячем подсказку аспектов, легенда → последний бар
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
         if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
@@ -3564,14 +3585,14 @@
       if (pl.enabled) createSunAspect(pl, 15 + i);
       else if (state.aspectPanes[pl.body]) { state.chart.removeIndicator({ paneId: state.aspectPanes[pl.body] }); delete state.aspectPanes[pl.body]; }
     }, pl.enabled, `Аспекты ☉/${pl.glyph} (${pl.body})`).dataset.sync = 'asp:' + pl.body; });
-    mkBtn(aspWrap, '∀ все (на курсор)', (b) => {
+    mkBtn(aspWrap, '∀ все', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); window.LUN.ALL_ASPECTS.enabled = on;
-      // Раньше была постоянная полоса-панель. Теперь аспекты всех пар планет
-      // показываем ТОЛЬКО при наведении курсора на бар — всплывающей подсказкой.
-      if (state.allAspectPane) { try { state.chart.removeIndicator({ paneId: state.allAspectPane }); } catch (e) {} state.allAspectPane = null; }
-      if (!on) hideAspHover();
+      // Полоса-индикатор (цветные риски аспектов) видна всегда. Сами подписи —
+      // не жёстко на полосе, а интерактивно: всплывают у вертикали курсора (см.
+      // updateAspHover) над тем аспектом, на котором стоит перекрестье.
+      if (on) createAllAspect(); else { if (state.allAspectPane) { try { state.chart.removeIndicator({ paneId: state.allAspectPane }); } catch (e) {} state.allAspectPane = null; } hideAspHover(); }
       scheduleWsSave();
-    }, window.LUN.ALL_ASPECTS.enabled, 'Аспекты всех пар планет ПРИ НАВЕДЕНИИ курсора на бар (всплывающая подсказка, не постоянная полоса)').dataset.sync = 'allasp';
+    }, window.LUN.ALL_ASPECTS.enabled, 'Полоса всех аспектов всех пар (цветные риски). Подпись аспекта всплывает при наведении курсора на риску').dataset.sync = 'allasp';
     // отдельная полоса: Уран — все планеты (мажорные аспекты)
     const urBtn = mkBtn(aspWrap, '♅∀', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
@@ -3805,7 +3826,7 @@
     if (state.allAspectPane) { c.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
     if (state.uranusPane) { c.removeIndicator({ paneId: state.uranusPane }); state.uranusPane = null; }
     window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });
-    // «все аспекты» — режим наведения курсора, отдельной полосы нет
+    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();   // полоса всех аспектов (подписи — на курсор)
     buildAspectButtons();
     updateMoonStatus();
   }
