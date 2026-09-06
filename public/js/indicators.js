@@ -549,6 +549,28 @@
   window.LUN_SYNC_ASPECTS = syncAspectColors;
   window.LUN_ASPECT_DEFS = ASPECTS;
   function separation(a, b) { let d = Math.abs(a - b) % 360; if (d > 180) d = 360 - d; return d; }
+  // Аспекты всех пар планет на момент ts — для показа ПРИ НАВЕДЕНИИ курсора
+  // (вместо постоянной полосы). Возвращает пары в пределах орба, ближайшие первыми.
+  const ASP_GLYPH = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Pluto: '♇' };
+  const ASP_RU = { Sun: 'Солнце', Moon: 'Луна', Mercury: 'Меркурий', Venus: 'Венера', Mars: 'Марс', Jupiter: 'Юпитер', Saturn: 'Сатурн', Uranus: 'Уран', Neptune: 'Нептун', Pluto: 'Плутон' };
+  window.LUN_ASPECTS_AT = function (ts, orb) {
+    if (ts == null || !window.LunAstro || !window.LunAstro.bodyInfo) return [];
+    orb = orb || (window.LUN.ASPECTS && window.LUN.ASPECTS.orb) || 3;
+    const planets = (window.LUN.ASPECT_PLANETS || []).map((p) => p.body);
+    const bodies = ['Sun'].concat(planets.filter((b) => b !== 'Sun'));
+    const cache = {};
+    const lonOf = (body, frame) => { const k = body + frame; if (k in cache) return cache[k]; let v = 0; try { v = window.LunAstro.bodyInfo(body, ts, frame).lon; } catch (e) {} cache[k] = v; return v; };
+    const out = [];
+    for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
+      const a = bodies[i], b = bodies[j];
+      const frame = (a === 'Moon' || b === 'Moon') ? 'geo' : 'helio';
+      const sep = separation(lonOf(a, frame), lonOf(b, frame));
+      let best = null, bd = 1e9; for (const A of ASPECTS) { const dd = Math.abs(sep - A.angle); if (dd < bd) { bd = dd; best = A; } }
+      if (best && bd <= orb) out.push({ a: a, b: b, ag: ASP_GLYPH[a] || a, bg: ASP_GLYPH[b] || b, an: ASP_RU[a] || a, bn: ASP_RU[b] || b, sym: best.sym, name: best.name, color: best.color, kind: best.kind, orb: bd });
+    }
+    out.sort((x, y) => x.orb - y.orb);
+    return out;
+  };
   function aspectCfg(indicator) {
     const ed = indicator && indicator.extendData;
     const base = window.LUN.ASPECTS;
@@ -1541,6 +1563,40 @@
         ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
         ctx.fillStyle = call ? '#f0a0a0' : '#7fe0c0';
         ctx.fillText((call ? 'CALL ' : 'PUT ') + L.strike + '  OI ' + L.oi + (L.expiry ? '  →' + L.expiry.slice(5) : ''), Math.max(2, x1 + 4), y - 2);
+      });
+      return true;
+    },
+  });
+
+  /* ============ Экспирации опционов: авто-вертикали с датой/временем ==========
+   * extendData.items = [{ts, label, klass}] — klass: 'week'|'month'|'quarter'.
+   * Пунктирная вертикаль на всю высоту + подпись даты/времени внизу. Недельные —
+   * серые тонкие, месячные — оранжевые, квартальные — красные жирнее. */
+  kc.registerIndicator({
+    name: 'OptExpiry', shortName: 'Экспирации', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {}, items = ed.items; if (!items || !items.length) return true;
+      const list = chart.getDataList(); if (!list.length) return true;
+      const W = bounding.width, H = bounding.height;
+      const t0 = list[0].timestamp, t1 = list[list.length - 1].timestamp;
+      const step = list.length > 1 ? (t1 - t0) / (list.length - 1) : 86400000;
+      const xOf = (ts) => { if (ts == null) return -1e9; if (ts <= t0) { let lo = 0, hi = list.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) lo = m; else hi = m; } return xAxis.convertToPixel(ts < t0 ? (ts - t0) / (step || 1) : 0); } if (ts >= t1) return xAxis.convertToPixel(list.length - 1 + (ts - t1) / (step || 1)); let lo = 0, hi = list.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) lo = m; else hi = m; } const sp = (list[hi].timestamp - list[lo].timestamp) || 1; return xAxis.convertToPixel(lo + (ts - list[lo].timestamp) / sp); };
+      const STY = {
+        week:    { col: 'rgba(150,160,180,0.75)', w: 1.0, dash: [4, 4], tag: 'нед' },
+        month:   { col: 'rgba(230,160,60,0.9)',   w: 1.4, dash: [6, 4], tag: 'мес' },
+        quarter: { col: 'rgba(239,83,80,0.95)',    w: 1.8, dash: [7, 3], tag: 'кв'  },
+      };
+      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'bottom';
+      items.forEach((it) => {
+        const x = xOf(it.ts); if (x < -2 || x > W + 2) return;
+        const s = STY[it.klass] || STY.week;
+        ctx.strokeStyle = s.col; ctx.lineWidth = s.w; ctx.setLineDash(s.dash);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H - 14); ctx.stroke(); ctx.setLineDash([]);
+        // подпись даты/времени внизу — вертикально вдоль линии, чтобы не наезжала
+        const txt = it.label + ' · ' + s.tag;
+        ctx.save(); ctx.translate(x, H - 3); ctx.rotate(-Math.PI / 2);
+        ctx.fillStyle = s.col; ctx.textAlign = 'left'; ctx.fillText(txt, 0, 4); ctx.restore();
       });
       return true;
     },

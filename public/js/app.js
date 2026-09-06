@@ -237,6 +237,7 @@
         upWuckColor: '#26a69a', downWuckColor: '#ef5350',
       },
       priceMark: { last: { text: { color: '#0b0e14' } } },
+      tooltip: { showRule: 'none' },   // штатную легенду свечи отключаем — своя сворачиваемая HTML-подпись (cell-legend)
     },
     xAxis: { axisLine: { color: '#2a3242' }, tickText: { color: '#8b93a7' } },
     yAxis: { axisLine: { color: '#2a3242' }, tickText: { color: '#8b93a7' } },
@@ -244,18 +245,16 @@
       horizontal: { line: { color: '#6b7280' }, text: { backgroundColor: '#334155' } },
       vertical: { line: { color: '#6b7280' }, text: { backgroundColor: '#334155' } },
     },
-    // легенда: в обычном состоянии — одна строка со свечой (время + OHLCV);
-    // строки индикаторов (VWAP/IVWAP σ и т.п.) показываем только при наведении курсора.
-    indicator: { tooltip: { showRule: 'follow_cross' } },
+    indicator: { tooltip: { showRule: 'none' } },   // легенды индикаторов тоже прячем (см. cell-legend / hover)
   };
   // светлая тема графика (chrome — через CSS class body.light)
   const THEME_LIGHT = {
     grid: { horizontal: { color: '#e7e9f0' }, vertical: { color: '#e7e9f0' } },
-    candle: { bar: { upColor: '#1a9e8f', downColor: '#e5484d', upBorderColor: '#1a9e8f', downBorderColor: '#e5484d', upWuckColor: '#1a9e8f', downWuckColor: '#e5484d' }, priceMark: { last: { text: { color: '#ffffff' } } } },
+    candle: { bar: { upColor: '#1a9e8f', downColor: '#e5484d', upBorderColor: '#1a9e8f', downBorderColor: '#e5484d', upWuckColor: '#1a9e8f', downWuckColor: '#e5484d' }, priceMark: { last: { text: { color: '#ffffff' } } }, tooltip: { showRule: 'none' } },
     xAxis: { axisLine: { color: '#c8ccd6' }, tickText: { color: '#5b6270' } },
     yAxis: { axisLine: { color: '#c8ccd6' }, tickText: { color: '#5b6270' } },
     crosshair: { horizontal: { line: { color: '#9aa0ad' }, text: { backgroundColor: '#5b6270' } }, vertical: { line: { color: '#9aa0ad' }, text: { backgroundColor: '#5b6270' } } },
-    indicator: { tooltip: { showRule: 'follow_cross' } },
+    indicator: { tooltip: { showRule: 'none' } },
   };
   // внешний вид: тема (dark/light) + тип свечей (candle_solid/ohlc=бары)
   let LOOK = { theme: 'dark', candle: 'candle_solid' };
@@ -459,7 +458,8 @@
     wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 11 + i); });
     window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });  // ☉/☿ по умолчанию
-    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();
+    // «все аспекты» теперь показываются при наведении курсора (updateAspHover), а
+    // не постоянной полосой — панель здесь больше не создаём.
     createVolumePane();
   }
 
@@ -1438,6 +1438,72 @@
   }
   function removeOptionLevels(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} } slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); scheduleWsSave(); }
   function syncOptBtn(slot) { slot = slot || state; if (slot !== state) return; const b = document.querySelector('[data-sync="optlev"]'); if (b) b.classList.toggle('active', !!slot.optlevOn); }
+
+  /* ---------- экспирации опционов: авто-вертикали с датой/временем ----------
+   * Реальные даты — с доски опционов MOEX (LASTDELDATE) по базовому активу; класс
+   * (нед/мес/кв) — classifyExpiry. Для не-MOEX или если доска пуста — считаем
+   * недельные экспирации (по умолчанию четверг, исполнение ~18:45 МСК —
+   * вечерний клиринг FORTS). Время настраивается в LUN.EXPIRY. */
+  function expiryTsFromDate(dateStr) {
+    const p = String(dateStr || '').split('-'); if (p.length < 3) return null;
+    const tcfg = (window.LUN.EXPIRY && window.LUN.EXPIRY.time) || '18:45';
+    const tp = tcfg.split(':'); const hh = +tp[0] || 18, mm = +tp[1] || 45;
+    return Date.UTC(+p[0], +p[1] - 1, +p[2], hh - 3, mm);   // МСК = UTC+3 → в UTC
+  }
+  function fmtExpiryLabel(ts) {
+    if (ts == null) return '';
+    const d = new Date(ts + 3 * 3600000);   // показываем в МСК
+    const dd = String(d.getUTCDate()).padStart(2, '0'), mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const hh = String(d.getUTCHours()).padStart(2, '0'), mi = String(d.getUTCMinutes()).padStart(2, '0');
+    return dd + '.' + mo + ' ' + hh + ':' + mi;
+  }
+  function weeklyExpiries(slot) {
+    const E = window.LUN.EXPIRY || {}; const wd = (E.weekday != null ? E.weekday : 4);
+    let l; try { l = slot.chart.getDataList(); } catch (e) { l = null; }
+    const startTs = (l && l.length) ? l[0].timestamp : Date.now() - 120 * 86400000;
+    const endTs = ((l && l.length) ? l[l.length - 1].timestamp : Date.now()) + 70 * 86400000;
+    const out = []; const d0 = new Date(startTs); d0.setUTCHours(0, 0, 0, 0);
+    for (let t = d0.getTime(); t <= endTs; t += 86400000) {
+      const day = new Date(t + 3 * 3600000);   // МСК-день
+      if (day.getUTCDay() === wd) {
+        const ds = day.getUTCFullYear() + '-' + String(day.getUTCMonth() + 1).padStart(2, '0') + '-' + String(day.getUTCDate()).padStart(2, '0');
+        const ts = expiryTsFromDate(ds);
+        out.push({ ts, label: fmtExpiryLabel(ts), klass: 'week' });
+      }
+    }
+    return out;
+  }
+  async function buildExpiry(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    const ins = slot.instrument, E = window.LUN.EXPIRY || {};
+    const keep = (k) => (k === 'week' && E.showWeek !== false) || (k === 'month' && E.showMonth !== false) || (k === 'quarter' && E.showQuarter !== false);
+    let items = [];
+    if ((ins.provider || 'moex') === 'moex') {
+      try {
+        const ticker = await window.LunData.resolveTicker(ins);
+        const asset = futoiCode(ins, ticker);
+        const opts = await window.LunISS.fetchOptions(asset);
+        const seen = {};
+        (opts || []).forEach((o) => { if (!o.expiry || seen[o.expiry]) return; seen[o.expiry] = o.klass || window.LunISS.classifyExpiry(o.expiry); });
+        items = Object.keys(seen).map((d) => { const ts = expiryTsFromDate(d); return { ts, label: fmtExpiryLabel(ts), klass: seen[d] }; })
+          .filter((it) => it.ts != null && keep(it.klass));
+      } catch (e) { items = []; }
+    }
+    if (!items.length) items = weeklyExpiries(slot).filter((it) => keep(it.klass));
+    if (!items.length) { if (slot === state) alert('Экспирации не найдены для этого инструмента.'); return; }
+    items.sort((a, b) => a.ts - b.ts);
+    slot.expiry = items; slot.expiryOn = true;
+    applyExpiry(slot); scheduleWsSave();
+  }
+  function applyExpiry(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptExpiry' }); } catch (e) {}
+    const it = slot.expiry; if (!it || !it.length) { slot.expiryOn = false; syncExpiryBtn(slot); return; }
+    try { c.createIndicator({ name: 'OptExpiry', paneId: 'candle_pane', extendData: { items: it } }, true); slot.expiryOn = true; } catch (e) { slot.expiryOn = false; }
+    syncExpiryBtn(slot);
+  }
+  function removeExpiry(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptExpiry' }); } catch (e) {} } slot.expiry = null; slot.expiryOn = false; syncExpiryBtn(slot); scheduleWsSave(); }
+  function syncExpiryBtn(slot) { slot = slot || state; if (slot !== state) return; const b = document.querySelector('[data-sync="optexp"]'); if (b) b.classList.toggle('active', !!slot.expiryOn); }
   function optionLevelsModal() {
     const O = window.LUN.OPTLEV || (window.LUN.OPTLEV = { series: 'month', topN: 3 });
     const ss = 'background:#0b0e14;color:#d7deea;border:1px solid #2a3242;border-radius:6px;padding:4px 8px';
@@ -1476,6 +1542,10 @@
           <input type="checkbox" id="ds-snap"${window.LUN.SNAP ? ' checked' : ''} style="margin-top:2px">
           <span><b>Притяжка к вершинам/низинам баров</b><br><span style="color:#8b93a7;font-size:12px">Начало линий, лучей, прямоугольников и углов Ганна прилипает к High/Low бара — но только вблизи вершины (за ~1 бар). Дальше — рисуется в месте тыка (чистое поле).</span></span>
         </label>
+        <label style="display:flex;gap:8px;align-items:flex-start">
+          <input type="checkbox" id="ds-behind"${(window.LUN.DRAW && window.LUN.DRAW.behind) ? ' checked' : ''} style="margin-top:2px">
+          <span><b>Рисовать за барами (под свечами)</b><br><span style="color:#8b93a7;font-size:12px">Все построения (линии, прямоугольники, вертикали, тексты, углы) уходят ПОД свечи — свечи видны поверх разметки. Снятая галочка — рисунки поверх баров, как обычно. Применяется сразу ко всем.</span></span>
+        </label>
         <div style="border-top:1px solid #232b3a;padding-top:12px">
           <label style="display:flex;gap:8px;align-items:flex-start">
             <input type="checkbox" id="ds-fc"${B.forecast ? ' checked' : ''} style="margin-top:2px">
@@ -1493,9 +1563,11 @@
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
     bg.querySelector('#ds-apply').onclick = () => {
       window.LUN.SNAP = bg.querySelector('#ds-snap').checked;
+      window.LUN.DRAW = window.LUN.DRAW || {}; window.LUN.DRAW.behind = bg.querySelector('#ds-behind').checked;
       B.forecast = bg.querySelector('#ds-fc').checked;
       B.forecastCount = +bg.querySelector('#ds-fc-n').value || 2;
       B.forecastDir = bg.querySelector('#ds-fc-dir').value;
+      applyDrawZAll();   // применить «за барами / поверх» ко всем существующим рисункам сразу
       scheduleWsSave(); bg.remove();
     };
   }
@@ -1634,6 +1706,59 @@
     document.body.appendChild(p); p.querySelector('#dw-close').onclick = () => toggleDataWin(false);
     dataWinEl = p; return p;
   }
+  // Аспекты всех пар при наведении курсора (вместо постоянной полосы)
+  let aspHoverEl = null;
+  function ensureAspHover() {
+    if (aspHoverEl) return aspHoverEl;
+    const p = document.createElement('div');
+    p.id = 'asp-hover';
+    p.style.cssText = 'position:fixed;z-index:60;max-width:240px;background:rgba(18,23,34,.96);border:1px solid #2a3242;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);padding:6px 9px;font-size:11px;color:#d7deea;pointer-events:none;display:none';
+    document.body.appendChild(p); aspHoverEl = p; return p;
+  }
+  function hideAspHover() { if (aspHoverEl) aspHoverEl.style.display = 'none'; }
+  function updateAspHover(d) {
+    if (!window.LUN.ALL_ASPECTS || !window.LUN.ALL_ASPECTS.enabled) { hideAspHover(); return; }
+    const ts = d && (d.kLineData ? d.kLineData.timestamp : d.timestamp);
+    if (ts == null || !d || d.x == null) { hideAspHover(); return; }
+    const orb = (window.LUN.ASPECTS && window.LUN.ASPECTS.orb) || 3;
+    let list = []; try { list = window.LUN_ASPECTS_AT(ts, orb) || []; } catch (e) {}
+    const el = ensureAspHover();
+    if (!list.length) { el.style.display = 'none'; return; }
+    const dt = new Date(ts), ds = dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const rows = list.slice(0, 14).map((a) => `<div style="white-space:nowrap"><span style="color:${a.color};font-size:13px">${a.ag}${a.sym}${a.bg}</span> <span style="color:#8b93a7">${a.name} · ${a.orb.toFixed(1)}°</span></div>`).join('');
+    el.innerHTML = `<div style="color:#3aa0ff;margin-bottom:3px">аспекты · ${ds}</div>${rows}`;
+    el.style.display = 'block';
+    const cell = state.cellEl; if (!cell) return;
+    const r = cell.getBoundingClientRect();
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let left = r.left + d.x + 16, top = r.top + (d.y != null ? d.y : 40) + 12;
+    if (left + w > window.innerWidth - 6) left = r.left + d.x - w - 16;
+    if (top + h > window.innerHeight - 6) top = window.innerHeight - h - 6;
+    el.style.left = Math.max(6, left) + 'px'; el.style.top = Math.max(6, top) + 'px';
+  }
+  // Сворачиваемая легенда графика (тикер ▸ / раскрытые OHLCV). slot.legendBar —
+  // бар под курсором (иначе последний). slot.legendOpen — раскрыта ли.
+  function renderLegend(slot) {
+    const el = slot && slot.legendEl; if (!el) return;
+    const ins = slot.instrument || {};
+    const tk = ins.ticker || ins.symbol || ins.title || ins.id || '';
+    const tri = slot.legendOpen ? '▾' : '▸';
+    let bar = slot.legendBar;
+    if (!bar) { try { const l = slot.chart.getDataList(); bar = l && l.length ? l[l.length - 1] : null; } catch (e) {} }
+    if (!slot.legendOpen || !bar) { el.innerHTML = `<span class="cl-tk">${tk}</span> <span class="cl-tri">${tri}</span>`; return; }
+    const prec = (ins.pricePrecision != null) ? ins.pricePrecision : 2;
+    const up = bar.close >= bar.open, col = up ? '#26a69a' : '#ef5350';
+    const chg = (bar.close || 0) - (bar.open || 0), pct = bar.open ? chg / bar.open * 100 : 0;
+    const dt = new Date(bar.timestamp), ds = dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const f = (v) => (v != null ? (+v).toFixed(prec) : '—');
+    const num = (v) => v != null ? (+v).toLocaleString('ru-RU') : '—';
+    el.innerHTML = `<div class="cl-head"><span class="cl-tk">${tk}</span> <span style="color:#8b93a7">${slot.tf ? slot.tf.title : ''}</span> <span class="cl-tri">${tri}</span></div>`
+      + `<div class="cl-row" style="color:#8b93a7">${ds}</div>`
+      + `<div class="cl-row">O <b>${f(bar.open)}</b>&nbsp; H <b>${f(bar.high)}</b></div>`
+      + `<div class="cl-row">L <b>${f(bar.low)}</b>&nbsp; C <b style="color:${col}">${f(bar.close)}</b></div>`
+      + `<div class="cl-row" style="color:${col}">Δ ${up ? '+' : ''}${f(chg)} (${up ? '+' : ''}${pct.toFixed(2)}%)</div>`
+      + `<div class="cl-row" style="color:#8b93a7">V ${num(bar.volume)}</div>`;
+  }
   function toggleDataWin(on) {
     ensureDataWin(); dataWinOpen = on; dataWinEl.style.display = on ? 'block' : 'none';
     const b = document.querySelector('[data-role="datawin"]'); if (b) b.classList.toggle('active', on);
@@ -1724,6 +1849,7 @@
           try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: ed, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = Object.assign({}, d, { extendData: ed }); } catch (e) {}
         });
         try { sweepForeignOverlays(slot); } catch (e) {}   // и сразу подмести всё, что не наше
+        try { applyDrawZ(slot); } catch (e) {}             // применить «за барами / поверх» к восстановленным
       }, 950);
     }
     if (!replaying) setTimeout(() => setInitialView(slot), 900);   // дефолт-обзор по ТФ
@@ -1737,9 +1863,15 @@
     // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
     if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
     else if (slot.optlev) setTimeout(() => { try { applyOptionLevels(slot); } catch (e) {} }, 980);
+    // экспирации опционов — даты абсолютные: при смене инструмента пересобираем под
+    // новый базовый актив; при смене ТФ просто перерисовываем существующие.
+    if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptExpiry' }); } catch (e) {} const wasOn = slot.expiryOn; slot.expiry = null; slot.expiryOn = false; syncExpiryBtn(slot); if (wasOn) setTimeout(() => { try { buildExpiry(slot); } catch (e) {} }, 1000); }
+    else if (slot.expiry) setTimeout(() => { try { applyExpiry(slot); } catch (e) {} }, 990);
     // много-экранное зеркало рисунков (одинаковый инструмент) — после отрисовки истории
     if (slot === state && slots.length > 1) setTimeout(() => { try { mirrorToSiblings(state); } catch (e) {} }, 1050);
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
+    renderLegend(slot);                                          // подпись слева сверху: тикер (свёрнуто)
+    setTimeout(() => { try { renderLegend(slot); } catch (e) {} }, 1000);   // после подгрузки истории — с последним баром
   }
   // стартовый обзор: сколько истории показать по ТФ (D1 ≈ 3 мес, H1 ≈ 1 мес)
   function setInitialView(slot) {
@@ -2081,6 +2213,20 @@
     }
   }
   function sweepAllSlots() { try { (slots || []).forEach((s) => sweepForeignOverlays(s)); } catch (e) {} }
+  // Рисование за барами / поверх: zLevel<0 → библиотека рисует оверлей ПОД свечами
+  // (destination-over), 0 → поверх. Настройка глобальная (LUN.DRAW.behind).
+  const drawZ = () => ((window.LUN.DRAW && window.LUN.DRAW.behind) ? -1 : 0);
+  function applyDrawZ(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    const z = drawZ();
+    let ovs; try { ovs = c.getOverlays() || []; } catch (e) { return; }
+    for (const ov of ovs) {
+      if (!ov) continue;
+      const isDraw = (ov.extendData && ov.extendData._ins) || (ov.name && String(ov.name).indexOf('lun_') === 0);
+      if (isDraw && ov.zLevel !== z) { try { c.overrideOverlay({ id: ov.id, zLevel: z }); } catch (e) {} }
+    }
+  }
+  function applyDrawZAll() { try { (slots || []).forEach((s) => applyDrawZ(s)); } catch (e) {} }
   // Зеркалирование рисунков на другие ячейки с ТЕМ ЖЕ инструментом: рисуешь на
   // одном экране — появляется на всех с этим же инструментом (в обе стороны).
   function mirrorToSiblings(src) {
@@ -2103,7 +2249,7 @@
     } finally { mirroring = false; }
   }
   // учёт нарисованных объектов для сохранения рабочего стола
-  function recordOverlay(ov) { if (!ov || !ov.id) return; state.drawings[ov.id] = { name: ov.name, points: clonePoints(ov.points), extendData: ov.extendData, styles: ov.styles, lock: !!ov.lock }; scheduleWsSave(); }
+  function recordOverlay(ov) { if (!ov || !ov.id) return; state.drawings[ov.id] = { name: ov.name, points: clonePoints(ov.points), extendData: ov.extendData, styles: ov.styles, lock: !!ov.lock }; try { const z = drawZ(); if (ov.zLevel !== z) state.chart.overrideOverlay({ id: ov.id, zLevel: z }); } catch (e) {} scheduleWsSave(); }
   function forgetOverlay(id) { if (id && state.drawings[id]) { delete state.drawings[id]; scheduleWsSave(); } }
   // притяжка точки к вершине/низине бара — ТОЛЬКО вблизи (в пределах ~половины
   // высоты свечи), иначе точка остаётся в месте тыка (чистое поле).
@@ -2539,7 +2685,7 @@
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
       swings: s.swings || null,
-      draw: { snap: !!window.LUN.SNAP, boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
+      draw: { snap: !!window.LUN.SNAP, behind: !!(window.LUN.DRAW && window.LUN.DRAW.behind), boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
       lineTypes: window.LUN.LINETYPES || null, curLineType: window.LUN.CUR_LINETYPE || null, deltaReset: (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day',
       inds: {
         candle: Object.keys(s.candleInds || {}), overlays: Object.keys(s.overlayIds || {}),
@@ -2547,7 +2693,7 @@
         basis: !!s.basisPane, retro: !!s.retroPane, bradley: !!s.bradleyPane, syn: !!s.synPane,
         signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
         aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane, sbc: !!s.sbcPane, svir: !!s.svirPane,
-        vwap: !!s.vwapOn,
+        vwap: !!s.vwapOn, expiry: !!s.expiryOn,
       },
       drawings: Object.values(s.drawings || {}),
       drawStore: s.drawStore || null,
@@ -2562,6 +2708,7 @@
     try { if (ind.delta && !state.deltaPane) createDeltaPane(); } catch (e) {}
     try { if (ind.markov && !state.markovPanes) createMarkov(); } catch (e) {}
     try { if (ind.oi && !state.oiPane) rebuildOI(state); } catch (e) {}
+    try { if (ind.expiry && !state.expiryOn) buildExpiry(state); } catch (e) {}
     try { if (ind.basis && !state.basisPane) rebuildBasis(state); } catch (e) {}
     try { if (ind.retro && !state.retroPane) createRetroPane(); } catch (e) {}
     try { if (ind.bradley && !state.bradleyPane) createBradleyPane(); } catch (e) {}
@@ -2569,7 +2716,8 @@
     (ind.signs || []).forEach((b, i) => { if (state.signPanes[b]) return; try { if (b === 'Moon') toggleMoonSign(true); else createSignPane(b, 25 + i); } catch (e) {} });
     (ind.cycles || []).forEach((id, i) => { const cy = window.LUN.CYCLES.find((c) => c.id === id); if (cy && !state.cyclePanes[id]) try { createCyclePane(cy, 11 + i); } catch (e) {} });
     (ind.aspects || []).forEach((b, i) => { const pl = window.LUN.ASPECT_PLANETS.find((p) => p.body === b); if (pl && !state.aspectPanes[b]) try { createSunAspect(pl, 15 + i); } catch (e) {} });
-    try { if (ind.allAspect && !state.allAspectPane) createAllAspect(); } catch (e) {}
+    // ind.allAspect (старая полоса) больше не восстанавливаем — режим «на курсор»
+    // управляется флагом LUN.ALL_ASPECTS.enabled из настроек.
     try { if (ind.aspsel && !state.aspSelPane && (window.LUN.ASPSEL.blocks || []).length) createAspSelPane(); } catch (e) {}
     try { if (ind.sbc && !state.sbcPane && window.LUN_SBC && window.LUN_SBC.janma) createSBCPane(); } catch (e) {}
     try { if (ind.svir && !state.svirPane) createSvirPane(); } catch (e) {}
@@ -2607,7 +2755,7 @@
       if (ws.swings && ws.swings.pivots && ws.swings.pivots.length > 1) state.swings = ws.swings;
       // рисунки ВСЕХ инструментов — из drawStore; активный инструмент восстановит load()
       if (ws.drawStore && typeof ws.drawStore === 'object') state.drawStore = ws.drawStore;
-      if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; window.LUN.GANNTOOLS.box.forecastDir = ws.draw.boxForecastDir || 'auto'; } }
+      if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; window.LUN.DRAW = window.LUN.DRAW || {}; window.LUN.DRAW.behind = !!ws.draw.behind; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; window.LUN.GANNTOOLS.box.forecastDir = ws.draw.boxForecastDir || 'auto'; } }
       if (Array.isArray(ws.lineTypes) && ws.lineTypes.length) window.LUN.LINETYPES = ws.lineTypes;
       if (ws.curLineType) window.LUN.CUR_LINETYPE = ws.curLineType;
       if (ws.deltaReset) { window.LUN.DELTA = window.LUN.DELTA || {}; window.LUN.DELTA.reset = ws.deltaReset; }
@@ -3000,6 +3148,7 @@
     // MOEX-аналитика (перенесено из «Ганн»): опционные стенки и стрелки физлиц
     mkBtn(indWrap, '📊 Опционные уровни (стенки ОИ)…', () => { closeMenus(); optionLevelsModal(); }, false, 'Макс-ОИ страйки CALL/PUT выбранной серии (нед/мес/квартал) горизонталями').dataset.sync = 'optlev';
     mkBtn(indWrap, '✕ убрать опционные уровни', () => { closeMenus(); removeOptionLevels(state); }, false, 'Снять опционные стенки');
+    mkBtn(indWrap, '🗓 Экспирации опционов (нед/мес/кв)', (b) => { closeMenus(); if (b.classList.contains('active')) removeExpiry(state); else buildExpiry(state); }, false, 'Авто-вертикали дат экспираций опционов с датой/временем (нед — серые, мес — оранжевые, кв — красные). Si недельные: четверг, ~18:45 МСК').dataset.sync = 'optexp';
     mkBtn(indWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
     mkBtn(indWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');
     // базис к споту исходного товара (фьюч − спот, регрессией) + z-score
@@ -3332,7 +3481,7 @@
       case 'sign': return !!state.signPanes[arg];
       case 'cyc': return !!state.cyclePanes[arg];
       case 'asp': return !!state.aspectPanes[arg];
-      case 'allasp': return !!state.allAspectPane;
+      case 'allasp': return !!(window.LUN.ALL_ASPECTS && window.LUN.ALL_ASPECTS.enabled);
       case 'uranus': return !!state.uranusPane;
       case 'forecast': return !!state.forecastOn;
       case 'oi': return !!state.oiPane;
@@ -3369,6 +3518,12 @@
       if (prev[i]) { slot.instrument = prev[i].instrument; slot.tf = prev[i].tf; }
       else { slot.instrument = window.LUN.INSTRUMENTS[Math.min(i, window.LUN.INSTRUMENTS.length - 1)]; slot.tf = DEFAULT_TF; }
       slot.chart = kc.init(cell, { styles: THEME });
+      // сворачиваемая подпись слева сверху: по умолчанию только тикер + треугольник,
+      // при наведении раскрывает время и OHLCV (клик — фиксирует на телефоне)
+      const lg = document.createElement('div'); lg.className = 'cell-legend'; cell.appendChild(lg); slot.legendEl = lg;
+      lg.addEventListener('mouseenter', () => { slot.legendOpen = true; renderLegend(slot); });
+      lg.addEventListener('mouseleave', () => { slot.legendOpen = false; renderLegend(slot); });
+      lg.addEventListener('click', (e) => { e.stopPropagation(); slot.legendOpen = !slot.legendOpen; renderLegend(slot); });
       cell.addEventListener('mousedown', () => activateSlot(i));
       // клик по ПОЛЮ (не по объекту) — снять выделение и спрятать панель свойств.
       // Если клик попал в объект, sel() обновит lastSelTs и панель останется.
@@ -3379,7 +3534,8 @@
         }, 40);
       });
       // отслеживаем панель под курсором (для удаления двойным кликом)
-      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; if (dataWinOpen && slot === state) updateDataWin(d); }); } catch (e) {}
+      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; let lb = null; if (d) { if (d.kLineData) lb = d.kLineData; else if (d.dataIndex != null) { try { const l = slot.chart.getDataList(); lb = l[d.dataIndex] || null; } catch (e) {} } } slot.legendBar = lb; if (slot.legendOpen) renderLegend(slot); if (slot === state) { if (dataWinOpen) updateDataWin(d); updateAspHover(d); } }); } catch (e) {}
+      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; if (slot.legendOpen) renderLegend(slot); });   // курсор ушёл — прячем подсказку аспектов, легенда → последний бар
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
         if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
@@ -3408,10 +3564,14 @@
       if (pl.enabled) createSunAspect(pl, 15 + i);
       else if (state.aspectPanes[pl.body]) { state.chart.removeIndicator({ paneId: state.aspectPanes[pl.body] }); delete state.aspectPanes[pl.body]; }
     }, pl.enabled, `Аспекты ☉/${pl.glyph} (${pl.body})`).dataset.sync = 'asp:' + pl.body; });
-    mkBtn(aspWrap, '∀ все', (b) => {
+    mkBtn(aspWrap, '∀ все (на курсор)', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); window.LUN.ALL_ASPECTS.enabled = on;
-      if (on) createAllAspect(); else if (state.allAspectPane) { state.chart.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
-    }, window.LUN.ALL_ASPECTS.enabled, 'Сводная полоса всех аспектов всех пар (детально на M5/M15)').dataset.sync = 'allasp';
+      // Раньше была постоянная полоса-панель. Теперь аспекты всех пар планет
+      // показываем ТОЛЬКО при наведении курсора на бар — всплывающей подсказкой.
+      if (state.allAspectPane) { try { state.chart.removeIndicator({ paneId: state.allAspectPane }); } catch (e) {} state.allAspectPane = null; }
+      if (!on) hideAspHover();
+      scheduleWsSave();
+    }, window.LUN.ALL_ASPECTS.enabled, 'Аспекты всех пар планет ПРИ НАВЕДЕНИИ курсора на бар (всплывающая подсказка, не постоянная полоса)').dataset.sync = 'allasp';
     // отдельная полоса: Уран — все планеты (мажорные аспекты)
     const urBtn = mkBtn(aspWrap, '♅∀', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
@@ -3645,7 +3805,7 @@
     if (state.allAspectPane) { c.removeIndicator({ paneId: state.allAspectPane }); state.allAspectPane = null; }
     if (state.uranusPane) { c.removeIndicator({ paneId: state.uranusPane }); state.uranusPane = null; }
     window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });
-    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();
+    // «все аспекты» — режим наведения курсора, отдельной полосы нет
     buildAspectButtons();
     updateMoonStatus();
   }

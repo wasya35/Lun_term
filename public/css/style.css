@@ -80,6 +80,18 @@ body {
 #chart { flex: 1 1 auto; min-height: 0; }
 #chart .cell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
 #chart .cell.cell-active { box-shadow: inset 0 0 0 2px var(--accent); }   /* активная ячейка */
+/* сворачиваемая подпись графика слева сверху: тикер ▸ / раскрытые OHLCV при наведении */
+.cell-legend {
+  position: absolute; top: 6px; left: 8px; z-index: 7;
+  font-size: 12px; color: var(--text); line-height: 1.35;
+  background: rgba(11,14,20,.35); border-radius: 6px; padding: 2px 8px;
+  cursor: pointer; user-select: none; max-width: 62%;
+  backdrop-filter: blur(2px);
+}
+body.light .cell-legend { background: rgba(255,255,255,.5); }
+.cell-legend .cl-tk { font-weight: 600; }
+.cell-legend .cl-tri { color: var(--muted); font-size: 10px; }
+.cell-legend .cl-head { margin-bottom: 2px; }
 .sync-vline { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(58,160,255,.55); pointer-events: none; display: none; z-index: 6; }
 .sync-hline { position: absolute; left: 0; right: 0; height: 1px; background: rgba(58,160,255,.30); pointer-events: none; display: none; z-index: 6; }
 
