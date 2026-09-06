@@ -742,7 +742,7 @@
       if (type === 'grid') startOverlay('lun_gannsquare', { divisions }); else startOverlay('lun_gannbox');
     };
   }
-  function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); const style = defOvStyle(); state.chart.createOverlay(Object.assign({ name, extendData: Object.assign({ style }, extendData), styles: klineStylesFrom(style) }, ev)); }
+  function startOverlay(name, extendData) { closeMenus(); const ev = overlayEvents(); const style = defOvStyle(); state.chart.createOverlay(Object.assign({ name, extendData: edIns(Object.assign({ style }, extendData)), styles: klineStylesFrom(style) }, ev)); }
   // масштаб 1×1 (цена на бар) для сквоузинга: авто / ручной
   function scaleModal() {
     const cfg = window.LUN.GANNTOOLS.scale || (window.LUN.GANNTOOLS.scale = {});
@@ -1681,6 +1681,7 @@
       // их это не трогает.
       try { c.removeOverlay(); } catch (e) {}
       slot.drawings = {};
+      try { sweepForeignOverlays(slot); } catch (e) {}   // добить всё чужое сразу (slot.instrument уже = новый ins)
     }
     slot._loadedInsId = insId;
     const ticker = await window.LunData.resolveTicker(ins);
@@ -1717,8 +1718,12 @@
       setTimeout(() => {
         if (slot._loadedInsId !== insId) return;   // за это время инструмент сменили — не восстанавливаем чужое
         (slot.drawStore[insId] || []).forEach((d) => {
-          try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = d; } catch (e) {}
+          const owner = d && d.extendData && d.extendData._ins;
+          if (owner && owner !== insId) return;    // чужой рисунок затесался в хранилище — НЕ восстанавливаем
+          const ed = edIns(d.extendData, { instrument: ins });   // жёстко закрепляем владельца = текущий инструмент
+          try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: ed, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = Object.assign({}, d, { extendData: ed }); } catch (e) {}
         });
+        try { sweepForeignOverlays(slot); } catch (e) {}   // и сразу подмести всё, что не наше
       }, 950);
     }
     if (!replaying) setTimeout(() => setInitialView(slot), 900);   // дефолт-обзор по ТФ
@@ -1811,7 +1816,7 @@
     const dayMs = Math.max(tfMsOf(state.tf), 3600000);
     let ovId = null;
     const ed = { entry: entry, tp: tp, sl: sl, rr: SIM.settings.rr, dir: dir, entryTs: ts, endTs: ts + dayMs, style: defOvStyle() };
-    try { const id = c.createOverlay(Object.assign({ name: 'lun_pos', points: [{ timestamp: ts, value: entry }], extendData: ed }, overlayEvents())); ovId = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); } catch (e) {}
+    try { const id = c.createOverlay(Object.assign({ name: 'lun_pos', points: [{ timestamp: ts, value: entry }], extendData: edIns(ed) }, overlayEvents())); ovId = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); } catch (e) {}
     SIM.open.push({ dir, entry, sl, tp, ts, ins: (state.instrument.title || state.instrument.id), slot: activeIdx, lastIdx: l.length - 1, ovId, rr: SIM.settings.rr });
     updateReplayBar();
   }
@@ -2048,6 +2053,34 @@
   let mirroring = false;            // защита от рекурсии при зеркалировании рисунков
   const clonePoints = (pts) => (pts || []).map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: p.value }));
   const ovOf = (event) => event && (event.overlay || event.currentOverlay);
+  /* ============================================================================
+   * РАЗМЕТКА СТРОГО ПЕР-ИНСТРУМЕНТ (как в TradingView) — защита в глубину.
+   * Каждый оверлей-рисунок штампуем владельцем extendData._ins = favId(инструмента),
+   * на котором он создан. Инварианты:
+   *   1) новые рисунки, клоны, вставка, прогноз-боксы, сим-позиции — штампуются;
+   *   2) при загрузке инструмента восстанавливаем ТОЛЬКО «свои» из drawStore[insId];
+   *   3) sweepForeignOverlays() физически удаляет с графика ЛЮБОЙ оверлей с чужим
+   *      штампом — вызывается на смене инструмента, после загрузки данных и по
+   *      таймеру. Даже если какой-то путь очистки/восстановления даст сбой, чужой
+   *      рисунок не может «пережить» подметание. Разметка НИКОГДА не переходит на
+   *      другой инструмент.
+   * ========================================================================== */
+  const insTag = (slot) => favId((slot || state).instrument);
+  const edIns = (ed, slot) => Object.assign({}, ed || {}, { _ins: insTag(slot) });
+  function sweepForeignOverlays(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    const mine = insTag(slot);
+    let ovs; try { ovs = c.getOverlays() || []; } catch (e) { return; }
+    for (const ov of ovs) {
+      if (!ov) continue;
+      const owner = ov.extendData && ov.extendData._ins;
+      if (owner && owner !== mine) {
+        try { c.removeOverlay({ id: ov.id }); } catch (e) {}
+        if (slot.drawings && slot.drawings[ov.id]) delete slot.drawings[ov.id];
+      }
+    }
+  }
+  function sweepAllSlots() { try { (slots || []).forEach((s) => sweepForeignOverlays(s)); } catch (e) {} }
   // Зеркалирование рисунков на другие ячейки с ТЕМ ЖЕ инструментом: рисуешь на
   // одном экране — появляется на всех с этим же инструментом (в обе стороны).
   function mirrorToSiblings(src) {
@@ -2061,8 +2094,9 @@
         s.drawings = {};
         Object.values(src.drawings || {}).forEach((d) => {
           try {
-            const id = s.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents()));
-            const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) s.drawings[oid] = d;
+            const ed = edIns(d.extendData, s);
+            const id = s.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: ed, styles: d.styles, lock: d.lock }, overlayEvents()));
+            const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) s.drawings[oid] = Object.assign({}, d, { extendData: ed });
           } catch (e) {}
         });
       });
@@ -2117,7 +2151,7 @@
         { dataIndex: i1 + k * di, value: v1 + k * dv, timestamp: tsFor(i1 + k * di) },
       ];
       const stt = Object.assign({}, defOvStyle(), { dash: 'dashed' });
-      const ed2 = { style: stt, forecast: true };
+      const ed2 = edIns({ style: stt, forecast: true });
       try {
         const id = state.chart.createOverlay(Object.assign({ name: 'lun_gannbox', points: np, extendData: ed2 }, overlayEvents()));
         const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null);
@@ -2161,7 +2195,7 @@
         sel(event);
         const ov = ovOf(event);
         if (!ctrlDown || !ov) return false;
-        try { state.chart.createOverlay(Object.assign({ name: ov.name, points: clonePoints(ov.points), styles: ov.styles, extendData: ov.extendData }, overlayEvents())); }
+        try { state.chart.createOverlay(Object.assign({ name: ov.name, points: clonePoints(ov.points), styles: ov.styles, extendData: edIns(ov.extendData) }, overlayEvents())); }
         catch (e) { /* клонирование не должно ломать перенос */ }
         return false;   // не перехватываем — оригинал продолжает тянуться мышью
       },
@@ -2187,7 +2221,7 @@
   function pasteOverlay() {
     const c = state.clipboardOverlay; if (!c) return false;
     const pts = c.points.map((p) => ({ timestamp: p.timestamp, dataIndex: p.dataIndex, value: (p.value != null ? p.value * 1.004 : p.value) }));  // сдвиг ↑0.4%, чтобы копия была видна
-    try { state.chart.createOverlay(Object.assign({ name: c.name, points: pts, styles: c.styles, extendData: c.extendData }, overlayEvents())); return true; } catch (e) { return false; }
+    try { state.chart.createOverlay(Object.assign({ name: c.name, points: pts, styles: c.styles, extendData: edIns(c.extendData) }, overlayEvents())); return true; } catch (e) { return false; }
   }
   // Ctrl+S — скрин активного графика (PNG). +/- — зум.
   function screenshot() {
@@ -2489,7 +2523,15 @@
     // живые рисунки активного инструмента — в drawStore, чтобы сохранить/синхронизировать
     // рисунки ВСЕХ инструментов (а не только текущего). Так на другом устройстве и при
     // переключении инструментов всё возвращается как было.
-    try { s.drawStore = s.drawStore || {}; s.drawStore[favId(s.instrument)] = Object.values(s.drawings || {}).map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock })); } catch (e) {}
+    try {
+      s.drawStore = s.drawStore || {};
+      const curId = favId(s.instrument);
+      // в хранилище текущего инструмента кладём ТОЛЬКО его собственные рисунки
+      // (по штампу _ins) — исключаем любые «чужие», случайно оказавшиеся в state.drawings.
+      s.drawStore[curId] = Object.values(s.drawings || {})
+        .filter((d) => { const o = d && d.extendData && d.extendData._ins; return !o || o === curId; })
+        .map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: edIns(d.extendData, s), styles: d.styles, lock: d.lock }));
+    } catch (e) {}
     return {
       v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
       trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null, barMode: (window.LUN.BAR && window.LUN.BAR.mode) || 'signed',
@@ -2534,7 +2576,13 @@
     try { if (ind.vwap) applyVwap(state); } catch (e) {}
   }
   function applyWsDrawings(list) {
-    (list || []).forEach((d) => { try { const id = state.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) state.drawings[oid] = d; } catch (e) {} });
+    const insId = favId(state.instrument);
+    (list || []).forEach((d) => {
+      const owner = d && d.extendData && d.extendData._ins;
+      if (owner && owner !== insId) return;   // легаси-путь: не тянем чужие рисунки на текущий инструмент
+      const ed = edIns(d.extendData);
+      try { const id = state.chart.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: ed, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) state.drawings[oid] = Object.assign({}, d, { extendData: ed }); } catch (e) {}
+    });
   }
   async function applyWorkspace(ws) {
     if (!ws || applyingWs) return;
@@ -2650,12 +2698,12 @@
     if (toolId === 'lun_text') {
       const t = window.prompt('Текст метки:', '');
       if (t === null) return;
-      state.chart.createOverlay(Object.assign({ name: 'lun_text', extendData: { text: t, style }, styles: kst }, ev));
+      state.chart.createOverlay(Object.assign({ name: 'lun_text', extendData: edIns({ text: t, style }), styles: kst }, ev));
     } else if (toolId === 'lun_hray') {
       const n = (window.LUN.HRAY && window.LUN.HRAY.maxCrossings) || 2;
-      state.chart.createOverlay(Object.assign({ name: 'lun_hray', extendData: { maxCrossings: n, style }, styles: kst }, ev));
+      state.chart.createOverlay(Object.assign({ name: 'lun_hray', extendData: edIns({ maxCrossings: n, style }), styles: kst }, ev));
     } else {
-      state.chart.createOverlay(Object.assign({ name: toolId, extendData: { style }, styles: kst }, ev));
+      state.chart.createOverlay(Object.assign({ name: toolId, extendData: edIns({ style }), styles: kst }, ev));
     }
   }
 
@@ -3629,6 +3677,7 @@
     updateMoonStatus();
     setInterval(updateMoonStatus, 60000);
     setInterval(() => scheduleWsSave(), 25000);   // страховочное авто-сохранение рабочего стола
+    setInterval(sweepAllSlots, 2000);             // финальный страж: чужая разметка не живёт на графике дольше 2 сек
     window.addEventListener('lun:datasource', () => {
       const el = document.getElementById('datasource');   // строка-подвал убрана — может отсутствовать
       if (el) {
@@ -3637,6 +3686,8 @@
         el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
       }
       slots.forEach((s) => scheduleApply(s));   // данные загружены — закрепляем высоты панелей всех слотов
+      // данные (пере)загружены — гарантируем, что на графике нет ни одного чужого рисунка
+      setTimeout(sweepAllSlots, 60); setTimeout(sweepAllSlots, 1100);
       // коннекторы всегда живые: после (пере)загрузки данных переподписываем поток
       // активного слота (вне реплея). Страж целостности в stream.js не даст чужому
       // бару попасть в график.
