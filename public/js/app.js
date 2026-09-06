@@ -1705,8 +1705,9 @@
     document.body.appendChild(p); p.querySelector('#dw-close').onclick = () => toggleDataWin(false);
     dataWinEl = p; return p;
   }
-  // Аспекты всех пар при наведении курсора (вместо постоянной полосы)
+  // Аспекты всех пар при наведении курсора (подпись всплывает у вертикали курсора)
   let aspHoverEl = null;
+  let lastMouse = { x: 0, y: 0 };
   function ensureAspHover() {
     if (aspHoverEl) return aspHoverEl;
     const p = document.createElement('div');
@@ -1717,21 +1718,22 @@
   function hideAspHover() { if (aspHoverEl) aspHoverEl.style.display = 'none'; }
   function updateAspHover(d) {
     if (!window.LUN.ALL_ASPECTS || !window.LUN.ALL_ASPECTS.enabled) { hideAspHover(); return; }
-    const ts = d && (d.kLineData ? d.kLineData.timestamp : d.timestamp);
-    if (ts == null || !d || d.x == null) { hideAspHover(); return; }
+    // ВАЖНО: в этой сборке onCrosshairChange НЕ содержит x/y — только timestamp,
+    // dataIndex, kLineData, realX. Берём момент бара по timestamp/kLineData,
+    // а позицию подсказки — по последней позиции мыши (lastMouse).
+    const ts = d && (d.timestamp != null ? d.timestamp : (d.kLineData ? d.kLineData.timestamp : null));
+    if (ts == null) { hideAspHover(); return; }
     const orb = (window.LUN.ASPECTS && window.LUN.ASPECTS.orb) || 3;
     let list = []; try { list = window.LUN_ASPECTS_AT(ts, orb) || []; } catch (e) {}
     const el = ensureAspHover();
     if (!list.length) { el.style.display = 'none'; return; }
     const dt = new Date(ts), ds = dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const rows = list.slice(0, 14).map((a) => `<div style="white-space:nowrap"><span style="color:${a.color};font-size:13px">${a.ag}${a.sym}${a.bg}</span> <span style="color:#8b93a7">${a.name} · ${a.orb.toFixed(1)}°</span></div>`).join('');
-    el.innerHTML = `<div style="color:#3aa0ff;margin-bottom:3px">аспекты · ${ds}</div>${rows}`;
+    const rows = list.slice(0, 14).map((a) => `<div style="white-space:nowrap"><span style="color:${a.color};font-size:13px">${a.ag}${a.sym}${a.bg}</span> <span style="color:#8b93a7">${a.an}–${a.bn} · ${a.name} · орб ${a.orb.toFixed(1)}°</span></div>`).join('');
+    el.innerHTML = `<div style="color:#3aa0ff;margin-bottom:3px">☍ аспекты · ${ds}</div>${rows}`;
     el.style.display = 'block';
-    const cell = state.cellEl; if (!cell) return;
-    const r = cell.getBoundingClientRect();
     const w = el.offsetWidth, h = el.offsetHeight;
-    let left = r.left + d.x + 16, top = r.top + (d.y != null ? d.y : 40) + 12;
-    if (left + w > window.innerWidth - 6) left = r.left + d.x - w - 16;
+    let left = (lastMouse.x || window.innerWidth / 2) + 16, top = (lastMouse.y || 120) + 12;
+    if (left + w > window.innerWidth - 6) left = (lastMouse.x || 0) - w - 16;
     if (top + h > window.innerHeight - 6) top = window.innerHeight - h - 6;
     el.style.left = Math.max(6, left) + 'px'; el.style.top = Math.max(6, top) + 'px';
   }
@@ -1750,16 +1752,16 @@
     });
     return out;
   }
-  // Сворачиваемая легенда: по умолчанию только тикер + треугольник ПОД ним.
-  // Наведение (или закреп кликом по треугольнику) раскрывает ВСЕ данные бара
-  // под курсором (иначе последнего): время, OHLC, Δ%, объём и значения индикаторов.
+  // Сворачиваемые ПОДПИСИ графика (тикер показывает строка sym-title сверху —
+  // здесь его НЕ дублируем). В свёрнутом виде — только аккуратный треугольник ▼.
+  // Наведение (или закреп кликом) раскрывает ВСЕ данные бара под курсором (иначе
+  // последнего): время, OHLC, Δ%, объём и значения активных индикаторов.
   function renderLegend(slot) {
     const el = slot && slot.legendEl; if (!el) return;
-    const ins = slot.instrument || {};
-    const tk = ins.ticker || ins.symbol || ins.title || ins.id || '';
     const open = !!(slot.legendPinned || slot.legendHover);
-    const tri = open ? '▴' : '▾';
-    if (!open) { el.innerHTML = `<div class="cl-tk">${tk}</div><div class="cl-tri" title="раскрыть данные">${tri}</div>`; return; }
+    if (!open) { el.classList.remove('open'); el.innerHTML = `<span class="cl-tri" title="показать данные бара">▼</span>`; return; }
+    el.classList.add('open');
+    const ins = slot.instrument || {};
     let bar = slot.legendBar, idx = slot.legendIdx;
     if (!bar) { try { const l = slot.chart.getDataList(); if (l && l.length) { bar = l[l.length - 1]; idx = l.length - 1; } } catch (e) {} }
     const prec = (ins.pricePrecision != null) ? ins.pricePrecision : 2;
@@ -1770,15 +1772,14 @@
       const up = bar.close >= bar.open, col = up ? '#26a69a' : '#ef5350';
       const chg = (bar.close || 0) - (bar.open || 0), pct = bar.open ? chg / bar.open * 100 : 0;
       const dt = new Date(bar.timestamp), ds = dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-      body = `<div class="cl-row" style="color:#8b93a7">${ds}</div>`
+      body = `<div class="cl-row" style="color:#8b93a7">${ds} · ${slot.tf ? slot.tf.title : ''}</div>`
         + `<div class="cl-row">O <b>${f(bar.open)}</b>&nbsp; H <b>${f(bar.high)}</b></div>`
         + `<div class="cl-row">L <b>${f(bar.low)}</b>&nbsp; C <b style="color:${col}">${f(bar.close)}</b></div>`
         + `<div class="cl-row" style="color:${col}">Δ ${up ? '+' : ''}${f(chg)} (${up ? '+' : ''}${pct.toFixed(2)}%)</div>`
         + `<div class="cl-row" style="color:#8b93a7">V ${num(bar.volume)}</div>`;
       if (idx != null) body += indicatorLines(slot, idx);
     }
-    el.innerHTML = `<div class="cl-head"><span class="cl-tk">${tk}</span> <span style="color:#8b93a7">${slot.tf ? slot.tf.title : ''}</span></div>`
-      + `<div class="cl-tri" title="свернуть">${tri}</div>` + body;
+    el.innerHTML = `<span class="cl-tri" title="свернуть">▲</span>` + body;
   }
   function toggleDataWin(on) {
     ensureDataWin(); dataWinOpen = on; dataWinEl.style.display = on ? 'block' : 'none';
@@ -3556,6 +3557,7 @@
       });
       // отслеживаем панель под курсором (для удаления двойным кликом)
       try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; let lb = null, li = null; if (d) { if (d.dataIndex != null) { li = d.dataIndex; try { const l = slot.chart.getDataList(); lb = l[d.dataIndex] || null; } catch (e) {} } if (!lb && d.kLineData) lb = d.kLineData; } slot.legendBar = lb; slot.legendIdx = li; if (slot.legendPinned || slot.legendHover) renderLegend(slot); if (slot === state) { if (dataWinOpen) updateDataWin(d); updateAspHover(d); } }); } catch (e) {}
+      cell.addEventListener('mousemove', (e) => { lastMouse.x = e.clientX; lastMouse.y = e.clientY; });   // позиция для подсказки аспектов (в payload крестика нет x/y)
       cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; slot.legendIdx = null; if (slot.legendPinned || slot.legendHover) renderLegend(slot); });   // курсор ушёл — прячем подсказку аспектов, легенда → последний бар
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
