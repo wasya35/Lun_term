@@ -207,19 +207,37 @@
       const tsAt = (i) => fc.barAt(i).timestamp;
       const rTo = Math.ceil(range.realTo != null ? range.realTo : range.to);
       const from = Math.max(1, range.from), to = Math.min(fc.cap - 2, rTo);
-      // риска на всю высоту в ТОЧНОМ центре аспекта (локальный минимум орб-дистанции)
+      // 1) собираем события аспектов (риска в ТОЧНОМ центре — локальный минимум орба)
+      const events = [];
       for (const [a, b, frame] of pairs) {
         for (let i = from; i <= to; i++) {
           const cur = nearest(a, b, frame, tsAt(i));
           if (cur.d > orb) continue;
           const prev = nearest(a, b, frame, tsAt(i - 1));
           const next = nearest(a, b, frame, tsAt(i + 1));
-          if (cur.d <= prev.d && cur.d < next.d) {
-            const x = xAxis.convertToPixel(i);
-            ctx.strokeStyle = cur.asp.color; ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-          }
+          if (cur.d <= prev.d && cur.d < next.d) events.push({ x: xAxis.convertToPixel(i), a: a, b: b, asp: cur.asp });
         }
+      }
+      // 2) сами риски аспектов
+      for (const e of events) {
+        ctx.strokeStyle = e.asp.color; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(e.x, 0); ctx.lineTo(e.x, H); ctx.stroke();
+      }
+      // 3) подписи символами планет+аспекта. Рисуем слева направо; если подпись
+      //    пересекается с предыдущей (мало места при мелком масштабе) — пропускаем,
+      //    так остаются видимыми только те, которым хватает места.
+      const GL = { Sun: '☉', Moon: '☾', Mercury: '☿', Venus: '♀', Mars: '♂', Jupiter: '♃', Saturn: '♄', Uranus: '♅', Neptune: '♆', Pluto: '♇' };
+      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      events.sort((p, q) => p.x - q.x);
+      let lastRight = -1e9;
+      for (const e of events) {
+        const label = (GL[e.a] || e.a.charAt(0)) + e.asp.sym + (GL[e.b] || e.b.charAt(0));
+        const w = ctx.measureText(label).width;
+        const left = e.x - w / 2;
+        if (left < lastRight + 3) continue;   // не хватает места — подпись исчезает
+        ctx.fillStyle = e.asp.color;
+        ctx.fillText(label, left, 1);
+        lastRight = left + w;
       }
       return true;
     },

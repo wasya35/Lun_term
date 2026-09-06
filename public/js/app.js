@@ -451,14 +451,12 @@
   }
 
   function buildPanes() {
-    const H = window.LUN.PANE_HEIGHTS;
-    state.signPane = 'pane_sign_Moon';
-    state.chart.createIndicator({ name: 'SignStrip', paneId: state.signPane, shortName: BODY_LABEL.Moon, extendData: { body: 'Moon', frame: 'geo' } }, false);
-    state.signPanes.Moon = state.signPane;
-    wishPane(state.signPane, { height: H.moonSign, minHeight: 26, order: 10 });
+    // По умолчанию при загрузке — ТОЛЬКО график цены и объём. Луна в знаках,
+    // аспекты и циклы больше НЕ включаются автоматически (только по кнопкам или
+    // из сохранённого рабочего стола пользователя).
     window.LUN.CYCLES.forEach((cy, i) => { if (cy.enabled) createCyclePane(cy, 11 + i); });
-    window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });  // ☉/☿ по умолчанию
-    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();   // полоса всех аспектов (подписи — на курсор, updateAspHover)
+    window.LUN.ASPECT_PLANETS.forEach((pl, i) => { if (pl.enabled) createSunAspect(pl, 15 + i); });
+    if (window.LUN.ALL_ASPECTS.enabled) createAllAspect();   // полоса всех аспектов (подписи — на самой полосе + на курсор)
     createVolumePane();
   }
 
@@ -1758,7 +1756,7 @@
   // последнего): время, OHLC, Δ%, объём и значения активных индикаторов.
   function renderLegend(slot) {
     const el = slot && slot.legendEl; if (!el) return;
-    const open = !!(slot.legendPinned || slot.legendHover);
+    const open = !!slot.legendOpen;
     if (!open) { el.classList.remove('open'); el.innerHTML = `<span class="cl-tri" title="показать данные бара">▼</span>`; return; }
     el.classList.add('open');
     const ins = slot.instrument || {};
@@ -2701,7 +2699,7 @@
         .map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: edIns(d.extendData, s), styles: d.styles, lock: d.lock }));
     } catch (e) {}
     return {
-      v: 1, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
+      v: 1, astroClean: true, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
       trader: window.LUN_TRADER || null, synastry: window.LUN_SYNASTRY || null, synMode: (window.LUN.SYN && window.LUN.SYN.mode) || 'both', sbc: window.LUN_SBC || null, maslov: window.LUN_MASLOV || null, barMode: (window.LUN.BAR && window.LUN.BAR.mode) || 'signed',
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       svir: window.LUN.SVIR || null,
@@ -2789,7 +2787,19 @@
       // если есть drawStore — рисунки активного инструмента восстановит load() из
       // него (не дублируем через applyWsDrawings). Иначе — старый путь.
       const dsHas = ws.drawStore && ws.drawStore[favId(state.instrument)];
-      setTimeout(() => { applyWsIndicators(ws.inds); applyWsDrawings(dsHas ? [] : ws.drawings); syncToolbar(); applyingWs = false; }, 1000);
+      // одноразовая миграция: у старых столов Луна/Меркурий/Цикл-1 были дефолтами —
+      // при первой загрузке нового билда убираем их из восстановления (чистый старт:
+      // только цена + объём). Пользователь может включить их кнопками — тогда
+      // сохранится с astroClean и больше не тронется.
+      if (ws.inds && !ws.astroClean) {
+        try {
+          const c0 = window.LUN.CYCLES[0] && window.LUN.CYCLES[0].id;
+          if (Array.isArray(ws.inds.signs)) ws.inds.signs = ws.inds.signs.filter((b) => b !== 'Moon');
+          if (Array.isArray(ws.inds.aspects)) ws.inds.aspects = ws.inds.aspects.filter((b) => b !== 'Mercury');
+          if (Array.isArray(ws.inds.cycles) && c0) ws.inds.cycles = ws.inds.cycles.filter((id) => id !== c0);
+        } catch (e) {}
+      }
+      setTimeout(() => { applyWsIndicators(ws.inds); applyWsDrawings(dsHas ? [] : ws.drawings); syncToolbar(); applyingWs = false; scheduleWsSave(); }, 1000);
     } catch (e) { applyingWs = false; }
   }
   // Восстановление рабочего стола. Приоритет: сервер (если вошли — свой стол,
@@ -3542,10 +3552,8 @@
       // сворачиваемая подпись слева сверху: по умолчанию только тикер + треугольник,
       // при наведении раскрывает время и OHLCV (клик — фиксирует на телефоне)
       const lg = document.createElement('div'); lg.className = 'cell-legend'; cell.appendChild(lg); slot.legendEl = lg;
-      lg.addEventListener('mouseenter', () => { slot.legendHover = true; renderLegend(slot); });
-      lg.addEventListener('mouseleave', () => { slot.legendHover = false; renderLegend(slot); });
-      // клик по треугольнику — «закрепить» раскрытие (удобно на телефоне)
-      lg.addEventListener('click', (e) => { if (e.target && e.target.classList && e.target.classList.contains('cl-tri')) { e.stopPropagation(); slot.legendPinned = !slot.legendPinned; renderLegend(slot); } });
+      // простой и предсказуемый переключатель: клик по легенде раскрывает/сворачивает
+      lg.addEventListener('click', (e) => { e.stopPropagation(); slot.legendOpen = !slot.legendOpen; renderLegend(slot); });
       cell.addEventListener('mousedown', () => activateSlot(i));
       // клик по ПОЛЮ (не по объекту) — снять выделение и спрятать панель свойств.
       // Если клик попал в объект, sel() обновит lastSelTs и панель останется.
@@ -3556,9 +3564,9 @@
         }, 40);
       });
       // отслеживаем панель под курсором (для удаления двойным кликом)
-      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; let lb = null, li = null; if (d) { if (d.dataIndex != null) { li = d.dataIndex; try { const l = slot.chart.getDataList(); lb = l[d.dataIndex] || null; } catch (e) {} } if (!lb && d.kLineData) lb = d.kLineData; } slot.legendBar = lb; slot.legendIdx = li; if (slot.legendPinned || slot.legendHover) renderLegend(slot); if (slot === state) { if (dataWinOpen) updateDataWin(d); updateAspHover(d); } }); } catch (e) {}
+      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; let lb = null, li = null; if (d) { if (d.dataIndex != null) { li = d.dataIndex; try { const l = slot.chart.getDataList(); lb = l[d.dataIndex] || null; } catch (e) {} } if (!lb && d.kLineData) lb = d.kLineData; } slot.legendBar = lb; slot.legendIdx = li; if (slot.legendOpen) renderLegend(slot); if (slot === state) { if (dataWinOpen) updateDataWin(d); updateAspHover(d); } }); } catch (e) {}
       cell.addEventListener('mousemove', (e) => { lastMouse.x = e.clientX; lastMouse.y = e.clientY; });   // позиция для подсказки аспектов (в payload крестика нет x/y)
-      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; slot.legendIdx = null; if (slot.legendPinned || slot.legendHover) renderLegend(slot); });   // курсор ушёл — прячем подсказку аспектов, легенда → последний бар
+      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; slot.legendIdx = null; if (slot.legendOpen) renderLegend(slot); });   // курсор ушёл — прячем подсказку аспектов, легенда → последний бар
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
         if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
@@ -3797,7 +3805,7 @@
     cycWrap.innerHTML = '';
     mkBtn(cycWrap, '☾ Луна в знаках', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); toggleMoonSign(on);
-    }, true, 'Верхняя лента знаков Луны (цвет по знаку, градус). Тумблер показать/скрыть');
+    }, !!state.signPanes.Moon, 'Верхняя лента знаков Луны (цвет по знаку, градус). Тумблер показать/скрыть');
     mkBtn(cycWrap, '🗓 Астро-календарь', () => { closeMenus(); toggleCalendar(!calOpen); }, false, 'Правая панель: ближайшие ингрессии, аспекты, ретро, фазы, затмения (90 дней)');
     window.LUN.CYCLES.forEach((cy, i) => { mkBtn(cycWrap, String(i + 1), (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);

@@ -88,7 +88,7 @@ LUN.BIAS_COLORS = { long: '#1f8a4c', short: '#c0392b', range: '#8a8f3a' };
  * ЦИКЛ 2 — заготовка под второй цикл (другое тело/гармоника), редактируется в «⚙ Настройки». */
 LUN.CYCLES = [
   {
-    id: 'cycle1', title: 'Цикл 1 · Луна в знаках', body: 'Moon', enabled: true,
+    id: 'cycle1', title: 'Цикл 1 · Луна в знаках', body: 'Moon', enabled: false,
     zones: [
       { from: 75,  to: 135, bias: 'long',  color: '#1f6f43', label: 'ЛОНГ (сильный старт)' },
       { from: 135, to: 195, bias: 'range', color: '#5a6b2f', label: 'ЛОНГ / рэндж' },
@@ -118,7 +118,7 @@ LUN.ASPECT_COLORS = { 0: '#e0a030', 60: '#4bb4e6', 90: '#ef5350', 120: '#26a69a'
  * По умолчанию включён ☉/☿ (основа системы). */
 LUN.ASPECT_PLANETS = [
   { body: 'Moon',    glyph: '☾', frame: 'geo',   enabled: false },
-  { body: 'Mercury', glyph: '☿', frame: 'helio', enabled: true },
+  { body: 'Mercury', glyph: '☿', frame: 'helio', enabled: false },
   { body: 'Venus',   glyph: '♀', frame: 'helio', enabled: false },
   { body: 'Mars',    glyph: '♂', frame: 'helio', enabled: false },
   { body: 'Jupiter', glyph: '♃', frame: 'helio', enabled: false },
