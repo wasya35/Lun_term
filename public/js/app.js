@@ -1454,18 +1454,21 @@
     const hh = String(d.getUTCHours()).padStart(2, '0'), mi = String(d.getUTCMinutes()).padStart(2, '0');
     return dd + '.' + mo + ' ' + hh + ':' + mi;
   }
+  // Календарные недельные экспирации по всему диапазону данных графика (ПРОШЛЫЕ и
+  // будущие). Каждую дату классифицируем: 3-я неделя мес → месячная, 3/6/9/12 →
+  // квартальная, иначе недельная. Ключ хранилища — дата 'YYYY-MM-DD'.
   function weeklyExpiries(slot) {
     const E = window.LUN.EXPIRY || {}; const wd = (E.weekday != null ? E.weekday : 4);
     let l; try { l = slot.chart.getDataList(); } catch (e) { l = null; }
-    const startTs = (l && l.length) ? l[0].timestamp : Date.now() - 120 * 86400000;
+    const startTs = (l && l.length) ? l[0].timestamp - 3 * 86400000 : Date.now() - 200 * 86400000;
     const endTs = ((l && l.length) ? l[l.length - 1].timestamp : Date.now()) + 70 * 86400000;
-    const out = []; const d0 = new Date(startTs); d0.setUTCHours(0, 0, 0, 0);
+    const out = {}; const d0 = new Date(startTs); d0.setUTCHours(0, 0, 0, 0);
     for (let t = d0.getTime(); t <= endTs; t += 86400000) {
       const day = new Date(t + 3 * 3600000);   // МСК-день
       if (day.getUTCDay() === wd) {
         const ds = day.getUTCFullYear() + '-' + String(day.getUTCMonth() + 1).padStart(2, '0') + '-' + String(day.getUTCDate()).padStart(2, '0');
         const ts = expiryTsFromDate(ds);
-        out.push({ ts, label: fmtExpiryLabel(ts), klass: 'week' });
+        out[ds] = { ts, label: fmtExpiryLabel(ts), klass: window.LunISS.classifyExpiry(ds) };
       }
     }
     return out;
@@ -1474,21 +1477,22 @@
     slot = slot || state; const c = slot && slot.chart; if (!c) return;
     const ins = slot.instrument, E = window.LUN.EXPIRY || {};
     const keep = (k) => (k === 'week' && E.showWeek !== false) || (k === 'month' && E.showMonth !== false) || (k === 'quarter' && E.showQuarter !== false);
-    let items = [];
+    // 1) прошлые+будущие недельные по календарю (доска опционов не хранит истёкшие
+    //    серии, поэтому ПРОШЛЫЕ экспирации в пределах графика считаем сами)
+    const byDate = weeklyExpiries(slot);
+    // 2) реальные будущие даты с доски MOEX — перекрывают расчётные точным классом
     if ((ins.provider || 'moex') === 'moex') {
       try {
         const ticker = await window.LunData.resolveTicker(ins);
         const asset = futoiCode(ins, ticker);
         const opts = await window.LunISS.fetchOptions(asset);
-        const seen = {};
-        (opts || []).forEach((o) => { if (!o.expiry || seen[o.expiry]) return; seen[o.expiry] = o.klass || window.LunISS.classifyExpiry(o.expiry); });
-        items = Object.keys(seen).map((d) => { const ts = expiryTsFromDate(d); return { ts, label: fmtExpiryLabel(ts), klass: seen[d] }; })
-          .filter((it) => it.ts != null && keep(it.klass));
-      } catch (e) { items = []; }
+        (opts || []).forEach((o) => { if (!o.expiry || byDate[o.expiry]) return; const ts = expiryTsFromDate(o.expiry); if (ts != null) byDate[o.expiry] = { ts, label: fmtExpiryLabel(ts), klass: o.klass || window.LunISS.classifyExpiry(o.expiry) }; });
+        // если у доски своя классификация точнее — обновим классы уже существующих
+        (opts || []).forEach((o) => { if (o.expiry && byDate[o.expiry] && o.klass) byDate[o.expiry].klass = o.klass; });
+      } catch (e) {}
     }
-    if (!items.length) items = weeklyExpiries(slot).filter((it) => keep(it.klass));
+    const items = Object.values(byDate).filter((it) => it.ts != null && keep(it.klass)).sort((a, b) => a.ts - b.ts);
     if (!items.length) { if (slot === state) alert('Экспирации не найдены для этого инструмента.'); return; }
-    items.sort((a, b) => a.ts - b.ts);
     slot.expiry = items; slot.expiryOn = true;
     applyExpiry(slot); scheduleWsSave();
   }
@@ -1869,7 +1873,7 @@
           try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: ed, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = Object.assign({}, d, { extendData: ed }); } catch (e) {}
         });
         try { sweepForeignOverlays(slot); } catch (e) {}   // и сразу подмести всё, что не наше
-        try { applyDrawZ(slot); } catch (e) {}             // применить «за барами / поверх» к восстановленным
+        try { setDrawBehind(slot); } catch (e) {}          // применить режим «за барами / поверх»
       }, 950);
     }
     if (!replaying) setTimeout(() => setInitialView(slot), 900);   // дефолт-обзор по ТФ
@@ -1892,6 +1896,7 @@
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
     renderLegend(slot);                                          // подпись слева сверху: тикер (свёрнуто)
     setTimeout(() => { try { renderLegend(slot); } catch (e) {} }, 1000);   // после подгрузки истории — с последним баром
+    setTimeout(() => { try { setDrawBehind(slot); } catch (e) {} }, 1000);   // применить «за барами» после отрисовки canvas
   }
   // стартовый обзор: сколько истории показать по ТФ (D1 ≈ 3 мес, H1 ≈ 1 мес)
   function setInitialView(slot) {
@@ -2233,20 +2238,27 @@
     }
   }
   function sweepAllSlots() { try { (slots || []).forEach((s) => sweepForeignOverlays(s)); } catch (e) {} }
-  // Рисование за барами / поверх: zLevel<0 → библиотека рисует оверлей ПОД свечами
-  // (destination-over), 0 → поверх. Настройка глобальная (LUN.DRAW.behind).
-  const drawZ = () => ((window.LUN.DRAW && window.LUN.DRAW.behind) ? -1 : 0);
-  function applyDrawZ(slot) {
-    slot = slot || state; const c = slot && slot.chart; if (!c) return;
-    const z = drawZ();
-    let ovs; try { ovs = c.getOverlays() || []; } catch (e) { return; }
-    for (const ov of ovs) {
-      if (!ov) continue;
-      const isDraw = (ov.extendData && ov.extendData._ins) || (ov.name && String(ov.name).indexOf('lun_') === 0);
-      if (isDraw && ov.zLevel !== z) { try { c.overrideOverlay({ id: ov.id, zLevel: z }); } catch (e) {} }
-    }
+  // Рисование ЗА барами / поверх. В KLineChart оверлеи (рисунки) живут на ОТДЕЛЬНОМ
+  // верхнем canvas (_overlayCanvas), а свечи — на нижнем (_mainCanvas); zLevel меняет
+  // порядок только СРЕДИ оверлеев и НЕ уводит их под свечи. Поэтому «за барами»
+  // делаем через z-index: опускаем overlay-canvas ЦЕНОВОЙ панели ниже main-canvas.
+  const drawZ = () => 0;   // оставлено для совместимости вызовов (эффекта на оверлеи нет)
+  function applyDrawZ() {}
+  // Находит на ценовой (самой высокой) панели слота её overlay-canvas (последний из
+  // пары main+overlay) и ставит z-index: за барами (1, под свечами) или поверх (2).
+  function setDrawBehind(slot) {
+    slot = slot || state; const cell = slot && slot.cellEl; if (!cell) return;
+    const behind = !!(window.LUN.DRAW && window.LUN.DRAW.behind);
+    const cvs = Array.from(cell.querySelectorAll('canvas')); if (cvs.length < 2) return;
+    const groups = new Map();
+    cvs.forEach((cv) => { const p = cv.parentElement; if (!groups.has(p)) groups.set(p, []); groups.get(p).push(cv); });
+    let bestP = null, bestH = -1;
+    groups.forEach((arr, p) => { let h = 0; arr.forEach((c) => { h = Math.max(h, c.clientHeight || c.height || 0); }); if (h > bestH) { bestH = h; bestP = p; } });
+    const arr = groups.get(bestP) || []; if (arr.length < 2) return;
+    const overlay = arr[arr.length - 1];   // overlay-canvas добавляется ПОСЛЕ main-canvas
+    overlay.style.zIndex = behind ? '1' : '2';
   }
-  function applyDrawZAll() { try { (slots || []).forEach((s) => applyDrawZ(s)); } catch (e) {} }
+  function applyDrawZAll() { try { (slots || []).forEach((s) => setDrawBehind(s)); } catch (e) {} }
   // Зеркалирование рисунков на другие ячейки с ТЕМ ЖЕ инструментом: рисуешь на
   // одном экране — появляется на всех с этим же инструментом (в обе стороны).
   function mirrorToSiblings(src) {
@@ -2670,7 +2682,7 @@
     return j;
   }
   /* ---------- рабочий стол: авто-сохранение/восстановление ---------- */
-  let applyingWs = false, wsTimer = null, wsApplied = false;
+  let applyingWs = false, wsTimer = null, wsApplied = false, wsLoaded = false;
   const WS_LKEY = 'lun_ws_v1';
   function scheduleWsSave() {
     if (applyingWs) return;
@@ -2678,10 +2690,13 @@
     wsTimer = setTimeout(() => {
       let ws; try { ws = captureWorkspace(); } catch (e) { return; }
       // локально — ВСЕГДА (сохранение разметки/индикаторов между сессиями в этом
-      // браузере, даже без входа). На сервер — если вошли (кросс-устройство, много
-      // пользователей: у каждого свой рабочий стол).
+      // браузере, даже без входа).
       try { localStorage.setItem(WS_LKEY, JSON.stringify(ws)); } catch (e) {}
-      if (window.LunAuth && window.LunAuth.user) authApi('ws_save', { ws }).catch(() => {});
+      // На сервер — если вошли (кросс-устройство). КРИТИЧНО: не сохраняем на сервер
+      // ПОКА не прочитали серверный стол (wsLoaded). Иначе вторая сессия/телефон при
+      // старте перезатёрла бы богатый стол пустым дефолтом ДО его загрузки — из-за
+      // этого разметка и индикаторы «не доезжали» на другое устройство.
+      if (wsLoaded && window.LunAuth && window.LunAuth.user) authApi('ws_save', { ws }).catch(() => {});
     }, 1500);
   }
   function captureWorkspace() {
@@ -2808,12 +2823,17 @@
   // (например, если PHP недоступен — анонимный юзер всё равно вернёт разметку).
   window.LUN_APPLY_WS = async function (force) {
     if (wsApplied && !force) return; wsApplied = true;
-    let ws = null;
+    let ws = null, serverRead = false;
     if (window.LunAuth && window.LunAuth.user) {
-      try { const r = await authApi('ws_load'); if (r && r.ws) ws = r.ws; } catch (e) {}
+      try { const r = await authApi('ws_load'); serverRead = true; if (r && r.ws) ws = r.ws; } catch (e) { serverRead = false; }
+    } else {
+      serverRead = true;   // не залогинен — серверная синхронизация не нужна, локально сохранять можно
     }
     if (!ws) { try { ws = JSON.parse(localStorage.getItem(WS_LKEY) || 'null'); } catch (e) {} }
     if (ws) applyWorkspace(ws);
+    // серверный стол ПРОЧИТАН (или синк не нужен) — только теперь разрешаем запись на
+    // сервер, чтобы стартовый пустой стол не перезатёр богатый до его загрузки.
+    if (serverRead) wsLoaded = true;
   };
   window.LUN_SCHEDULE_WS = scheduleWsSave;
 
@@ -3564,9 +3584,38 @@
         }, 40);
       });
       // отслеживаем панель под курсором (для удаления двойным кликом)
-      try { slot.chart.subscribeAction('onCrosshairChange', (d) => { slot.hoverPaneId = d && d.paneId; let lb = null, li = null; if (d) { if (d.dataIndex != null) { li = d.dataIndex; try { const l = slot.chart.getDataList(); lb = l[d.dataIndex] || null; } catch (e) {} } if (!lb && d.kLineData) lb = d.kLineData; } slot.legendBar = lb; slot.legendIdx = li; if (slot.legendOpen) renderLegend(slot); if (slot === state) { if (dataWinOpen) updateDataWin(d); updateAspHover(d); } }); } catch (e) {}
+      // ВАЖНО: onCrosshairChange в этой сборке отдаёт ТОЛЬКО {x, y, paneId} —
+      // без dataIndex/kLineData/timestamp. Поэтому бар под курсором вычисляем сами
+      // из пиксельной X через convertFromPixel. Иначе легенда/датавиндоу/аспекты
+      // всегда показывали бы ПОСЛЕДНИЙ бар.
+      try {
+        slot.chart.subscribeAction('onCrosshairChange', (d) => {
+          slot.hoverPaneId = d && d.paneId;
+          let bar = null, idx = null, ts = null;
+          if (d && d.x != null) {
+            try {
+              const cv = slot.chart.convertFromPixel({ x: d.x }, { paneId: 'candle_pane' });
+              if (cv && cv.dataIndex != null) {
+                idx = cv.dataIndex; ts = cv.timestamp;
+                const l = slot.chart.getDataList();
+                if (l && idx >= 0 && idx < l.length) { bar = l[idx]; if (ts == null) ts = bar.timestamp; }
+              }
+            } catch (e) {}
+          }
+          // запасной путь на случай другой сборки, кладущей данные прямо в payload
+          if (bar == null && d) {
+            if (d.kLineData) bar = d.kLineData;
+            else if (d.dataIndex != null) { try { bar = slot.chart.getDataList()[d.dataIndex] || null; } catch (e) {} }
+            if (idx == null && d.dataIndex != null) idx = d.dataIndex;
+            if (ts == null) ts = (d.timestamp != null ? d.timestamp : (bar ? bar.timestamp : null));
+          }
+          slot.legendBar = bar; slot.legendIdx = idx; slot.legendTs = ts;
+          if (slot.legendOpen) renderLegend(slot);
+          if (slot === state) { if (dataWinOpen) updateDataWin({ dataIndex: idx, kLineData: bar }); updateAspHover({ timestamp: ts }); }
+        });
+      } catch (e) {}
       cell.addEventListener('mousemove', (e) => { lastMouse.x = e.clientX; lastMouse.y = e.clientY; });   // позиция для подсказки аспектов (в payload крестика нет x/y)
-      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; slot.legendIdx = null; if (slot.legendOpen) renderLegend(slot); });   // курсор ушёл — прячем подсказку аспектов, легенда → последний бар
+      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; slot.legendIdx = null; slot.legendTs = null; if (slot.legendOpen) renderLegend(slot); });   // курсор ушёл — легенда → последний бар
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
         if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
