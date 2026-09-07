@@ -1707,38 +1707,10 @@
     document.body.appendChild(p); p.querySelector('#dw-close').onclick = () => toggleDataWin(false);
     dataWinEl = p; return p;
   }
-  // Аспекты всех пар при наведении курсора (подпись всплывает у вертикали курсора)
-  let aspHoverEl = null;
-  let lastMouse = { x: 0, y: 0 };
-  function ensureAspHover() {
-    if (aspHoverEl) return aspHoverEl;
-    const p = document.createElement('div');
-    p.id = 'asp-hover';
-    p.style.cssText = 'position:fixed;z-index:60;max-width:240px;background:rgba(18,23,34,.96);border:1px solid #2a3242;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.5);padding:6px 9px;font-size:11px;color:#d7deea;pointer-events:none;display:none';
-    document.body.appendChild(p); aspHoverEl = p; return p;
-  }
-  function hideAspHover() { if (aspHoverEl) aspHoverEl.style.display = 'none'; }
-  function updateAspHover(d) {
-    if (!window.LUN.ALL_ASPECTS || !window.LUN.ALL_ASPECTS.enabled) { hideAspHover(); return; }
-    // ВАЖНО: в этой сборке onCrosshairChange НЕ содержит x/y — только timestamp,
-    // dataIndex, kLineData, realX. Берём момент бара по timestamp/kLineData,
-    // а позицию подсказки — по последней позиции мыши (lastMouse).
-    const ts = d && (d.timestamp != null ? d.timestamp : (d.kLineData ? d.kLineData.timestamp : null));
-    if (ts == null) { hideAspHover(); return; }
-    const orb = (window.LUN.ASPECTS && window.LUN.ASPECTS.orb) || 3;
-    let list = []; try { list = window.LUN_ASPECTS_AT(ts, orb) || []; } catch (e) {}
-    const el = ensureAspHover();
-    if (!list.length) { el.style.display = 'none'; return; }
-    const dt = new Date(ts), ds = dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-    const rows = list.slice(0, 14).map((a) => `<div style="white-space:nowrap"><span style="color:${a.color};font-size:13px">${a.ag}${a.sym}${a.bg}</span> <span style="color:#8b93a7">${a.an}–${a.bn} · ${a.name} · орб ${a.orb.toFixed(1)}°</span></div>`).join('');
-    el.innerHTML = `<div style="color:#3aa0ff;margin-bottom:3px">☍ аспекты · ${ds}</div>${rows}`;
-    el.style.display = 'block';
-    const w = el.offsetWidth, h = el.offsetHeight;
-    let left = (lastMouse.x || window.innerWidth / 2) + 16, top = (lastMouse.y || 120) + 12;
-    if (left + w > window.innerWidth - 6) left = (lastMouse.x || 0) - w - 16;
-    if (top + h > window.innerHeight - 6) top = window.innerHeight - h - 6;
-    el.style.left = Math.max(6, left) + 'px'; el.style.top = Math.max(6, top) + 'px';
-  }
+  // Плавающая подсказка аспектов у курсора удалена по просьбе — аспекты подписаны
+  // прямо на полосе «все аспекты» (символы планет+аспекта), в т.ч. там, где стоит
+  // перекрестье. Заглушка на случай оставшихся вызовов из другого кода.
+  function hideAspHover() {}
   // Значения активных индикаторов на баре idx — чтобы в раскрытой легенде были ВСЕ
   // подписи (VWAP, дельта и т.п.), как в штатной легенде, а не только OHLCV.
   function indicatorLines(slot, idx) {
@@ -3611,11 +3583,12 @@
           }
           slot.legendBar = bar; slot.legendIdx = idx; slot.legendTs = ts;
           if (slot.legendOpen) renderLegend(slot);
-          if (slot === state) { if (dataWinOpen) updateDataWin({ dataIndex: idx, kLineData: bar }); updateAspHover({ timestamp: ts }); }
+          if (slot === state && dataWinOpen) updateDataWin({ dataIndex: idx, kLineData: bar });
+          // плавающую подсказку аспектов у курсора убрали — аспекты подписаны прямо
+          // на полосе «все аспекты» (символами), там где перекрестье на аспекте.
         });
       } catch (e) {}
-      cell.addEventListener('mousemove', (e) => { lastMouse.x = e.clientX; lastMouse.y = e.clientY; });   // позиция для подсказки аспектов (в payload крестика нет x/y)
-      cell.addEventListener('mouseleave', () => { hideAspHover(); slot.legendBar = null; slot.legendIdx = null; slot.legendTs = null; if (slot.legendOpen) renderLegend(slot); });   // курсор ушёл — легенда → последний бар
+      cell.addEventListener('mouseleave', () => { slot.legendBar = null; slot.legendIdx = null; slot.legendTs = null; if (slot.legendOpen) renderLegend(slot); });   // курсор ушёл — легенда → последний бар
       cell.addEventListener('dblclick', (e) => {
         const r = cell.getBoundingClientRect();
         if (e.clientX > r.right - 150 && e.clientY > r.bottom - 70) { activateSlot(i); recenterLastPrice(slots[i]); return; }
@@ -3646,12 +3619,11 @@
     }, pl.enabled, `Аспекты ☉/${pl.glyph} (${pl.body})`).dataset.sync = 'asp:' + pl.body; });
     mkBtn(aspWrap, '∀ все', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on); window.LUN.ALL_ASPECTS.enabled = on;
-      // Полоса-индикатор (цветные риски аспектов) видна всегда. Сами подписи —
-      // не жёстко на полосе, а интерактивно: всплывают у вертикали курсора (см.
-      // updateAspHover) над тем аспектом, на котором стоит перекрестье.
-      if (on) createAllAspect(); else { if (state.allAspectPane) { try { state.chart.removeIndicator({ paneId: state.allAspectPane }); } catch (e) {} state.allAspectPane = null; } hideAspHover(); }
+      // Полоса-индикатор: цветные риски аспектов + подписи символами (☿□♂) прямо на
+      // полосе. Плавающей подсказки у курсора нет.
+      if (on) createAllAspect(); else if (state.allAspectPane) { try { state.chart.removeIndicator({ paneId: state.allAspectPane }); } catch (e) {} state.allAspectPane = null; }
       scheduleWsSave();
-    }, window.LUN.ALL_ASPECTS.enabled, 'Полоса всех аспектов всех пар (цветные риски). Подпись аспекта всплывает при наведении курсора на риску').dataset.sync = 'allasp';
+    }, window.LUN.ALL_ASPECTS.enabled, 'Полоса всех аспектов всех пар: цветные риски + подписи символами планет/аспекта прямо на полосе').dataset.sync = 'allasp';
     // отдельная полоса: Уран — все планеты (мажорные аспекты)
     const urBtn = mkBtn(aspWrap, '♅∀', (b) => {
       const on = !b.classList.contains('active'); b.classList.toggle('active', on);
