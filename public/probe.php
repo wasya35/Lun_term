@@ -5,24 +5,28 @@
  *  достаёт apim.moex.com. Ключ НЕ печатается и НЕ хранится в коде.
  *
  *  Как пользоваться:
- *   1) Создай рядом файл algopack_secret.php с содержимым:
- *        <?php return 'ТВОЙ_API_КЛЮЧ';
+ *   1) Создай рядом файл-ключ со СВОИМ непонятным именем, например  k7f3n9x2.php,
+ *      с содержимым:   <?php return 'ТВОЙ_API_КЛЮЧ';
  *      (если открыть его в браузере — PHP выполнит и отдаст пусто, ключ не утечёт)
- *      Либо задай переменную окружения ALGOPACK_KEY.
- *   2) Открой:  https://ag-ts.ru/probe.php?t=CHANGE_ME_TOKEN
- *   3) Скопируй ВЕСЬ вывод (в нём нет ключа) и пришли мне.
- *   4) После — удали probe.php и algopack_secret.php с хостинга.
+ *      Либо задай переменную окружения ALGOPACK_KEY (тогда файл не нужен).
+ *   2) Впиши это же имя в SECRET_FILE ниже и придумай свой PROBE_TOKEN.
+ *   3) Открой:  https://ag-ts.ru/probe.php?t=ТВОЙ_ТОКЕН
+ *   4) Скопируй ВЕСЬ вывод (в нём нет ключа) и пришли мне.
+ *   5) После — удали probe.php (файл-ключ можно оставить, его юзнёт прокся).
  * ===========================================================================*/
 
 header('Content-Type: text/plain; charset=utf-8');
 
-// --- простая защита от посторонних: смени токен на свой ---
+// --- простая защита от посторонних: придумай свой токен ---
 const PROBE_TOKEN = 'CHANGE_ME_TOKEN';
+// --- имя файла-ключа: назови файл абракадаброй и впиши то же имя сюда ---
+const SECRET_FILE = 'RENAME_ME.php';   // напр. 'k7f3n9x2.php' (то же, что имя файла с ключом)
 if (($_GET['t'] ?? '') !== PROBE_TOKEN) { http_response_code(403); exit("forbidden: добавь ?t=ТОКЕН (и смени PROBE_TOKEN в файле)\n"); }
 
-// --- ключ: env → файл-секрет (в код не пишем) ---
+// --- ключ: env → файл-секрет с непонятным именем (в код не пишем) ---
 $KEY = getenv('ALGOPACK_KEY') ?: '';
-if (!$KEY && is_file(__DIR__ . '/algopack_secret.php')) { $KEY = (string)(include __DIR__ . '/algopack_secret.php'); }
+$secretPath = __DIR__ . '/' . SECRET_FILE;
+if (!$KEY && is_file($secretPath)) { $KEY = (string)(include $secretPath); }
 $KEY = trim($KEY);
 echo "AlgoPack probe · " . date('Y-m-d H:i:s') . "\n";
 echo "ключ найден: " . ($KEY ? 'да (' . strlen($KEY) . " симв.)" : 'НЕТ — задай algopack_secret.php или ALGOPACK_KEY') . "\n";
@@ -93,4 +97,4 @@ foreach ($targets as [$name, $url]) {
   if ($code == 200 && $body) summarize($body);
   elseif ($body) echo "  тело(300): " . substr(preg_replace('/\s+/', ' ', $body), 0, 300) . "\n";
 }
-echo "\n" . str_repeat('=', 78) . "\nГотово. Пришли этот вывод. Потом удали probe.php и algopack_secret.php.\n";
+echo "\n" . str_repeat('=', 78) . "\nГотово. Пришли этот вывод. Потом удали probe.php (файл-ключ оставь — его возьмёт прокся).\n";
