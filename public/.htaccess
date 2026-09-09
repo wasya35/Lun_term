@@ -47,6 +47,18 @@ Options -Indexes
   </IfModule>
 </FilesMatch>
 
+# Секреты AlgoPack: конфиг шлюза и файл-ключ. (gw_secret.php при прямом открытии и так
+# отдаёт пусто — это return-файл; но закрываем и на уровне сервера.) Диагностические щупы.
+<FilesMatch "^(gw_secret|algopack_secret)\.php$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
 # Примечание: cron.php намеренно НЕ закрыт — на шаред-хостинге его часто
 # дёргают по HTTP (wget/curl по расписанию). Он сам требует cron_key
 # (lun_data/cron_key.txt) — это и есть его защита.

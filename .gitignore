@@ -5,3 +5,8 @@ shot.png
 lun_term_site.zip
 public/lun_data/
 lun_data/
+
+# секреты AlgoPack (реальные файлы не коммитим)
+public/gw_secret.php
+public/algopack_secret.php
+public/*.key
