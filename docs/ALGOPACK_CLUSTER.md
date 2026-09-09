@@ -316,3 +316,18 @@ alert_type: `vol_(b|s)_99_9_pctl, vol_99_9_pctl, net_vol_99_9_pctl±, pr_change_
 - FUTOI берём с `analyticalproducts/futoi` (НЕ `datashop/algopack/fo/futoi` — такого нет), ticker = базовый актив (`Si`).
 - SuperCandles ticker = secid контракта (`SiU6`); ответы капятся на 1000 строк → пагинация `start`.
 - Готовой IV/греков в доске нет (подтверждено) → Black-76 у нас. Опц. доска — по-прежнему `engines/futures/markets/options`.
+
+## 14. Уточнения из OpenAPI-спеки и realtime-доков (moexalgo.github.io)
+Полный список путей подтверждён по `static/openapi/openapi.yaml`. Важное:
+- **`/docs/api` = страница «Аутентификация»** — токен из ЛК + `Authorization: Bearer <APIKEY>`, примеры на python/curl/js. Нового нет.
+- **OrderStats только для `eq` и `fx` — для фьючерсов (`fo`) ЕГО НЕТ.** В спеке есть eq/fo/fx tradestats+obstats, но orderstats только eq+fx.
+  → «спофинг/снятия заявок» (OrderStats) у нас будет по АКЦИЯМ, не по Si. Для Si остаются tradestats+obstats.
+- **Realtime онлайн (Promo) под ключом** — свечи/стакан/сделки: `apim/iss/engines/{stock|futures}/markets/{shares|forts}/boards/{tqbr|rfud}/securities/{sec}/{candles|orderbook|trades}`.
+  У фьючерсной **marketdata** есть готовые `OPENPOSITION` и **`OICHANGE`** (изм. ОИ) — живой ОИ по контракту прямо в котировке.
+  Сделки (trades) содержат `BUYSELL`, `OPENPOSITION` — можно и тик-дельту при желании.
+- **Websocket ISS+ (STOMP)** — `wss://iss.moex.com/infocx/v3/websocket`, `domain: passport` для подписчиков ALGOPACK,
+  SUBSCRIBE на destination (напр. `MXSE.securities`, selector по тикеру). Настоящий realtime-пуш. НО: это тот же `iss.moex.com`
+  (наш сервер его не видит) + нужен passport-логин → как обход блокировки не годится; для нас проще REST-поллинг через проксю.
+- **Календари** `/iss/calendars/{stock|futures|currency}...` — торговые дни/сессии/приостановки. Пригодится, чтоб не дёргать
+  API в выходные и корректно считать «T−N дней».
+- Есть **OpenAPI YAML** (252 КБ) с полными схемами ответов и параметрами (date/from/till/latest/start/limit) — забрать при кодинге.
