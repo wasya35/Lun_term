@@ -236,23 +236,59 @@
     return stitchContracts(contracts);
   }
 
-  // FUTOI — открытый интерес по физлицам/юрлицам (аналитический продукт ISS).
-  // code — код актива фьючерса (Si, GD, Eu, BR, CR ...). Возвращает строки по
-  // датам/времени с колонками clgroup (FIZ/YUR), pos_long, pos_short.
-  async function fetchFUTOI(code, from, till) {
-    const url = `https://iss.moex.com/iss/analyticalproducts/futoi/securities/${encodeURIComponent(code)}.json?iss.meta=off&from=${from}&till=${till}`;
-    const pages = await getAllPages(url, 'futoi');
+  // Собрать строки clgroup (FIZ/YUR) из ISS-страниц futoi (имя таблицы бывает разным).
+  function collectFutoiRows(pages) {
     const out = [];
-    for (const j of pages) {
-      // имя таблицы может отличаться — берём любую с колонкой clgroup
-      for (const key of Object.keys(j)) {
-        const t = j[key];
-        if (t && t.columns && t.data && t.columns.some((c) => String(c).toLowerCase() === 'clgroup')) {
-          for (const o of rowsToObjects(t)) out.push(o);
-        }
+    for (const j of pages) for (const key of Object.keys(j)) {
+      const t = j[key];
+      if (t && t.columns && t.data && t.columns.some((c) => String(c).toLowerCase() === 'clgroup')) {
+        for (const o of rowsToObjects(t)) out.push(o);
       }
     }
     return out;
+  }
+
+  // Онлайн-FUTOI через НАШ серверный прокси api.php?fn=algopack (ключ AlgoPack
+  // лежит на сервере, в браузер не попадает). Требует залогиненного пользователя.
+  // Постранично тянем &start=N (same-origin, куки сессии). Бросает при 401/500/сети.
+  async function fetchAlgopackPages(params, table, maxPages = 20) {
+    const pages = []; let start = 0;
+    for (let i = 0; i < maxPages; i++) {
+      const res = await fetch('api.php?fn=algopack&' + params + '&start=' + start, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('algopack HTTP ' + res.status);
+      const j = await res.json();
+      if (j && j.error) throw new Error(j.error);
+      pages.push(j);
+      const rows = (j[table] && j[table].data) ? j[table].data.length : 0;
+      if (rows === 0) break;
+      start += rows;
+    }
+    return pages;
+  }
+  // Один раз получив «нет доступа» (не залогинен / нет ключа), больше не долбим прокси.
+  let algopackOff = false;
+  window.LUN_FUTOI_SRC = '';                       // 'online' | 'delayed' — для статуса
+
+  // FUTOI — открытый интерес по физлицам/юрлицам (аналитический продукт MOEX).
+  // code — код актива фьючерса (Si, GD, Eu, BR, CR ...). Возвращает строки по
+  // датам/времени с колонками clgroup (FIZ/YUR), pos_long, pos_short, *_num.
+  // Сначала пробуем ОНЛАЙН (AlgoPack, реальное время) через серверный прокси;
+  // при неудаче — публичный ОТЛОЖЕННЫЙ фид ISS (T−15) напрямую/через ISS-шлюз.
+  async function fetchFUTOI(code, from, till) {
+    const wantOnline = !algopackOff && !(window.LUN && window.LUN.ALGOPACK && window.LUN.ALGOPACK.online === false);
+    if (wantOnline) {
+      try {
+        const params = 'ds=futoi&secid=' + encodeURIComponent(code) + '&from=' + from + '&till=' + till;
+        const rows = collectFutoiRows(await fetchAlgopackPages(params, 'futoi'));
+        if (rows.length) { window.LUN_FUTOI_SRC = 'online'; return rows; }
+      } catch (e) {
+        // нет сессии/ключа/связи — отключаем онлайн на сессию и падаем на публичный
+        if (/401|500|login|key|algopack/i.test(String(e && e.message))) algopackOff = true;
+      }
+    }
+    window.LUN_FUTOI_SRC = 'delayed';
+    const url = `https://iss.moex.com/iss/analyticalproducts/futoi/securities/${encodeURIComponent(code)}.json?iss.meta=off&from=${from}&till=${till}`;
+    return collectFutoiRows(await getAllPages(url, 'futoi'));
   }
 
   // Дневная история открытого интереса по конкретному контракту (OPENPOSITION).
