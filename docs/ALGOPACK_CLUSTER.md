@@ -261,3 +261,58 @@ VWAP нед/мес + VSA у нас «на глаз». TradeStats `vol_b/vol_s` =
 | Аспекты все-против-всех | наложить поток/развороты толпы на даты аспектов (корреляция) |
 | Smart money разметка | спофинг (OrderStats) + дисбаланс (OBStats) + позиции юриков = реальный след крупняка |
 | Углы Ганна / ОПР | GEX-магнит/гамма-режим: дойдёт ли цена до ОПР + промежуточная цель |
+
+---
+
+## 13. ОФИЦИАЛЬНЫЙ РЕФЕРЕНС (github.com/moexalgo/algopack-skills) — точные эндпоинты/поля
+Источник: официальный репозиторий MOEX «algopack-skills» (Agent Skills). Хост **`https://apim.moex.com/iss`**,
+заголовок **`Authorization: Bearer <APIKEY>`**. Публичный (с задержкой) — `https://iss.moex.com/iss` без ключа.
+Формат ISS: блоки `{columns:[...], data:[[...]]}` → нормализуем в объекты. Пагинация: `start` += кол-во строк,
+пока блок не пуст (у SuperCandles **кап 1000 строк** → пагинация обязательна). Форматы: `.json` / `.csv`.
+
+### ⚠️ ТАРИФЫ (критично для нас!)
+- **Стартовый / Starter** (бесплатный API-токен): свечи/сделки с задержкой 15 мин; **FUTOI с задержкой T−15 ДНЕЙ**;
+  SuperCandles/MegaAlerts/HI2 — планово T−1 день (не гарантировано). → для ЖИВОЙ торговли FUTOI бесполезен, только research/бэктест.
+- **Promo** (платный): FUTOI/стакан/свечи/сделки **онлайн** + SuperCandles + MegaAlerts + HI2 + календарь.
+- Ошибки: 401 (ключ), 403 (нет подписки/не тот хост/вне тарифа), 429 (рейт-лимит) → бэкофф, не долбить.
+
+### FUTOI — ПУТЬ ИНОЙ, не под datashop/algopack!
+`/iss/analyticalproducts/futoi/securities.json?date=YYYY-MM-DD`  (все)
+`/iss/analyticalproducts/futoi/securities/{ticker}.json?from=&till=`  (один; **ticker = БАЗОВЫЙ АКТИВ, напр. `Si`**, не `SiU6`)
+Блок `futoi`. Снимки 5 мин, история с 2020. Поля: `tradedate, tradetime, ticker, clgroup(FIZ|YUR), pos(=long−short),
+pos_long, pos_short, pos_long_num, pos_short_num, sess_id, seqnum, systime`. Агрегат по всем активным сериям Si.
+
+### SuperCandles: TradeStats / OrderStats / OBStats (`{eq|fo|fx}`)
+`/iss/datashop/algopack/{mkt}/{tradestats|orderstats|obstats}.json?date=YYYY-MM-DD[&latest=1]`  (все)
+`/iss/datashop/algopack/{mkt}/{...}/{ticker}.json?from=&till=[&latest=1&start=N]`  (один; ticker = secid контракта, напр. `SiU6`)
+Блок `data`. 5-мин, история с 2020, публикация через неск. секунд после закрытия 5-минутки.
+- **TradeStats**: `tradedate,tradetime,secid, pr_open/high/low/close, pr_vwap, pr_vwap_b, pr_vwap_s, pr_change, pr_std,
+  trades/trades_b/trades_s, vol/vol_b/vol_s, val/val_b/val_s, disb(дисбаланс)`. **FO доп.**: `asset_code, im, oi_open/high/low/close`.
+- **OrderStats**: `put_orders(_b/_s), put_vol(_b/_s), put_val(_b/_s), put_vwap_b/s, cancel_orders(_b/_s), cancel_vol(_b/_s),
+  cancel_val(_b/_s), cancel_vwap_b/s`. Много put+cancel = «рисованная» ликвидность (спофинг).
+- **OBStats**: `spread_bbo/lv10/1mio, levels_b/s, vol_b/s, val_b/s, imbalance_vol(_bbo)/imbalance_val(_bbo), vwap_b/s(_1mio)`.
+  FO/FX доп.: `mid_price, micro_price, spread_l1..l20, vol_b_l1..l20` (глубина стакана по уровням).
+
+### HI2 (концентрация)  `/iss/datashop/algopack/{mkt}/hi2[/{ticker}].json?date|from&till`
+Блок `data`. Ежедневно. Поля: `tradedate,tradetime,secid,metric,value,reference,systime`.
+metric: `hhi_volume, hhi_buy/sell, hhi_netflow_buy/sell, hhi_passive, hhi_aggressive(_buy/_sell)`. Бэнды: <1500 / 1500–2500 / >2500.
+
+### MegaAlerts  `/iss/datashop/algopack/{eq|fo}/alerts[/{ticker}].json?date|from&till`
+Блок `data`. Поля: `tradedate,tradetime,secid,alert_type,threshold,value,reference(JSON),systime`.
+alert_type: `vol_(b|s)_99_9_pctl, vol_99_9_pctl, net_vol_99_9_pctl±, pr_change_99_9_pctl±, pr_(high_max|low_min)` и *_max/_min.
+`reference` = пост-алерт статистика за окно: для `m_5/m_15/m_30/h_1` массив [ср.рост%, ср.паден%, N рост, N паден, ср.всего%] +
+`vol_b/vol_s`. Это встроенный мини-бэктест «что было после похожего сигнала».
+
+### Свечи/стакан/сделки под ключом (онлайн на Promo)
+`/iss/engines/{stock|futures|currency}/markets/{shares|forts|selt}/boards/{TQBR|RFUD|CETS}/securities/{ticker}/{candles|trades|orderbook}.json`
+Свечи: `open/high/low/close/volume/value/begin/end`, `interval=1|10|60|24|7|31`, пагинация `start`. Сделки: `BUYSELL, PRICE, QUANTITY`.
+
+### Питон-библиотека (альтернатива REST)
+`pip install "moexalgo[dataframe]" python-dotenv`; `session.TOKEN = APIKEY` (переключает базу на apim + Bearer);
+`Market("EQ").obstats(date=...)`, `Ticker(...)`. Удобно для бэктест-скриптов/крона на шлюзе, но для терминала мы всё равно
+дергаем REST через нашу проксю.
+
+### Правки к разделам выше (по факту из офиц. доки)
+- FUTOI берём с `analyticalproducts/futoi` (НЕ `datashop/algopack/fo/futoi` — такого нет), ticker = базовый актив (`Si`).
+- SuperCandles ticker = secid контракта (`SiU6`); ответы капятся на 1000 строк → пагинация `start`.
+- Готовой IV/греков в доске нет (подтверждено) → Black-76 у нас. Опц. доска — по-прежнему `engines/futures/markets/options`.
