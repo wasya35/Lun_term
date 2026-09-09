@@ -112,6 +112,45 @@ function http_get($url) {
   return $body;
 }
 
+// Запрос к apim.moex.com с Bearer-ключом. На старых хостингах (CentOS 7) PHP-шный
+// curl собран на NSS и падает на сертификате apim ("Unrecognized Object Identifier").
+// Поэтому: пробуем curl, а при его сбое — уходим через OpenSSL-потоки PHP
+// (file_get_contents), которые используют системный OpenSSL и сертификат разбирают.
+// Возвращает ['body'=>string|false, 'code'=>int, 'err'=>string, 'via'=>'curl'|'stream'].
+function moex_authed_get($url, $key) {
+  $curlErr = 'no curl';
+  if (function_exists('curl_init')) {
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+      CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
+      CURLOPT_TIMEOUT => 25, CURLOPT_CONNECTTIMEOUT => 12,
+      CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $key, 'Accept: application/json'],
+      CURLOPT_USERAGENT => 'AG-TS/1.0',
+    ]);
+    $body = curl_exec($ch);
+    $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlErr = curl_error($ch);
+    curl_close($ch);
+    if ($body !== false && $code > 0) return ['body' => $body, 'code' => $code, 'err' => '', 'via' => 'curl'];
+  }
+  // fallback: OpenSSL-потоки (обходят NSS).
+  $ctx = stream_context_create([
+    'http' => [
+      'method'  => 'GET',
+      'header'  => "Authorization: Bearer $key\r\nAccept: application/json\r\nUser-Agent: AG-TS/1.0\r\n",
+      'timeout' => 25, 'ignore_errors' => true, 'follow_location' => 1,
+    ],
+    'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+  ]);
+  $body = @file_get_contents($url, false, $ctx);
+  if ($body === false) return ['body' => false, 'code' => 0, 'err' => 'curl: ' . $curlErr . ' | stream: тоже не удалось (allow_url_fopen?)', 'via' => 'stream'];
+  $code = 0;
+  if (isset($http_response_header) && is_array($http_response_header)) {
+    foreach ($http_response_header as $h) { if (preg_match('#^HTTP/\S+\s+(\d+)#', $h, $m)) $code = (int)$m[1]; }
+  }
+  return ['body' => $body, 'code' => $code ?: 200, 'err' => '', 'via' => 'stream'];
+}
+
 function iss_get_json($url) {
   $data = json_decode(http_get($url), true);
   if (!is_array($data)) throw new Exception('bad JSON from ISS');
@@ -279,17 +318,10 @@ if (!defined('LUN_NO_DISPATCH')) {
     if ($hit !== null) { echo $hit; exit; }
     $url = 'https://apim.moex.com' . $issPath;
     try {
-      $ch = curl_init($url);
-      curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_TIMEOUT => 25, CURLOPT_CONNECTTIMEOUT => 12,
-        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $KEY, 'Accept: application/json'],
-        CURLOPT_USERAGENT => 'AG-TS/1.0',
-      ]);
-      $body = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
-      if ($body === false) { http_response_code(502); echo json_encode(['error' => 'moex: ' . $err]); exit; }
-      if ($code === 200) { $t = ltrim($body); if ($t !== '' && ($t[0] === '{' || $t[0] === '[')) cache_put($ck, $body); }
-      http_response_code($code ?: 502); echo $body;
+      $r = moex_authed_get($url, $KEY);
+      if ($r['body'] === false) { http_response_code(502); echo json_encode(['error' => 'moex: ' . $r['err']]); exit; }
+      if ($r['code'] === 200) { $t = ltrim($r['body']); if ($t !== '' && ($t[0] === '{' || $t[0] === '[')) cache_put($ck, $r['body']); }
+      http_response_code($r['code'] ?: 502); echo $r['body'];
     } catch (Exception $e) { http_response_code(502); echo json_encode(['error' => $e->getMessage()]); }
     exit;
   }
