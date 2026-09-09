@@ -6,7 +6,8 @@ lun_term_site.zip
 public/lun_data/
 lun_data/
 
-# секреты AlgoPack (реальные файлы не коммитим)
-public/gw_secret.php
+# секреты AlgoPack (реальные файлы не коммитим).
+# Настоящий ключ лежит в public/lun_data/pk.php — папка lun_data уже игнорируется выше.
 public/algopack_secret.php
+public/pk.php
 public/*.key

@@ -246,18 +246,20 @@ if (!defined('LUN_NO_DISPATCH')) {
     } catch (Exception $e) { http_response_code(502); echo json_encode(['error' => $e->getMessage()]); }
     exit;
   }
-  // AlgoPack (по подписке, с ключом) — форвардим на шлюз (Timeweb), который держит
-  // ключ и ходит на apim.moex.com. Здесь: пускаем ТОЛЬКО залогиненного, строим
-  // корректный ISS-путь по датасету, кэшируем. Ключа тут нет — только адрес+секрет
-  // шлюза из НЕ-гит файла gw_secret.php (`return ['url'=>..., 'secret'=>...];`).
+  // AlgoPack (по подписке, с ключом) — с сервера loki MOEX доступен напрямую, поэтому
+  // ходим прямо на apim.moex.com с заголовком Authorization: Bearer <ключ>. Шлюз не
+  // нужен. Пускаем ТОЛЬКО залогиненного, строим корректный ISS-путь по датасету, кэшируем.
+  // Ключ лежит в НЕ-гит файле public/lun_data/pk.php (`<?php return 'КЛЮЧ';`) — папка
+  // lun_data закрыта .htaccess наглухо (Require all denied / F,L), в git не попадает.
   if ($fn === 'algopack') {
     @session_start();
     header('Content-Type: application/json; charset=utf-8');
     send_cors();
     if (empty($_SESSION['uid'])) { http_response_code(401); echo json_encode(['error' => 'login required']); exit; }
     if (!rate_ok('algopack', 300, 60)) too_many();
-    $gw = is_file(__DIR__ . '/gw_secret.php') ? (include __DIR__ . '/gw_secret.php') : null;
-    if (!is_array($gw) || empty($gw['url']) || empty($gw['secret'])) { http_response_code(500); echo json_encode(['error' => 'gateway not configured (gw_secret.php)']); exit; }
+    $keyFile = __DIR__ . '/lun_data/pk.php';
+    $KEY = is_file($keyFile) ? (include $keyFile) : null;
+    if (!is_string($KEY) || $KEY === '') { http_response_code(500); echo json_encode(['error' => 'algopack key not configured (lun_data/pk.php)']); exit; }
     $ds = $_GET['ds'] ?? '';
     $secid = preg_replace('/[^A-Za-z0-9._-]/', '', (string)($_GET['secid'] ?? ''));
     $mkt = in_array(($_GET['mkt'] ?? 'fo'), ['eq', 'fo', 'fx'], true) ? ($_GET['mkt'] ?? 'fo') : 'fo';
@@ -275,16 +277,17 @@ if (!defined('LUN_NO_DISPATCH')) {
     $ck = 'algopack|' . $issPath;
     $hit = cache_get($ck, $ttl);
     if ($hit !== null) { echo $hit; exit; }
-    $url = rtrim($gw['url'], '/') . '/moex' . $issPath;
+    $url = 'https://apim.moex.com' . $issPath;
     try {
       $ch = curl_init($url);
       curl_setopt_array($ch, [
-        CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 25, CURLOPT_CONNECTTIMEOUT => 12,
-        CURLOPT_HTTPHEADER => ['X-Gate-Secret: ' . $gw['secret'], 'Accept: application/json'],
+        CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_TIMEOUT => 25, CURLOPT_CONNECTTIMEOUT => 12,
+        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . $KEY, 'Accept: application/json'],
         CURLOPT_USERAGENT => 'AG-TS/1.0',
       ]);
       $body = curl_exec($ch); $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE); $err = curl_error($ch); curl_close($ch);
-      if ($body === false) { http_response_code(502); echo json_encode(['error' => 'gateway: ' . $err]); exit; }
+      if ($body === false) { http_response_code(502); echo json_encode(['error' => 'moex: ' . $err]); exit; }
       if ($code === 200) { $t = ltrim($body); if ($t !== '' && ($t[0] === '{' || $t[0] === '[')) cache_put($ck, $body); }
       http_response_code($code ?: 502); echo $body;
     } catch (Exception $e) { http_response_code(502); echo json_encode(['error' => $e->getMessage()]); }

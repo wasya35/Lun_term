@@ -49,7 +49,7 @@ Options -Indexes
 
 # Секреты AlgoPack: конфиг шлюза и файл-ключ. (gw_secret.php при прямом открытии и так
 # отдаёт пусто — это return-файл; но закрываем и на уровне сервера.) Диагностические щупы.
-<FilesMatch "^(gw_secret|algopack_secret)\.php$">
+<FilesMatch "^(gw_secret|algopack_secret|pk)\.php$">
   <IfModule mod_authz_core.c>
     Require all denied
   </IfModule>
