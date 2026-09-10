@@ -1417,7 +1417,9 @@
     const code = futoiCode(ins, ticker);
     const firstMs = list[0].timestamp, lastMs = list[list.length - 1].timestamp;
     const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
-    const fromMs = Math.max(firstMs, lastMs - 400 * 86400000);   // futoi интрадей объёмный — окно ≤400 дней
+    // FUTOI — 5-минутные снимки (объёмно): грузим окно ≤45 дней (сегодняшние
+    // 5-минутки всегда на первой странице — данные новые-сверху).
+    const fromMs = Math.max(firstMs, lastMs - 45 * 86400000);
     const key = code + '|' + fmt(fromMs) + '|' + fmt(lastMs);
     if (!force && slot.futoiData && slot.futoiData.key === key) return slot.futoiData;
     let rows;

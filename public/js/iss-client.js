@@ -271,8 +271,6 @@
     }
     return pages;
   }
-  // Один раз получив «нет доступа» (не залогинен / нет ключа), больше не долбим прокси.
-  let algopackOff = false;
   window.LUN_FUTOI_SRC = '';                       // 'online' | 'delayed' — для статуса
 
   // FUTOI — открытый интерес по физлицам/юрлицам (аналитический продукт MOEX).
@@ -281,16 +279,15 @@
   // Сначала пробуем ОНЛАЙН (AlgoPack, реальное время) через серверный прокси;
   // при неудаче — публичный ОТЛОЖЕННЫЙ фид ISS (T−15) напрямую/через ISS-шлюз.
   async function fetchFUTOI(code, from, till) {
-    const wantOnline = !algopackOff && !(window.LUN && window.LUN.ALGOPACK && window.LUN.ALGOPACK.online === false);
+    const wantOnline = !(window.LUN && window.LUN.ALGOPACK && window.LUN.ALGOPACK.online === false);
     if (wantOnline) {
       try {
+        // 5-минутные внутридневные снимки физ/юр приходят по from/till (НЕ по date=,
+        // который apim игнорирует). Данные новые-сверху, пагинация &start=N.
         const params = 'ds=futoi&secid=' + encodeURIComponent(code) + '&from=' + from + '&till=' + till;
-        const rows = collectFutoiRows(await fetchAlgopackPages(params, 'futoi'));
+        const rows = collectFutoiRows(await fetchAlgopackPages(params, 'futoi', 30));
         if (rows.length) { window.LUN_FUTOI_SRC = 'online'; return rows; }
-      } catch (e) {
-        // нет сессии/ключа/связи — отключаем онлайн на сессию и падаем на публичный
-        if (/401|500|login|key|algopack/i.test(String(e && e.message))) algopackOff = true;
-      }
+      } catch (e) { /* падаем на отложенный ТОЛЬКО для этого вызова, без стоп-крана на сессию */ }
     }
     window.LUN_FUTOI_SRC = 'delayed';
     const url = `https://iss.moex.com/iss/analyticalproducts/futoi/securities/${encodeURIComponent(code)}.json?iss.meta=off&from=${from}&till=${till}`;
