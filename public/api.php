@@ -358,31 +358,39 @@ if (!defined('LUN_NO_DISPATCH')) {
     $keyFile = __DIR__ . '/lun_data/pk.php';
     $KEY = is_file($keyFile) ? (include $keyFile) : null;
     $hasKey = is_string($KEY) && $KEY !== '';
-    $snip = function ($s) { $s = (string)$s; return mb_substr(preg_replace('/\s+/', ' ', $s), 0, 220); };
-    // определим ближний фьючерс Si (front), чтобы тестить его контракт
-    $front = '';
-    try { $fl = fetch_front('Si', gmdate('Y-m-d')); if ($fl && !empty($fl[0]['ticker'])) $front = $fl[0]['ticker']; } catch (Exception $e) {}
-    $tests = [
-      'apim_futoi_fromtill' => ['apim', "/iss/analyticalproducts/futoi/securities/Si.json?from=" . gmdate('Y-m-d', time() - 20 * 86400) . "&till=" . gmdate('Y-m-d')],
-      'apim_futoi_latest'   => ['apim', "/iss/analyticalproducts/futoi/securities/Si.json?latest=1"],
-      'apim_futoi_date'     => ['apim', "/iss/analyticalproducts/futoi/securities/Si.json?date=" . gmdate('Y-m-d', time() - 3 * 86400)],
-      'apim_tradestats_fo'  => ['apim', "/iss/datashop/algopack/fo/tradestats/" . ($front ?: 'SiU6') . ".json?latest=1"],
-      'apim_candles_1m'     => ['apim', "/iss/engines/futures/markets/forts/securities/" . ($front ?: 'SiU6') . "/candles.json?interval=1&iss.reverse=true"],
-      'iss_candles_1m'      => ['iss',  "/iss/engines/futures/markets/forts/securities/" . ($front ?: 'SiU6') . "/candles.json?interval=1&iss.reverse=true"],
-      'apim_marketdata'     => ['apim', "/iss/engines/futures/markets/forts/securities/" . ($front ?: 'SiU6') . ".json?iss.only=marketdata"],
-    ];
-    $out = ['hasKey' => $hasKey, 'front_Si' => $front, 'server_time' => gmdate('c'), 'tests' => []];
-    foreach ($tests as $name => $t) {
-      list($host, $path) = $t;
-      if ($host === 'apim') {
-        if (!$hasKey) { $out['tests'][$name] = ['skipped' => 'no key']; continue; }
-        $r = moex_authed_get('https://apim.moex.com' . $path, $KEY);
-        $out['tests'][$name] = ['url' => 'apim' . $path, 'code' => $r['code'], 'via' => $r['via'], 'err' => $r['err'], 'body' => $snip($r['body'])];
-      } else {
-        try { $b = http_get('https://iss.moex.com' . $path); $out['tests'][$name] = ['url' => 'iss' . $path, 'code' => 200, 'body' => $snip($b)]; }
-        catch (Exception $e) { $out['tests'][$name] = ['url' => 'iss' . $path, 'err' => $e->getMessage()]; }
-      }
-    }
+    if (!$hasKey) { echo json_encode(['error' => 'no key']); exit; }
+    // Разбор гранулярности FUTOI: сколько строк и какие ВРЕМЕНА возвращает apim
+    // при разных запросах (за сегодня, вчера, диапазон). Так видно, есть ли 5-мин
+    // внутридневные снимки физ/юр (нужны для показа по бару M5).
+    $probe = function ($path) use ($KEY) {
+      $r = moex_authed_get('https://apim.moex.com' . $path, $KEY);
+      $res = ['code' => $r['code'], 'via' => $r['via']];
+      $j = json_decode($r['body'], true);
+      $tbl = null;
+      if (is_array($j)) foreach ($j as $k => $v) { if (is_array($v) && isset($v['columns'], $v['data']) && in_array('clgroup', $v['columns'], true)) { $tbl = $v; break; } }
+      if (!$tbl) { $res['rows'] = 0; $res['note'] = 'нет таблицы futoi'; $res['raw'] = mb_substr(preg_replace('/\s+/', ' ', (string)$r['body']), 0, 160); return $res; }
+      $ci = array_flip($tbl['columns']);
+      $rows = $tbl['data'];
+      $res['rows'] = count($rows);
+      // соберём (date time clgroup) первых 4 и последних 8 строк
+      $fmt = function ($row) use ($ci) { return ($row[$ci['tradedate']] ?? '?') . ' ' . ($row[$ci['tradetime']] ?? '?') . ' ' . ($row[$ci['clgroup']] ?? '?'); };
+      $res['first'] = array_map($fmt, array_slice($rows, 0, 4));
+      $res['last'] = array_map($fmt, array_slice($rows, -8));
+      // уникальные времена только для FIZ за последнюю дату (оценка шага)
+      $lastDate = null; foreach (array_reverse($rows) as $row) { $d = $row[$ci['tradedate']] ?? null; if ($d) { $lastDate = $d; break; } }
+      $times = [];
+      foreach ($rows as $row) { if (($row[$ci['tradedate']] ?? '') === $lastDate && ($row[$ci['clgroup']] ?? '') === 'FIZ') $times[] = $row[$ci['tradetime']] ?? '?'; }
+      $res['lastDate'] = $lastDate; $res['lastDate_FIZ_times'] = array_slice($times, 0, 40); $res['lastDate_FIZ_count'] = count($times);
+      return $res;
+    };
+    $today = gmdate('Y-m-d'); $y1 = gmdate('Y-m-d', time() - 86400); $y3 = gmdate('Y-m-d', time() - 3 * 86400);
+    $out = ['server_time' => gmdate('c'), 'today' => $today, 'probes' => [
+      'date_today'      => $probe("/iss/analyticalproducts/futoi/securities/Si.json?date=$today"),
+      'date_yesterday'  => $probe("/iss/analyticalproducts/futoi/securities/Si.json?date=$y1"),
+      'date_3daysAgo'   => $probe("/iss/analyticalproducts/futoi/securities/Si.json?date=$y3"),
+      'from_today_till_today' => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$today&till=$today"),
+      'from_3d_till_today'    => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$y3&till=$today"),
+    ]];
     echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT); exit;
   }
   header('Content-Type: application/json; charset=utf-8');
