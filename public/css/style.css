@@ -133,19 +133,21 @@ html, body { overflow-x: hidden; }
   #news-mood { display: none; }
 }
 
-/* ============ Окно «Данные FUTOI» (лист F&Y) ============ */
-#futoi-data-win.lun-modal-bg {
-  position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.6);
-  display: flex; align-items: center; justify-content: center; padding: 20px;
-}
-#futoi-data-win .fd-modal {
-  background: #121722; border: 1px solid #232b3a; border-radius: 10px;
-  width: 100%; max-width: 720px; max-height: 84vh; display: flex; flex-direction: column;
-  color: #d7deea; box-shadow: 0 12px 40px rgba(0,0,0,.55); overflow: hidden;
+/* ============ Окно «Данные FUTOI» (лист F&Y) — плавающая панель ============ */
+#futoi-data-win.fd-float {
+  position: fixed; top: 64px; right: 10px; z-index: 900;
+  width: 470px; max-width: 96vw; height: 62vh; min-width: 320px; min-height: 200px;
+  background: #121722; border: 1px solid #2a3446; border-radius: 10px;
+  color: #d7deea; box-shadow: 0 12px 40px rgba(0,0,0,.55);
+  display: flex; flex-direction: column; overflow: hidden; resize: both;
 }
 #futoi-data-win .fd-head {
-  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-  border-bottom: 1px solid #232b3a; font-size: 14px;
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid #232b3a; font-size: 13px; cursor: move; user-select: none;
+}
+#futoi-data-win .fd-date {
+  background: #1a2130; color: #d7deea; border: 1px solid #2a3446; border-radius: 5px;
+  font-size: 11px; padding: 2px 4px; cursor: pointer;
 }
 #futoi-data-win .fd-head .fd-src { color: #7f8aa0; font-size: 11px; }
 #futoi-data-win .fd-head .fd-x { margin-left: auto; background: none; border: 0; color: #8b93a7; font-size: 18px; cursor: pointer; }

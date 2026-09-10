@@ -175,56 +175,74 @@
     const code = opts.code || '';
     const src = opts.src === 'online' ? 'AlgoPack · онлайн' : (opts.src === 'delayed' ? 'ISS · отложенный (T−15)' : '');
     document.getElementById('futoi-data-win')?.remove();
-    const bg = document.createElement('div');
-    bg.id = 'futoi-data-win';
-    bg.className = 'lun-modal-bg';
-    const last = snaps[snaps.length - 1] || {};
+    // уникальные даты (новые сверху) для календаря
+    const dates = [...new Set(snaps.map((s) => s.date).filter(Boolean))].sort().reverse();
     const cell = (v, n) => `<div class="fd-cell"><span class="fd-v ${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">${fmtInt(v)}</span><span class="fd-n">${fmtInt(n)} сч.</span></div>`;
-    bg.innerHTML = `
-      <div class="lun-modal fd-modal">
-        <div class="fd-head">
-          <b>Данные FUTOI — ${code || '—'}</b>
-          <span class="fd-src">${src}</span>
-          <button class="fd-x" title="Закрыть">✕</button>
-        </div>
-        <div class="fd-sum">
-          <div>Ф нетто: <b class="${(last.fizNet||0)>=0?'pos':'neg'}">${fmtInt(last.fizNet||0)}</b> <span class="fd-n">(${(last.fizLn||0).toLocaleString('ru-RU')}/${(last.fizSn||0).toLocaleString('ru-RU')} лиц)</span></div>
-          <div>Ю нетто: <b class="${(last.yurNet||0)>=0?'pos':'neg'}">${fmtInt(last.yurNet||0)}</b> <span class="fd-n">(${(last.yurLn||0).toLocaleString('ru-RU')}/${(last.yurSn||0).toLocaleString('ru-RU')} лиц)</span></div>
-          <div class="fd-n">снимков: ${snaps.length}${last.date ? ' · посл. ' + last.date + ' ' + (last.time||'') : ''}</div>
-        </div>
-        <div class="fd-tabs">
-          <button class="fd-tab active" data-mode="bar">По бару</button>
-          <button class="fd-tab" data-mode="cum">Накопительно</button>
-        </div>
-        <div class="fd-tablewrap">
-          <table class="fd-table">
-            <thead><tr><th>Время</th><th>Ф.Лонг</th><th>Ф.Шорт</th><th>Ю.Лонг</th><th>Ю.Шорт</th></tr></thead>
-            <tbody></tbody>
-          </table>
-        </div>
+    const win = document.createElement('div');
+    win.id = 'futoi-data-win'; win.className = 'fd-float';
+    win.innerHTML = `
+      <div class="fd-head" data-drag="1">
+        <b>Данные FUTOI · ${code || '—'}</b>
+        <select class="fd-date" title="Дата">
+          <option value="">Все дни</option>
+          ${dates.map((d) => `<option value="${d}">${d}</option>`).join('')}
+        </select>
+        <span class="fd-src">${src}</span>
+        <button class="fd-x" title="Закрыть">✕</button>
+      </div>
+      <div class="fd-sum"></div>
+      <div class="fd-tabs">
+        <button class="fd-tab active" data-mode="bar">По бару</button>
+        <button class="fd-tab" data-mode="cum">Накопительно</button>
+      </div>
+      <div class="fd-tablewrap">
+        <table class="fd-table">
+          <thead><tr><th>Время</th><th>Ф.Лонг</th><th>Ф.Шорт</th><th>Ю.Лонг</th><th>Ю.Шорт</th></tr></thead>
+          <tbody></tbody>
+        </table>
       </div>`;
-    document.body.appendChild(bg);
-    const tbody = bg.querySelector('tbody');
-    const render = (mode) => {
+    document.body.appendChild(win);
+    const tbody = win.querySelector('tbody'), sumEl = win.querySelector('.fd-sum');
+    const dateSel = win.querySelector('.fd-date');
+    let mode = 'bar';
+    const render = () => {
+      const day = dateSel.value;
+      const list = (day ? snaps.filter((s) => s.date === day) : snaps).slice().reverse();   // новые сверху
+      const last = (day ? snaps.filter((s) => s.date === day) : snaps).slice(-1)[0] || {};
+      sumEl.innerHTML =
+        `<div>Ф нетто: <b class="${(last.fizNet || 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(last.fizNet || 0)}</b> <span class="fd-n">(${(last.fizLn || 0).toLocaleString('ru-RU')}/${(last.fizSn || 0).toLocaleString('ru-RU')} лиц)</span></div>`
+        + `<div>Ю нетто: <b class="${(last.yurNet || 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(last.yurNet || 0)}</b> <span class="fd-n">(${(last.yurLn || 0).toLocaleString('ru-RU')}/${(last.yurSn || 0).toLocaleString('ru-RU')} лиц)</span></div>`
+        + `<div class="fd-n">${day ? 'за ' + day : 'всего'}: ${list.length} снимк.${last.time ? ' · посл. ' + last.time : ''}</div>`;
       const pfx = mode === 'cum' ? 'c' : 'd';
-      const rows = snaps.slice().reverse();   // новые сверху
-      tbody.innerHTML = rows.map((s) => {
-        const when = (s.date || '') + (s.time ? ' ' + s.time.slice(0, 5) : '');
+      tbody.innerHTML = list.map((s) => {
+        const when = day ? (s.time ? s.time.slice(0, 5) : '') : ((s.date || '') + (s.time ? ' ' + s.time.slice(0, 5) : ''));
         return `<tr><td class="fd-t">${when}</td>` +
           `<td>${cell(s[pfx + 'FizL'] || 0, s[pfx + 'FizLn'] || 0)}</td>` +
           `<td>${cell(s[pfx + 'FizS'] || 0, s[pfx + 'FizSn'] || 0)}</td>` +
           `<td>${cell(s[pfx + 'YurL'] || 0, s[pfx + 'YurLn'] || 0)}</td>` +
           `<td>${cell(s[pfx + 'YurS'] || 0, s[pfx + 'YurSn'] || 0)}</td></tr>`;
-      }).join('') || '<tr><td colspan="5" class="fd-t">нет данных</td></tr>';
+      }).join('') || '<tr><td colspan="5" class="fd-t">нет данных за дату</td></tr>';
     };
-    render('bar');
-    bg.querySelectorAll('.fd-tab').forEach((b) => b.onclick = () => {
-      bg.querySelectorAll('.fd-tab').forEach((x) => x.classList.remove('active'));
-      b.classList.add('active'); render(b.dataset.mode);
+    if (dates.length) dateSel.value = dates[0];   // по умолчанию — последняя дата
+    render();
+    dateSel.onchange = render;
+    win.querySelectorAll('.fd-tab').forEach((b) => b.onclick = () => {
+      win.querySelectorAll('.fd-tab').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active'); mode = b.dataset.mode; render();
     });
-    const close = () => bg.remove();
-    bg.querySelector('.fd-x').onclick = close;
-    bg.onclick = (e) => { if (e.target === bg) close(); };
+    win.querySelector('.fd-x').onclick = () => win.remove();
+    // перетаскивание за шапку
+    const head = win.querySelector('.fd-head');
+    head.addEventListener('mousedown', (e) => {
+      if (e.target.closest('select,button')) return;
+      const r = win.getBoundingClientRect();
+      const ox = e.clientX - r.left, oy = e.clientY - r.top;
+      win.style.right = 'auto'; win.style.left = r.left + 'px'; win.style.top = r.top + 'px';
+      const move = (ev) => { win.style.left = Math.max(0, Math.min(window.innerWidth - 60, ev.clientX - ox)) + 'px'; win.style.top = Math.max(0, Math.min(window.innerHeight - 30, ev.clientY - oy)) + 'px'; };
+      const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      e.preventDefault();
+    });
   }
 
   /* =====================================================================
@@ -264,37 +282,47 @@
   }
   const kfmt = (n) => { n = Math.abs(n); return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(Math.round(n)); };
 
-  // Открытый интерес ПО БАРУ (готовый oi_close) — гистограмма уровня ОИ, цвет по
-  // знаку ΔОИ, яркость/подпись по порогам |ΔОИ| (по умолчанию 5k/10k/50k).
+  // ИЗМЕНЕНИЕ ОИ ПО БАРУ (ΔОИ = oi_close текущего − предыдущего). Столбики от нулевой
+  // линии: рост ОИ вверх (зел., пришли позиции), падение вниз (красн., закрылись).
+  // Высота = |ΔОИ|, нормировка по видимому окну. Крупные (по порогам 5k/10k/50k)
+  // ярче и подписаны. Внизу тонкой линией — уровень ОИ (для контекста).
   kc.registerIndicator({
-    name: 'TradeOI', shortName: 'ОИ (бар)', series: 'normal', figures: [],
+    name: 'TradeOI', shortName: 'ΔОИ (бар)', series: 'normal', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
       const ed = indicator.extendData || {}, rows = ed.rows || [], thr = ed.thr || [5000, 10000, 50000];
-      const H = bounding.height, list = chart.getDataList();
+      const H = bounding.height, W = bounding.width, list = chart.getDataList();
       ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-      if (!rows.length) { ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ (бар): нет данных tradestats', 6, 3); return true; }
+      if (!rows.length) { ctx.fillStyle = '#8b93a7'; ctx.fillText('ΔОИ (бар): нет данных tradestats', 6, 3); return true; }
       const map = tsByBar(rows, list), range = chart.getVisibleRange();
       const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
-      let mn = Infinity, mx = -Infinity;
-      for (let i = from; i < to; i++) { const a = map.get(i); if (!a || a.oi == null) continue; if (a.oi < mn) mn = a.oi; if (a.oi > mx) mx = a.oi; }
-      if (!(mx > mn)) { ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ (бар): нет данных в окне', 6, 3); return true; }
-      const top = H * 0.18, bot = H * 0.96, yOf = (v) => bot - ((v - mn) / (mx - mn)) * (bot - top);
-      const tierOf = (ab) => ab >= thr[2] ? 3 : (ab >= thr[1] ? 2 : (ab >= thr[0] ? 1 : 0)), ALPHA = [0.5, 0.62, 0.8, 1];
-      let bw = 6; try { bw = chart.getBarSpace().halfBar; } catch (e) {}
+      // зона столбиков ΔОИ (верх ~78% высоты), снизу — полоска уровня ОИ
+      const zeroY = Math.round(H * 0.44), maxBar = H * 0.36;
+      const oiTop = H * 0.82, oiBot = H * 0.98;
+      let maxAbs = 1, oiMn = Infinity, oiMx = -Infinity;
+      for (let i = from; i < to; i++) { const a = map.get(i); if (!a) continue; if (Math.abs(a.doi) > maxAbs) maxAbs = Math.abs(a.doi); if (a.oi != null) { if (a.oi < oiMn) oiMn = a.oi; if (a.oi > oiMx) oiMx = a.oi; } }
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(W, zeroY); ctx.stroke();
+      const tierOf = (ab) => ab >= thr[2] ? 3 : (ab >= thr[1] ? 2 : (ab >= thr[0] ? 1 : 0)), ALPHA = [0.42, 0.62, 0.82, 1];
+      let bw = 6; try { bw = chart.getBarSpace().bar; } catch (e) {} bw = Math.max(1, bw * 0.72);
       const labels = [];
+      // уровень ОИ снизу — линия
+      const yOI = (v) => (oiMx > oiMn) ? oiBot - ((v - oiMn) / (oiMx - oiMn)) * (oiBot - oiTop) : (oiTop + oiBot) / 2;
+      ctx.strokeStyle = 'rgba(120,140,180,0.55)'; ctx.lineWidth = 1; ctx.beginPath(); let started = false;
+      for (let i = from; i < to; i++) { const a = map.get(i); if (!a || a.oi == null) continue; const x = xAxis.convertToPixel(i), y = yOI(a.oi); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
+      if (started) ctx.stroke();
+      // столбики ΔОИ
       for (let i = from; i < to; i++) {
-        const a = map.get(i); if (!a || a.oi == null) continue;
-        const up = a.doi >= 0, tier = tierOf(Math.abs(a.doi)), x = xAxis.convertToPixel(i), y = yOf(a.oi);
+        const a = map.get(i); if (!a) continue; const d = a.doi || 0; if (!d) continue;
+        const up = d > 0, tier = tierOf(Math.abs(d)), x = xAxis.convertToPixel(i);
+        const h = Math.max(1, (Math.abs(d) / maxAbs) * maxBar);
         ctx.fillStyle = (up ? 'rgba(38,166,154,' : 'rgba(239,83,80,') + ALPHA[tier] + ')';
-        ctx.fillRect(x - bw, y, bw * 2 + 0.4, bot - y);
-        if (tier >= 2) labels.push({ x, y, up, ab: Math.abs(a.doi), tier });
+        if (up) ctx.fillRect(x - bw / 2, zeroY - h, bw, h); else ctx.fillRect(x - bw / 2, zeroY, bw, h);
+        if (tier >= 2) labels.push({ x, y: up ? zeroY - h : zeroY + h, up, ab: Math.abs(d), tier });
       }
-      ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
-      labels.forEach((l) => { ctx.fillStyle = l.up ? '#26a69a' : '#ef5350'; ctx.font = (l.tier === 3 ? 'bold ' : '') + '10px system-ui, sans-serif'; ctx.fillText((l.up ? '+' : '−') + kfmt(l.ab) + (l.tier === 3 ? '!' : ''), l.x, Math.max(11, l.y - 4)); });
+      labels.forEach((l) => { ctx.fillStyle = l.up ? '#26a69a' : '#ef5350'; ctx.font = (l.tier === 3 ? 'bold ' : '') + '10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = l.up ? 'bottom' : 'top'; ctx.fillText((l.up ? '+' : '−') + kfmt(l.ab) + (l.tier === 3 ? '!' : ''), l.x, l.up ? l.y - 1 : l.y + 1); });
       ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif'; ctx.fillStyle = '#8b93a7';
       const last = rows[rows.length - 1] || {};
-      ctx.fillText('ОИ по бару ' + kfmt(last.oi || 0) + '  ·  пороги ΔОИ ' + thr.map(kfmt).join(' · '), 6, 3);
+      ctx.fillText('ΔОИ по бару · ОИ ' + kfmt(last.oi || 0) + ' · пороги ' + thr.map(kfmt).join(' · '), 6, 3);
       return true;
     },
   });
