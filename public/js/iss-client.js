@@ -72,10 +72,16 @@
     let lastErr;
     for (const gw of tryList) {
       try {
-        const res = await fetch(gw.wrap(issUrl));
+        const res = await fetch(gw.wrap(issUrl), { credentials: 'same-origin' });
         if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
         const j = await res.json();
         workingGw = gw; window.LUN_ISS_GATEWAY = gw.name;
+        // источник: наш серверный прокси отдаёт заголовок X-Data-Source
+        // (online = apim/AlgoPack реалтайм, delayed = iss отложенный). Прямой/сторонний
+        // шлюз ходит на iss.moex.com напрямую → всегда отложенный.
+        const src = res.headers.get('X-Data-Source');
+        if (src) window.LUN_ISS_ONLINE = (src === 'online');
+        else if (gw.name !== 'сервер') window.LUN_ISS_ONLINE = false;
         return j;
       } catch (e) { lastErr = e; }
     }

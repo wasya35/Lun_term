@@ -3947,6 +3947,19 @@
   }
 
   /* ---------- init ---------- */
+  // Кружок подключения = ИСТОЧНИК данных: зелёный — AlgoPack (реальное время),
+  // жёлтый — отложенный резерв (T−15), серый — ещё не определён / демо.
+  function updateSourceDot() {
+    const dot = document.getElementById('conn-dot'); if (!dot) return;
+    const demo = /ДЕМО/i.test(window.LUN_DATA_SOURCE || '');
+    let color, txt;
+    if (demo) { color = '#8b93a7'; txt = 'Источник: демо (нет связи с MOEX)'; }
+    else if (window.LUN_ISS_ONLINE === true) { color = '#26a69a'; txt = 'Источник: AlgoPack — реальное время (онлайн)'; }
+    else if (window.LUN_ISS_ONLINE === false) { color = '#e0a030'; txt = 'Источник: отложенный фид (резерв, T−15)'; }
+    else { color = '#8b93a7'; txt = 'Источник: определяется…'; }
+    dot.style.background = color; dot.title = txt;
+  }
+
   function init() {
     addMarkovCss();
     buildUI();
@@ -3957,9 +3970,9 @@
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
     if (window.LunStream) window.LunStream.onStatus((txt, color) => {
       const el = document.getElementById('stream-status'); if (el) { el.textContent = txt; el.style.color = color; }
-      // кружок подключения (виден и на мобиле): зелёный — реалтайм, жёлтый —
-      // псевдо/переподключение, серый — выкл.
-      const dot = document.getElementById('conn-dot'); if (dot) { dot.style.background = color; dot.title = txt; }
+      // кружок теперь показывает ИСТОЧНИК данных (AlgoPack онлайн / отложенный),
+      // а не статус опроса — см. updateSourceDot().
+      updateSourceDot();
     });
     setLayout('1');       // создаёт график(и), панели и загрузку
     // коннекторы включены по умолчанию (stream.js: enabled=true) — цена всегда
@@ -3981,6 +3994,7 @@
         el.title = window.LUN_DATA_ERROR || '';
         el.style.color = window.LUN_DATA_ERROR ? '#e0a030' : '#26a69a';
       }
+      updateSourceDot();   // покрасить кружок по источнику (онлайн/отложенный)
       slots.forEach((s) => scheduleApply(s));   // данные загружены — закрепляем высоты панелей всех слотов
       // данные (пере)загружены — гарантируем, что на графике нет ни одного чужого рисунка
       setTimeout(sweepAllSlots, 60); setTimeout(sweepAllSlots, 1100);

@@ -118,8 +118,10 @@ function http_get($url) {
 // (file_get_contents), которые используют системный OpenSSL и сертификат разбирают.
 // Возвращает ['body'=>string|false, 'code'=>int, 'err'=>string, 'via'=>'curl'|'stream'].
 function moex_authed_get($url, $key) {
-  $curlErr = 'no curl';
-  if (function_exists('curl_init')) {
+  static $skipCurl = false;   // на этом хостинге curl (NSS) не парсит сертификат apim —
+                              // после первого провала ходим сразу через OpenSSL-потоки.
+  $curlErr = 'skipped';
+  if (!$skipCurl && function_exists('curl_init')) {
     $ch = curl_init($url);
     curl_setopt_array($ch, [
       CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
@@ -144,6 +146,7 @@ function moex_authed_get($url, $key) {
   ]);
   $body = @file_get_contents($url, false, $ctx);
   if ($body === false) return ['body' => false, 'code' => 0, 'err' => 'curl: ' . $curlErr . ' | stream: тоже не удалось (allow_url_fopen?)', 'via' => 'stream'];
+  $skipCurl = true;   // поток сработал — дальше не тратим время на curl
   $code = 0;
   if (isset($http_response_header) && is_array($http_response_header)) {
     foreach ($http_response_header as $h) { if (preg_match('#^HTTP/\S+\s+(\d+)#', $h, $m)) $code = (int)$m[1]; }
@@ -270,18 +273,38 @@ if (!defined('LUN_NO_DISPATCH')) {
     $host = strtolower((string)parse_url($url, PHP_URL_HOST));
     header('Content-Type: application/json; charset=utf-8');
     if ($host !== 'iss.moex.com') { http_response_code(400); echo json_encode(['error' => 'host not allowed']); exit; }
+    // TTL отложенного кэша по типу запроса
     $ttl = 120;
     if (strpos($url, 'candles') !== false) $ttl = 45;
     elseif (strpos($url, 'securities.json') !== false) $ttl = 600;
     elseif (strpos($url, 'analyticalproducts') !== false) $ttl = 120;
     elseif (strpos($url, '/history/') !== false) $ttl = 300;
-    $ck = 'iss|' . $url;
-    $hit = cache_get($ck, $ttl);
-    if ($hit !== null) { echo $hit; exit; }
+    $isJson = function ($b) { $t = ltrim((string)$b); return $t !== '' && ($t[0] === '{' || $t[0] === '['); };
+    // 1) ОНЛАЙН: тот же ISS-путь, но с apim.moex.com + Bearer (реалтайм по подписке
+    //    AlgoPack). Ключ — из lun_data/pk.php. Онлайн-кэш короче (свечи быстро живут).
+    $keyFile = __DIR__ . '/lun_data/pk.php';
+    $KEY = is_file($keyFile) ? (include $keyFile) : null;
+    if (is_string($KEY) && $KEY !== '') {
+      $p = parse_url($url);
+      $path = ($p['path'] ?? '') . (isset($p['query']) ? '?' . $p['query'] : '');
+      $onlineTtl = (strpos($url, 'candles') !== false) ? 20 : $ttl;
+      $ckO = 'issO|' . $url;
+      $hitO = cache_get($ckO, $onlineTtl);
+      if ($hitO !== null) { header('X-Data-Source: online'); echo $hitO; exit; }
+      $r = moex_authed_get('https://apim.moex.com' . $path, $KEY);
+      if ((int)$r['code'] === 200 && $isJson($r['body'])) {
+        cache_put($ckO, $r['body']); header('X-Data-Source: online'); echo $r['body']; exit;
+      }
+      // apim не дал 200/JSON — тихо падаем на отложенный ниже
+    }
+    // 2) ОТЛОЖЕННЫЙ (резерв): публичный iss.moex.com (T−15), server-to-server.
+    $ckD = 'issD|' . $url;
+    $hitD = cache_get($ckD, $ttl);
+    if ($hitD !== null) { header('X-Data-Source: delayed'); echo $hitD; exit; }
     try {
-      $body = http_get($url); $t = ltrim($body);
-      if ($t === '' || ($t[0] !== '{' && $t[0] !== '[')) throw new Exception('ISS не отдал JSON');
-      cache_put($ck, $body); echo $body;
+      $body = http_get($url);
+      if (!$isJson($body)) throw new Exception('ISS не отдал JSON');
+      cache_put($ckD, $body); header('X-Data-Source: delayed'); echo $body;
     } catch (Exception $e) { http_response_code(502); echo json_encode(['error' => $e->getMessage()]); }
     exit;
   }
