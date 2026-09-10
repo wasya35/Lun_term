@@ -6,8 +6,5 @@
   "scripts": {
     "start": "node server.js",
     "test": "node test/iss.test.js"
-  },
-  "devDependencies": {
-    "playwright-core": "^1.63.0"
   }
 }

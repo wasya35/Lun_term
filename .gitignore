@@ -11,3 +11,5 @@ lun_data/
 public/algopack_secret.php
 public/pk.php
 public/*.key
+package-lock.json
+node_modules/
