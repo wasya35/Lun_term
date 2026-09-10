@@ -45,6 +45,7 @@ LUN.TIMEFRAMES = [
   { id: 'M15', title: 'M15', span: 15, type: 'minute', iss: 15 },
   { id: 'H1',  title: 'H1',  span: 1,  type: 'hour',   iss: 60 },
   { id: 'D1',  title: 'D1',  span: 1,  type: 'day',    iss: 24 },
+  { id: 'W1',  title: 'W1',  span: 1,  type: 'week',   iss: 7  },
 ];
 LUN.DEFAULT_TIMEFRAME = 'H1';
 

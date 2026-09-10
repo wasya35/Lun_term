@@ -1401,6 +1401,61 @@
   function removeFutoiArrows(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {} } slot.futoi = null; slot.futoiOn = false; syncFutoiBtn(slot); scheduleWsSave(); }
   function syncFutoiBtn(slot) { slot = slot || state; if (slot !== state) return; const b = document.querySelector('[data-sync="futoiarr"]'); if (b) b.classList.toggle('active', !!slot.futoiOn); }
 
+  /* ---------- FUTOI: поток физ/юр (лонг/шорт, открытие/закрытие) + окно данных ----
+   * Данные грузятся через LunISS.fetchFUTOI (онлайн AlgoPack с фолбэком). Нормализация
+   * и отрисовка — в moex-futoi.js. Тумблеры серий держим в LUN_FUTOI_SHOW. */
+  const FUTOI_FLOW_PANE = 'pane_futoiflow';
+  window.LUN_FUTOI_SHOW = window.LUN_FUTOI_SHOW || {};    // 'fizL+','fizL-','fizS+','fizS-','yurL+','yurL-','yurS+','yurS-'
+  const futoiAnyOn = () => Object.keys(window.LUN_FUTOI_SHOW).some((k) => window.LUN_FUTOI_SHOW[k]);
+  async function ensureFutoiData(slot, force) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return null;
+    const ins = slot.instrument;
+    if ((ins.provider || 'moex') !== 'moex') { alert('FUTOI — только фьючерсы MOEX.'); return null; }
+    const list = c.getDataList(); if (!list || !list.length) { alert('Нет баров на графике.'); return null; }
+    const ticker = await window.LunData.resolveTicker(ins);
+    const code = futoiCode(ins, ticker);
+    const firstMs = list[0].timestamp, lastMs = list[list.length - 1].timestamp;
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+    const fromMs = Math.max(firstMs, lastMs - 400 * 86400000);   // futoi интрадей объёмный — окно ≤400 дней
+    const key = code + '|' + fmt(fromMs) + '|' + fmt(lastMs);
+    if (!force && slot.futoiData && slot.futoiData.key === key) return slot.futoiData;
+    let rows;
+    try { rows = await window.LunISS.fetchFUTOI(code, fmt(fromMs), fmt(lastMs + 86400000)); }
+    catch (e) { alert('FUTOI не загрузился (' + code + '): ' + e.message); return null; }
+    const snaps = window.LunFutoi.normalize(rows);
+    if (!snaps.length) { alert('FUTOI по «' + code + '» пуст за период (возможно, у актива нет FUTOI).'); return null; }
+    slot.futoiData = { key, code, snaps, src: window.LUN_FUTOI_SRC || '' };
+    return slot.futoiData;
+  }
+  function applyFutoiFlow(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
+    if (!futoiAnyOn()) { slot.futoiFlowOn = false; return; }
+    const d = slot.futoiData, snaps = (d && d.snaps) || [];
+    try {
+      c.createIndicator({ name: 'FutoiFlow', paneId: FUTOI_FLOW_PANE, shortName: 'Поток физ/юр',
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_SHOW) } }, false);
+      slot.futoiFlowOn = true; wishPane(FUTOI_FLOW_PANE, { height: 96, order: 94 });
+    } catch (e) { slot.futoiFlowOn = false; }
+  }
+  async function toggleFutoiSeries(key, btn) {
+    window.LUN_FUTOI_SHOW[key] = !window.LUN_FUTOI_SHOW[key];
+    if (btn) btn.classList.toggle('active', !!window.LUN_FUTOI_SHOW[key]);
+    if (futoiAnyOn() && !state.futoiData) { const d = await ensureFutoiData(state); if (!d) { window.LUN_FUTOI_SHOW[key] = false; if (btn) btn.classList.remove('active'); return; } }
+    applyFutoiFlow(state); scheduleWsSave();
+  }
+  async function openFutoiData(slot) {
+    slot = slot || state;
+    const d = await ensureFutoiData(slot); if (!d) return;
+    window.LunFutoi.openWindow({ code: d.code, snaps: d.snaps, src: d.src });
+  }
+  // Бид/аск физ/юр в публичном/REST-фиде AlgoPack (futoi) отсутствуют — нужен
+  // orderbook/tradestats-фид. Пока честно сообщаем, чтобы не рисовать пустышку.
+  function futoiBidAskNote() {
+    openModal('Бид/аск физ/юр', '<p>Данные <b>бид/аск в разбивке физ/юр</b> в текущем фиде AlgoPack (аналитический продукт FUTOI) не публикуются — они есть только в биржевом стакане/потоке сделок.</p>'
+      + '<p>План: подключить датасет <b>tradestats</b> (агрессивные покупки/продажи, <code>vol_b/vol_s</code>) как приближение «бид/аск по агрессору» и <b>obstats</b> (спред, дисбаланс стакана). Это следующий шаг — сделаем отдельным подключением к контракту (SiU6), а не к активу.</p>');
+  }
+
   /* ---------- опционные уровни (макс-ОИ страйки) ---------- */
   async function buildOptionLevels(slot) {
     slot = slot || state; const c = slot && slot.chart; if (!c) return;
@@ -1856,6 +1911,11 @@
     // стрелки физлиц привязаны к ТФ → снимаем при любой перезагрузке (перестроить по кнопке).
     try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {}
     slot.futoi = null; slot.futoiOn = false; syncFutoiBtn(slot);
+    // поток физ/юр (FutoiFlow) привязан к барам → снимаем панель и сбрасываем кэш
+    // снимков; если серии были включены — пересобираем под новые бары.
+    try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
+    slot.futoiData = null; slot.futoiFlowOn = false;
+    if (futoiAnyOn()) setTimeout(() => { ensureFutoiData(slot).then((d) => { if (d) applyFutoiFlow(slot); }); }, 1000);
     // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
     if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
     else if (slot.optlev) setTimeout(() => { try { applyOptionLevels(slot); } catch (e) {} }, 980);
@@ -3159,21 +3219,44 @@
     }, false, 'Марковский режим: лента BEAR/SIDE/BULL + сигнал + матрица переходов (M)');
     mkBtnRef.dataset.sync = 'markov';
     regHotkey('m', () => mkBtnRef.click());
-    // открытый интерес + позиции физлиц/юрлиц (FUTOI, MOEX, дневной)
+    // ============ Подгруппа МОЕКС · физ/юр (AlgoPack FUTOI) ============
+    const moexHdr = document.createElement('div'); moexHdr.className = 'menu-note';
+    moexHdr.style.cssText = 'color:#7fd0c0;font-weight:600;border-top:1px solid #263041;margin-top:6px;padding-top:8px';
+    moexHdr.textContent = '━━ МОЕКС · физ/юр (AlgoPack) ━━';
+    indWrap.appendChild(moexHdr);
+    // открытый интерес + чистые позиции физлиц/юрлиц (FUTOI) — на всех ТФ
     const oiBtn = mkBtn(indWrap, 'ОИ физ/юр', (b) => {
       const on = !b.classList.contains('active');
       if (on) rebuildOI(state).then((ok) => b.classList.toggle('active', ok !== false));
       else { b.classList.remove('active'); removeOI(state); }
-    }, false, 'Открытый интерес и чистые позиции физлиц/юрлиц (FUTOI, только фьючерсы MOEX, дневной)');
+    }, false, 'Открытый интерес и чистые позиции физлиц/юрлиц (FUTOI, только фьючерсы MOEX, все ТФ)');
     oiBtn.dataset.sync = 'oi';
+    // окно данных FUTOI (по бару / накопительно)
+    mkBtn(indWrap, '📋 Данные FUTOI (по бару / накопительно)', () => { closeMenus(); openFutoiData(state); }, false, 'Таблица позиций физ/юр лонг/шорт по каждому снимку и накопительно, с числом лиц').dataset.role = 'futoidata';
+    // поток физ/юр: 8 тумблеров (лонг/шорт × открытие+/закрытие−) → панель «Поток физ/юр»
+    const flowDefs = [
+      ['fizL+', 'Ф.Лонг+', 'Физики открывают лонг'], ['fizL-', 'Ф.Лонг−', 'Физики закрывают лонг'],
+      ['fizS+', 'Ф.Шорт+', 'Физики открывают шорт'], ['fizS-', 'Ф.Шорт−', 'Физики закрывают шорт'],
+      ['yurL+', 'Ю.Лонг+', 'Юрики открывают лонг'], ['yurL-', 'Ю.Лонг−', 'Юрики закрывают лонг'],
+      ['yurS+', 'Ю.Шорт+', 'Юрики открывают шорт'], ['yurS-', 'Ю.Шорт−', 'Юрики закрывают шорт'],
+    ];
+    flowDefs.forEach(([key, label, tip]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiSeries(key, bb); }, false, tip + ' (столбики в панели «Поток физ/юр»)'); b.dataset.sync = 'flow:' + key; });
+    // бид/аск физ/юр (пока нет в фиде — честный статус)
+    mkBtn(indWrap, 'Ф/Ю бид', () => { closeMenus(); futoiBidAskNote(); }, false, 'Бид в разбивке физ/юр — статус подключения данных');
+    mkBtn(indWrap, 'Ф/Ю аск', () => { closeMenus(); futoiBidAskNote(); }, false, 'Аск в разбивке физ/юр — статус подключения данных');
+    // стрелки массового открытия физлиц на свечах + порог
+    mkBtn(indWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
+    mkBtn(indWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');
+    const moexEnd = document.createElement('div'); moexEnd.className = 'menu-note';
+    moexEnd.style.cssText = 'border-bottom:1px solid #263041;padding-bottom:8px;margin-bottom:4px';
+    moexEnd.textContent = 'Онлайн — по подписке AlgoPack; иначе отложенный фид (T−15). Тумблеры Ф./Ю. рисуют поток в отдельной панели.';
+    indWrap.appendChild(moexEnd);
     // Data Window — значения бара под курсором
     mkBtn(indWrap, '🪟 Data Window (значения под курсором)', () => { closeMenus(); toggleDataWin(!dataWinOpen); }, false, 'Окошко O/H/L/C, объём, Δ и % бара под курсором').dataset.role = 'datawin';
     // MOEX-аналитика (перенесено из «Ганн»): опционные стенки и стрелки физлиц
     mkBtn(indWrap, '📊 Опционные уровни (стенки ОИ)…', () => { closeMenus(); optionLevelsModal(); }, false, 'Макс-ОИ страйки CALL/PUT выбранной серии (нед/мес/квартал) горизонталями').dataset.sync = 'optlev';
     mkBtn(indWrap, '✕ убрать опционные уровни', () => { closeMenus(); removeOptionLevels(state); }, false, 'Снять опционные стенки');
     mkBtn(indWrap, '🗓 Экспирации опционов (нед/мес/кв)', (b) => { closeMenus(); if (b.classList.contains('active')) removeExpiry(state); else buildExpiry(state); }, false, 'Авто-вертикали дат экспираций опционов с датой/временем (нед — серые, мес — оранжевые, кв — красные). Si недельные: четверг, ~18:45 МСК').dataset.sync = 'optexp';
-    mkBtn(indWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
-    mkBtn(indWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');
     // базис к споту исходного товара (фьюч − спот, регрессией) + z-score
     const basisBtn = mkBtn(indWrap, 'Базис к споту', (b) => {
       const on = !b.classList.contains('active');

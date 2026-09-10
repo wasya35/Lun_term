@@ -132,3 +132,44 @@ html, body { overflow-x: hidden; }
   /* на узком экране прячем подпись настроения СМИ — остаётся кружок подключения */
   #news-mood { display: none; }
 }
+
+/* ============ Окно «Данные FUTOI» (лист F&Y) ============ */
+#futoi-data-win.lun-modal-bg {
+  position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.6);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+#futoi-data-win .fd-modal {
+  background: #121722; border: 1px solid #232b3a; border-radius: 10px;
+  width: 100%; max-width: 720px; max-height: 84vh; display: flex; flex-direction: column;
+  color: #d7deea; box-shadow: 0 12px 40px rgba(0,0,0,.55); overflow: hidden;
+}
+#futoi-data-win .fd-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  border-bottom: 1px solid #232b3a; font-size: 14px;
+}
+#futoi-data-win .fd-head .fd-src { color: #7f8aa0; font-size: 11px; }
+#futoi-data-win .fd-head .fd-x { margin-left: auto; background: none; border: 0; color: #8b93a7; font-size: 18px; cursor: pointer; }
+#futoi-data-win .fd-sum { display: flex; flex-wrap: wrap; gap: 16px; padding: 10px 14px; border-bottom: 1px solid #1c2432; font-size: 13px; }
+#futoi-data-win .fd-sum .fd-n { color: #7f8aa0; font-size: 11px; }
+#futoi-data-win .fd-tabs { display: flex; gap: 6px; padding: 8px 14px 0; }
+#futoi-data-win .fd-tab {
+  background: #1a2130; border: 1px solid #2a3446; color: #b8c2d6; border-radius: 7px 7px 0 0;
+  padding: 6px 14px; font-size: 12px; cursor: pointer;
+}
+#futoi-data-win .fd-tab.active { background: #26a69a; border-color: #26a69a; color: #06110d; font-weight: 600; }
+#futoi-data-win .fd-tablewrap { overflow: auto; padding: 0 14px 14px; }
+#futoi-data-win .fd-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#futoi-data-win .fd-table th {
+  position: sticky; top: 0; background: #121722; text-align: right; color: #8b93a7;
+  font-weight: 500; padding: 8px 6px; border-bottom: 1px solid #2a3446;
+}
+#futoi-data-win .fd-table th:first-child { text-align: left; }
+#futoi-data-win .fd-table td { padding: 5px 6px; border-bottom: 1px solid #171e2a; text-align: right; }
+#futoi-data-win .fd-table td.fd-t { text-align: left; color: #aab4c8; white-space: nowrap; }
+#futoi-data-win .fd-cell { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
+#futoi-data-win .fd-cell .fd-v { font-variant-numeric: tabular-nums; }
+#futoi-data-win .fd-cell .fd-v.pos { color: #34c98a; }
+#futoi-data-win .fd-cell .fd-v.neg { color: #ef5c6a; }
+#futoi-data-win .fd-cell .fd-n { color: #6c778c; font-size: 10px; }
+#futoi-data-win b.pos { color: #34c98a; }
+#futoi-data-win b.neg { color: #ef5c6a; }

@@ -17,7 +17,7 @@
   function rangeFor(tf) {
     // дефолтная глубина (если период не задан через меню) — расширена для
     // исследований: дни ~4 года, часы ~13 мес, минуты ~20 дней.
-    const defDays = tf.type === 'day' ? 1500 : (tf.type === 'hour' ? 400 : 20);
+    const defDays = tf.type === 'week' ? 2500 : (tf.type === 'day' ? 1500 : (tf.type === 'hour' ? 400 : 20));
     const b = window.LunHist ? window.LunHist.bounds(defDays)
       : { fromMs: Date.now() - defDays * 86400000, tillMs: Date.now() };
     return { from: fmtDate(new Date(b.fromMs)), till: fmtDate(new Date(b.tillMs)) };
