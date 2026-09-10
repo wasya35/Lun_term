@@ -1411,6 +1411,7 @@
     slot = slot || state; const c = slot && slot.chart; if (!c) return null;
     const ins = slot.instrument;
     if ((ins.provider || 'moex') !== 'moex') { alert('FUTOI — только фьючерсы MOEX.'); return null; }
+    if (!window.LunISS || !window.LunISS.fetchFUTOI) { alert('Модуль данных ISS не загрузился (iss-client.js). Обнови страницу; если не помогло — файл js/iss-client.js на сервере отсутствует или битый (проверь консоль/Network на 404).'); return null; }
     const list = c.getDataList(); if (!list || !list.length) { alert('Нет баров на графике.'); return null; }
     const ticker = await window.LunData.resolveTicker(ins);
     const code = futoiCode(ins, ticker);
