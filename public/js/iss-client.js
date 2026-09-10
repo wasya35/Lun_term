@@ -297,6 +297,25 @@
     return collectFutoiRows(await getAllPages(url, 'futoi'));
   }
 
+  // TradeStats (AlgoPack SuperCandles) — ГОТОВЫЕ данные ПО КАЖДОМУ 5-мин бару
+  // конкретного контракта (secid = SiU6, а не актив): цена, объём, и главное —
+  // vol_b/vol_s (агрессивные покупки/продажи = покупатели/продавцы), а для
+  // фьючерсов (fo) ещё oi_open/high/low/close (открытый интерес НА БАР). Ничего не
+  // пересчитываем — берём как есть. Только онлайн (по подписке AlgoPack).
+  // mkt: 'fo' фьючерсы, 'eq' акции, 'fx' валюта. Возвращает массив строк-объектов.
+  async function fetchTradeStats(secid, from, till, mkt) {
+    mkt = mkt || 'fo';
+    const params = 'ds=tradestats&mkt=' + mkt + '&secid=' + encodeURIComponent(secid)
+      + (from ? '&from=' + from : '') + (till ? '&till=' + till : '');
+    const pages = await fetchAlgopackPages(params, 'data', 40);
+    const out = [];
+    for (const j of pages) {
+      const t = j.data || j.tradestats || null;
+      if (t && t.columns && t.data) for (const o of rowsToObjects(t)) out.push(o);
+    }
+    return out;
+  }
+
   // Дневная история открытого интереса по конкретному контракту (OPENPOSITION).
   async function fetchOIHistory(secid, from, till) {
     const url = `https://iss.moex.com/iss/history/engines/futures/markets/forts/securities/${encodeURIComponent(secid)}.json`
@@ -351,5 +370,5 @@
     return out;
   }
 
-  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchOIHistory, fetchOptions, parseOptSecid, classifyExpiry };
+  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchTradeStats, fetchOIHistory, fetchOptions, parseOptSecid, classifyExpiry };
 })();

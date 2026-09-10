@@ -227,5 +227,104 @@
     bg.onclick = (e) => { if (e.target === bg) close(); };
   }
 
-  window.LunFutoi = { normalize, openWindow, SERIES };
+  /* =====================================================================
+   *  TradeStats (AlgoPack SuperCandles) — ГОТОВЫЕ данные по каждому бару.
+   *  Ничего не пересчитываем: oi_close = ОИ на бар, vol_b/vol_s = покупатели/
+   *  продавцы (агрессор). Индикаторы: TradeOI (ОИ по бару) и BuySell.
+   * ===================================================================== */
+  const tsNum = (r, keys) => { for (const k of keys) if (r[k] != null) return +r[k] || 0; return 0; };
+  function normalizeTradeStats(rows) {
+    const out = [];
+    for (const r of rows || []) {
+      const ts = rowTs(r); if (ts == null) continue;
+      out.push({
+        ts, date: r.tradedate || r.TRADEDATE || '', time: (r.tradetime || r.TRADETIME || '').slice(0, 8),
+        oi: tsNum(r, ['oi_close', 'OI_CLOSE']),
+        volB: tsNum(r, ['vol_b', 'VOL_B']), volS: tsNum(r, ['vol_s', 'VOL_S']),
+        trB: tsNum(r, ['trades_b', 'TRADES_B']), trS: tsNum(r, ['trades_s', 'TRADES_S']),
+        close: tsNum(r, ['pr_close', 'PR_CLOSE']),
+      });
+    }
+    out.sort((a, b) => a.ts - b.ts);
+    for (let i = 0; i < out.length; i++) out[i].doi = i ? (out[i].oi - out[i - 1].oi) : 0;
+    return out;
+  }
+  const barIndexer = (list) => { const ts = list.map((b) => b.timestamp); return (t) => { let a = 0, b = ts.length - 1, r = -1; while (a <= b) { const m = (a + b) >> 1; if (ts[m] <= t) { r = m; a = m + 1; } else b = m - 1; } return r; }; };
+  // строки tradestats -> по индексам баров: OI = последний oi_close в баре,
+  // объёмы/сделки суммируются (несколько 5-мин снимков на бар старших ТФ).
+  function tsByBar(rows, list) {
+    const map = new Map(); if (!rows.length || !list.length) return map;
+    const lo = barIndexer(list);
+    for (const r of rows) {
+      const i = lo(r.ts); if (i < 0) continue;
+      let a = map.get(i); if (!a) { a = { oi: null, doi: 0, volB: 0, volS: 0, trB: 0, trS: 0 }; map.set(i, a); }
+      if (r.oi) a.oi = r.oi; a.doi += r.doi; a.volB += r.volB; a.volS += r.volS; a.trB += r.trB; a.trS += r.trS;
+    }
+    return map;
+  }
+  const kfmt = (n) => { n = Math.abs(n); return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(Math.round(n)); };
+
+  // Открытый интерес ПО БАРУ (готовый oi_close) — гистограмма уровня ОИ, цвет по
+  // знаку ΔОИ, яркость/подпись по порогам |ΔОИ| (по умолчанию 5k/10k/50k).
+  kc.registerIndicator({
+    name: 'TradeOI', shortName: 'ОИ (бар)', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {}, rows = ed.rows || [], thr = ed.thr || [5000, 10000, 50000];
+      const H = bounding.height, list = chart.getDataList();
+      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      if (!rows.length) { ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ (бар): нет данных tradestats', 6, 3); return true; }
+      const map = tsByBar(rows, list), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
+      let mn = Infinity, mx = -Infinity;
+      for (let i = from; i < to; i++) { const a = map.get(i); if (!a || a.oi == null) continue; if (a.oi < mn) mn = a.oi; if (a.oi > mx) mx = a.oi; }
+      if (!(mx > mn)) { ctx.fillStyle = '#8b93a7'; ctx.fillText('ОИ (бар): нет данных в окне', 6, 3); return true; }
+      const top = H * 0.18, bot = H * 0.96, yOf = (v) => bot - ((v - mn) / (mx - mn)) * (bot - top);
+      const tierOf = (ab) => ab >= thr[2] ? 3 : (ab >= thr[1] ? 2 : (ab >= thr[0] ? 1 : 0)), ALPHA = [0.5, 0.62, 0.8, 1];
+      let bw = 6; try { bw = chart.getBarSpace().halfBar; } catch (e) {}
+      const labels = [];
+      for (let i = from; i < to; i++) {
+        const a = map.get(i); if (!a || a.oi == null) continue;
+        const up = a.doi >= 0, tier = tierOf(Math.abs(a.doi)), x = xAxis.convertToPixel(i), y = yOf(a.oi);
+        ctx.fillStyle = (up ? 'rgba(38,166,154,' : 'rgba(239,83,80,') + ALPHA[tier] + ')';
+        ctx.fillRect(x - bw, y, bw * 2 + 0.4, bot - y);
+        if (tier >= 2) labels.push({ x, y, up, ab: Math.abs(a.doi), tier });
+      }
+      ctx.textBaseline = 'bottom'; ctx.textAlign = 'center';
+      labels.forEach((l) => { ctx.fillStyle = l.up ? '#26a69a' : '#ef5350'; ctx.font = (l.tier === 3 ? 'bold ' : '') + '10px system-ui, sans-serif'; ctx.fillText((l.up ? '+' : '−') + kfmt(l.ab) + (l.tier === 3 ? '!' : ''), l.x, Math.max(11, l.y - 4)); });
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif'; ctx.fillStyle = '#8b93a7';
+      const last = rows[rows.length - 1] || {};
+      ctx.fillText('ОИ по бару ' + kfmt(last.oi || 0) + '  ·  пороги ΔОИ ' + thr.map(kfmt).join(' · '), 6, 3);
+      return true;
+    },
+  });
+
+  // Покупатели/Продавцы ПО БАРУ (готовые vol_b/vol_s, агрессор): покупатели вверх
+  // (зел.), продавцы вниз (красн.) от нуля; нормировка по видимому окну.
+  kc.registerIndicator({
+    name: 'BuySell', shortName: 'Покуп/Прод', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {}, rows = ed.rows || [];
+      const H = bounding.height, W = bounding.width, mid = Math.round(H / 2), list = chart.getDataList();
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      if (!rows.length) { ctx.fillStyle = '#8b93a7'; ctx.fillText('Покуп/Прод: нет данных tradestats', 6, 3); return true; }
+      const map = tsByBar(rows, list), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
+      let mxv = 1; for (let i = from; i < to; i++) { const a = map.get(i); if (!a) continue; mxv = Math.max(mxv, a.volB, a.volS); }
+      let bw = 6; try { bw = chart.getBarSpace().bar; } catch (e) {} bw = Math.max(1, bw * 0.72);
+      for (let i = from; i < to; i++) {
+        const a = map.get(i); if (!a) continue; const x = xAxis.convertToPixel(i);
+        const hb = (a.volB / mxv) * (mid - 2), hs = (a.volS / mxv) * (mid - 2);
+        ctx.fillStyle = 'rgba(38,166,154,0.85)'; ctx.fillRect(x - bw / 2, mid - hb, bw, hb);
+        ctx.fillStyle = 'rgba(239,83,80,0.85)'; ctx.fillRect(x - bw / 2, mid, bw, hs);
+      }
+      ctx.fillStyle = '#26a69a'; ctx.fillText('покупатели ▲', 6, 3);
+      ctx.fillStyle = '#ef5350'; ctx.fillText('продавцы ▼', 92, 3);
+      return true;
+    },
+  });
+
+  window.LunFutoi = { normalize, normalizeTradeStats, openWindow, SERIES };
 })();
