@@ -325,6 +325,43 @@ if (!defined('LUN_NO_DISPATCH')) {
     } catch (Exception $e) { http_response_code(502); echo json_encode(['error' => $e->getMessage()]); }
     exit;
   }
+  // ВРЕМЕННАЯ ДИАГНОСТИКА: серверный само-тест доступности apim (realtime) vs iss
+  // (delayed) по разным путям. Только залогиненному. Открой api.php?fn=algotest и
+  // пришли JSON — по нему проектируем единую схему источника. Потом удалим.
+  if ($fn === 'algotest') {
+    @session_start();
+    header('Content-Type: application/json; charset=utf-8'); send_cors();
+    if (empty($_SESSION['uid'])) { http_response_code(401); echo json_encode(['error' => 'login required']); exit; }
+    $keyFile = __DIR__ . '/lun_data/pk.php';
+    $KEY = is_file($keyFile) ? (include $keyFile) : null;
+    $hasKey = is_string($KEY) && $KEY !== '';
+    $snip = function ($s) { $s = (string)$s; return mb_substr(preg_replace('/\s+/', ' ', $s), 0, 220); };
+    // определим ближний фьючерс Si (front), чтобы тестить его контракт
+    $front = '';
+    try { $fl = fetch_front('Si', gmdate('Y-m-d')); if ($fl && !empty($fl[0]['ticker'])) $front = $fl[0]['ticker']; } catch (Exception $e) {}
+    $tests = [
+      'apim_futoi_fromtill' => ['apim', "/iss/analyticalproducts/futoi/securities/Si.json?from=" . gmdate('Y-m-d', time() - 20 * 86400) . "&till=" . gmdate('Y-m-d')],
+      'apim_futoi_latest'   => ['apim', "/iss/analyticalproducts/futoi/securities/Si.json?latest=1"],
+      'apim_futoi_date'     => ['apim', "/iss/analyticalproducts/futoi/securities/Si.json?date=" . gmdate('Y-m-d', time() - 3 * 86400)],
+      'apim_tradestats_fo'  => ['apim', "/iss/datashop/algopack/fo/tradestats/" . ($front ?: 'SiU6') . ".json?latest=1"],
+      'apim_candles_1m'     => ['apim', "/iss/engines/futures/markets/forts/securities/" . ($front ?: 'SiU6') . "/candles.json?interval=1&iss.reverse=true"],
+      'iss_candles_1m'      => ['iss',  "/iss/engines/futures/markets/forts/securities/" . ($front ?: 'SiU6') . "/candles.json?interval=1&iss.reverse=true"],
+      'apim_marketdata'     => ['apim', "/iss/engines/futures/markets/forts/securities/" . ($front ?: 'SiU6') . ".json?iss.only=marketdata"],
+    ];
+    $out = ['hasKey' => $hasKey, 'front_Si' => $front, 'server_time' => gmdate('c'), 'tests' => []];
+    foreach ($tests as $name => $t) {
+      list($host, $path) = $t;
+      if ($host === 'apim') {
+        if (!$hasKey) { $out['tests'][$name] = ['skipped' => 'no key']; continue; }
+        $r = moex_authed_get('https://apim.moex.com' . $path, $KEY);
+        $out['tests'][$name] = ['url' => 'apim' . $path, 'code' => $r['code'], 'via' => $r['via'], 'err' => $r['err'], 'body' => $snip($r['body'])];
+      } else {
+        try { $b = http_get('https://iss.moex.com' . $path); $out['tests'][$name] = ['url' => 'iss' . $path, 'code' => 200, 'body' => $snip($b)]; }
+        catch (Exception $e) { $out['tests'][$name] = ['url' => 'iss' . $path, 'err' => $e->getMessage()]; }
+      }
+    }
+    echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT); exit;
+  }
   header('Content-Type: application/json; charset=utf-8');
   send_cors();
   if (!rate_ok('api', 120, 60)) too_many();           // 120 запросов/мин на IP
