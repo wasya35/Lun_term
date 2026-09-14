@@ -1474,6 +1474,34 @@
     if (markAnyOn() && !state.futoiData) { const d = await ensureFutoiData(state); if (!d) { window.LUN_FUTOI_MARK[key] = false; if (btn) btn.classList.remove('active'); return; } }
     applyFutoiMarks(state); scheduleWsSave();
   }
+  // Клик по свече (когда включены маркеры физ/юр) — панелька с деталями бара:
+  // Счета (лиц) и Объём (контрактов) по физ/юр лонг/шорт — как в референсе.
+  let futoiTip = null;
+  function ensureFutoiTip() {
+    if (futoiTip) return;
+    futoiTip = document.createElement('div');
+    futoiTip.style.cssText = 'position:fixed;z-index:260;background:#121722;border:1px solid #2a3a4f;border-radius:8px;padding:8px 12px;font-size:12px;color:#d7deea;pointer-events:none;white-space:nowrap;display:none;box-shadow:0 8px 24px rgba(0,0,0,.55);line-height:1.5';
+    document.body.appendChild(futoiTip);
+  }
+  function hideFutoiTip() { if (futoiTip) futoiTip.style.display = 'none'; }
+  document.addEventListener('click', (e) => {
+    if (!markAnyOn() || !window.LunFutoi || !window.LunFutoi.barAgg) { hideFutoiTip(); return; }
+    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot || !slot.futoiData) { hideFutoiTip(); return; }
+    const co = measureCoord(slot, e.clientX, e.clientY); if (!co || co.dataIndex == null) { hideFutoiTip(); return; }
+    let list = []; try { list = slot.chart.getDataList(); } catch (_) {}
+    const idx = Math.round(co.dataIndex); if (idx < 0 || idx >= list.length) { hideFutoiTip(); return; }
+    const a = window.LunFutoi.barAgg(slot.futoiData.snaps, list, idx); if (!a) { hideFutoiTip(); return; }
+    const kf = (n) => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(Math.round(n)).toLocaleString('ru-RU');
+    const col = (n) => n > 0 ? '#34c98a' : n < 0 ? '#ef5c6a' : '#8b93a7';
+    const row = (who, sch, vol) => `<div><span style="color:#9fb0c4">${who}:</span> Счета <b style="color:${col(sch)}">${kf(sch)}</b> · Объём <b style="color:${col(vol)}">${kf(vol)}</b> контр.</div>`;
+    const html = `<div style="color:#7fd0c0;margin-bottom:4px;font-weight:600">Физ/Юр · бар ${a.date || ''} ${(a.time || '').slice(0, 5)}</div>`
+      + row('Физики лонг', a.dFizLn, a.dFizL) + row('Физики шорт', a.dFizSn, a.dFizS)
+      + row('Юрики лонг', a.dYurLn, a.dYurL) + row('Юрики шорт', a.dYurSn, a.dYurS);
+    ensureFutoiTip(); futoiTip.innerHTML = html; futoiTip.style.display = 'block';
+    futoiTip.style.left = Math.min(window.innerWidth - futoiTip.offsetWidth - 8, e.clientX + 14) + 'px';
+    futoiTip.style.top = Math.max(8, e.clientY - 10) + 'px';
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideFutoiTip(); });
   /* ---------- TradeStats (AlgoPack): ГОТОВЫЕ бар-данные ОИ и покупатели/продавцы ----
    * Тянем tradestats по КОНТРАКТУ (SiU6), берём oi_close (ОИ на бар) и vol_b/vol_s
    * (покупатели/продавцы). Ничего не пересчитываем. Только онлайн (подписка). */

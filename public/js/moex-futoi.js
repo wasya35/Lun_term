@@ -427,5 +427,15 @@
     },
   });
 
-  window.LunFutoi = { normalize, normalizeTradeStats, openWindow, SERIES, MARK_DEFS };
+  // Агрегат FUTOI по бару (для тултипа при клике): дельты счетов/контрактов и время.
+  function barAgg(snaps, list, index) {
+    const b = bucketByBar(snaps, list).get(index); if (!b) return null;
+    let date = '', time = '';
+    if (snaps.length && list[index]) {
+      const t0 = list[index].timestamp, t1 = list[index + 1] ? list[index + 1].timestamp : Infinity;
+      for (let i = snaps.length - 1; i >= 0; i--) { if (snaps[i].ts >= t0 && snaps[i].ts < t1) { date = snaps[i].date; time = snaps[i].time; break; } }
+    }
+    return Object.assign({ date, time }, b);
+  }
+  window.LunFutoi = { normalize, normalizeTradeStats, openWindow, SERIES, MARK_DEFS, barAgg };
 })();
