@@ -2012,7 +2012,10 @@
     const insChanged = !!(slot._loadedInsId && slot._loadedInsId !== insId);
     if (slot._loadedInsId && slot._loadedInsId !== insId) {
       slot.drawStore = slot.drawStore || {};
-      slot.drawStore[slot._loadedInsId] = Object.values(slot.drawings || {}).map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }));
+      // прячем разметку уходящего инструмента в хранилище — но ТОЛЬКО если она была
+      // восстановлена (_drawReady): иначе (ушли с инструмента до прихода баров) не
+      // затираем ранее сохранённые рисунки пустым state.drawings.
+      if (slot._drawReady) slot.drawStore[slot._loadedInsId] = Object.values(slot.drawings || {}).map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: d.extendData, styles: d.styles, lock: d.lock }));
       // ВСЕ рисунки старого инструмента снимаем разом (removeOverlay без аргумента =
       // «удалить все»): KLineChart при setSymbol их сам НЕ убирает, а поштучный
       // removeOverlay(строка) в этой сборке ненадёжен — из-за этого рисунки
@@ -2023,6 +2026,12 @@
       try { sweepForeignOverlays(slot); } catch (e) {}   // добить всё чужое сразу (slot.instrument уже = новый ins)
     }
     slot._loadedInsId = insId;
+    // Рисунки этого инструмента ещё НЕ восстановлены (восстановление — асинхронно, в
+    // afterLoaded по готовности баров, история MOEX идёт 5–60 с). До этого момента
+    // captureWorkspace НЕ должен переписывать drawStore[insId] пустым state.drawings —
+    // иначе сохранение, случившееся в окне загрузки, стирало разметку (баг «исчезает
+    // при следующем открытии»). Флаг снимаем здесь, поднимаем в конце afterLoaded.
+    slot._drawReady = false;
     const ticker = await window.LunData.resolveTicker(ins);
     // старый лоадер помечаем stale ДО setSymbol/setPeriod: их getBars идут на него
     // и не должны загрузить/перетереть прошлый ТФ (гонка «соскока» на пред. ТФ).
@@ -2071,6 +2080,7 @@
         });
         try { sweepForeignOverlays(slot); } catch (e) {}   // и сразу подмести всё, что не наше
       }
+      slot._drawReady = true;   // разметка этого инструмента восстановлена — теперь capture может её сохранять
       try { setDrawBehind(slot); } catch (e) {}            // режим «за барами / поверх» — после отрисовки canvas
       try { applySwings(slot); } catch (e) {}              // свинги хранятся по timestamp — при смене ТФ остаются
       if (!insChanged && slot.optlev) { try { applyOptionLevels(slot); } catch (e) {} }
@@ -2894,15 +2904,23 @@
     return j;
   }
   /* ---------- рабочий стол: авто-сохранение/восстановление ---------- */
-  let applyingWs = false, wsTimer = null, wsApplied = false, wsLoaded = false;
+  let applyingWs = false, wsTimer = null, wsApplied = false, wsLoaded = false, wsApplyDone = false;
   const WS_LKEY = 'lun_ws_v1';
   function scheduleWsSave() {
     if (applyingWs) return;
     clearTimeout(wsTimer);
     wsTimer = setTimeout(() => {
+      // КРИТИЧНО: не сохраняем НИЧЕГО (ни локально, ни на сервер), пока рабочий стол
+      // не применён (wsApplyDone). На старте/перезагрузке первый load() планирует save
+      // РАНЬШЕ, чем LUN_APPLY_WS успеет подгрузить сохранённый стол в state.drawStore —
+      // и пустой стартовый стол затирал разметку в localStorage (а затем и на сервере).
+      // Это и был баг «нарисованное исчезает при следующем открытии». wsApplyDone
+      // ставится в самом конце LUN_APPLY_WS (даже если сохранённого стола не было) —
+      // то есть саму первую разметку на чистом браузере это не блокирует.
+      if (!wsApplyDone) return;
       let ws; try { ws = captureWorkspace(); } catch (e) { return; }
-      // локально — ВСЕГДА (сохранение разметки/индикаторов между сессиями в этом
-      // браузере, даже без входа).
+      // локально — сохранение разметки/индикаторов между сессиями в этом браузере
+      // (даже без входа), но только ПОСЛЕ загрузки стола (см. guard выше).
       try { localStorage.setItem(WS_LKEY, JSON.stringify(ws)); } catch (e) {}
       // На сервер — если вошли (кросс-устройство). КРИТИЧНО: не сохраняем на сервер
       // ПОКА не прочитали серверный стол (wsLoaded). Иначе вторая сессия/телефон при
@@ -2919,11 +2937,17 @@
     try {
       s.drawStore = s.drawStore || {};
       const curId = favId(s.instrument);
-      // в хранилище текущего инструмента кладём ТОЛЬКО его собственные рисунки
-      // (по штампу _ins) — исключаем любые «чужие», случайно оказавшиеся в state.drawings.
-      s.drawStore[curId] = Object.values(s.drawings || {})
-        .filter((d) => { const o = d && d.extendData && d.extendData._ins; return !o || o === curId; })
-        .map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: edIns(d.extendData, s), styles: d.styles, lock: d.lock }));
+      // КРИТИЧНО: переписываем drawStore[curId] из живых state.drawings ТОЛЬКО когда
+      // разметка инструмента реально восстановлена (_drawReady). Пока идёт загрузка
+      // (бары ещё не пришли, restore в afterLoaded не отработал) state.drawings пуст —
+      // и без этого guard-а сохранение стёрло бы сохранённую разметку в drawStore.
+      if (s._drawReady) {
+        // в хранилище текущего инструмента кладём ТОЛЬКО его собственные рисунки
+        // (по штампу _ins) — исключаем любые «чужие», случайно оказавшиеся в state.drawings.
+        s.drawStore[curId] = Object.values(s.drawings || {})
+          .filter((d) => { const o = d && d.extendData && d.extendData._ins; return !o || o === curId; })
+          .map((d) => ({ name: d.name, points: clonePoints(d.points), extendData: edIns(d.extendData, s), styles: d.styles, lock: d.lock }));
+      }
     } catch (e) {}
     return {
       v: 1, astroClean: true, instrument: s.instrument, tf: s.tf.id, history: window.LUN_HISTORY || null, look: LOOK, favs: window.LUN_FAVS,
@@ -3046,6 +3070,10 @@
     // серверный стол ПРОЧИТАН (или синк не нужен) — только теперь разрешаем запись на
     // сервер, чтобы стартовый пустой стол не перезатёр богатый до его загрузки.
     if (serverRead) wsLoaded = true;
+    // стол ПРИМЕНЁН (или его не было) — теперь можно сохранять локально/на сервер.
+    // Ставим ВСЕГДА (даже если чтение сервера не удалось), чтобы правки в этой сессии
+    // не терялись; серверная запись отдельно защищена флагом wsLoaded.
+    wsApplyDone = true;
   };
   window.LUN_SCHEDULE_WS = scheduleWsSave;
 
