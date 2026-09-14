@@ -481,7 +481,8 @@
     const till = new Date(), from = new Date(till.getTime() - 400 * 86400000), fmt = (d) => d.toISOString().slice(0, 10);
     const byDate = {}; let latest = null, split = false;
     try {
-      const rows = await window.LunISS.fetchFUTOI(code, fmt(from), fmt(till));
+      // дневной режим: по 2 строки на день (последний снимок физ/юр) — сервер сжимает
+      const rows = await window.LunISS.fetchFUTOI(code, fmt(from), fmt(till), { daily: true });
       const perDate = {};
       for (const r of rows) {
         const d = r.tradedate || r.TRADEDATE; if (!d) continue;
@@ -1921,6 +1922,74 @@
     // и не должны загрузить/перетереть прошлый ТФ (гонка «соскока» на пред. ТФ).
     if (slot.loader) slot.loader.stale = true;
     slot.loader = window.LunData.makeDataLoader();   // держим ссылку — через неё поток толкает свечи
+    const loader = slot.loader;
+    const replaying = window.LUN_REPLAY && window.LUN_REPLAY.on;
+
+    // Снять то, что привязано к барам/ТФ, ДО загрузки (перестроим по готовности).
+    // Стрелки физлиц — по кнопке заново; поток физ/юр и tradestats-панели — если
+    // были включены, пересоберутся под новые бары; свинги при смене инструмента — снимаем.
+    if (insChanged) { slot.swings = null; slot.swingsOn = false; }
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {}
+    slot.futoi = null; slot.futoiOn = false; syncFutoiBtn(slot);
+    try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
+    slot.futoiData = null; slot.futoiFlowOn = false;
+    const troiWas = slot.troiOn, bsWas = slot.buysellOn;
+    try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
+    try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {}
+    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false;
+    // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
+    if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
+    // экспирации опционов — даты абсолютные: при смене инструмента пересобираем под
+    // новый базовый актив; при смене ТФ просто перерисовываем существующие.
+    let expiryRebuild = false;
+    if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptExpiry' }); } catch (e) {} expiryRebuild = !!slot.expiryOn; slot.expiry = null; slot.expiryOn = false; syncExpiryBtn(slot); }
+
+    /* Всё, что требует ЗАГРУЖЕННЫХ баров, — по событию готовности ИМЕННО ЭТОГО
+     * загрузчика (data.js шлёт lun:datasource с detail.loader), а не по таймерам
+     * 0.9–1.1 с: история с MOEX приходит через 5–60 с, и таймеры срабатывали на
+     * пустом графике — панели физ/юр и tradestats «не восстанавливались», обзор и
+     * рисунки ставились в пустоту («Нет баров на графике»). */
+    const afterLoaded = () => {
+      if (slot.loader !== loader || slot._loadedInsId !== insId) return;   // за время загрузки сменили инструмент/ТФ
+      if (window.LunStream && !replaying) { try { window.LunStream.attach(slot); } catch (e) {} }   // поток — после истории (не в реплее)
+      if (slot === state && !replaying) applyAutoConnect();
+      if (!replaying) setInitialView(slot);                          // дефолт-обзор по ТФ
+      // восстановить рисунки нового инструмента
+      if (slot.drawStore && slot.drawStore[insId] && slot.drawStore[insId].length) {
+        (slot.drawStore[insId] || []).forEach((d) => {
+          const owner = d && d.extendData && d.extendData._ins;
+          if (owner && owner !== insId) return;    // чужой рисунок затесался в хранилище — НЕ восстанавливаем
+          const ed = edIns(d.extendData, { instrument: ins });   // жёстко закрепляем владельца = текущий инструмент
+          try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: ed, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = Object.assign({}, d, { extendData: ed }); } catch (e) {}
+        });
+        try { sweepForeignOverlays(slot); } catch (e) {}   // и сразу подмести всё, что не наше
+      }
+      try { setDrawBehind(slot); } catch (e) {}            // режим «за барами / поверх» — после отрисовки canvas
+      try { applySwings(slot); } catch (e) {}              // свинги хранятся по timestamp — при смене ТФ остаются
+      if (!insChanged && slot.optlev) { try { applyOptionLevels(slot); } catch (e) {} }
+      if (expiryRebuild) { try { buildExpiry(slot); } catch (e) {} }
+      else if (slot.expiry) { try { applyExpiry(slot); } catch (e) {} }
+      if (slot === state && slots.length > 1) { try { mirrorToSiblings(state); } catch (e) {} }   // зеркало рисунков
+      try { renderLegend(slot); } catch (e) {}             // подпись с последним баром
+      // панели с сетевыми данными — теперь у графика есть бары и диапазон
+      if (slot.compareInstrument) refreshCompare(slot);
+      if (slot.oiPane) rebuildOI(slot);
+      if (slot.arbBundle) buildArb(slot, slot.arbBundle);
+      if (slot.basisPane) rebuildBasis(slot);
+      if (futoiAnyOn()) ensureFutoiData(slot).then((d) => { if (d) applyFutoiFlow(slot); });
+      if (troiWas) rebuildTradeOI(slot);
+      if (bsWas) rebuildBuySell(slot);
+    };
+    if (slot._onLoaded) window.removeEventListener('lun:datasource', slot._onLoaded);   // прошлая загрузка ещё не пришла — её обработчик снимаем
+    const onLoaded = (e) => {
+      if (!e.detail || e.detail.loader !== loader) return;   // готов чужой загрузчик (другой слот / устаревший)
+      window.removeEventListener('lun:datasource', onLoaded);
+      if (slot._onLoaded === onLoaded) slot._onLoaded = null;
+      setTimeout(afterLoaded, 50);                           // дать KLineChart применить бары
+    };
+    slot._onLoaded = onLoaded;
+    window.addEventListener('lun:datasource', onLoaded);      // ДО setDataLoader — getBars может отработать сразу
+
     c.setSymbol({
       ticker, symbol: ticker, provider: ins.provider || 'moex',
       pricePrecision: ins.pricePrecision, volumePrecision: ins.volumePrecision,
@@ -1929,70 +1998,10 @@
     c.setPeriod({ span: tf.span, type: tf.type });
     c.setDataLoader(slot.loader);
     if (slot === state) document.getElementById('sym-title').textContent = `${ins.title}  ·  ${ticker}  ·  ${tf.title}`;
-    // подключить/переподключить поток после подгрузки истории (НЕ в реплее —
-    // иначе живые бары «настоящего» перебьют симуляцию прошлого)
-    const replaying = window.LUN_REPLAY && window.LUN_REPLAY.on;
-    if (window.LunStream && !replaying) setTimeout(() => window.LunStream.attach(slot), 700);
-    // авто-коннектор: включить поток нужного рынка для активного графика
-    if (slot === state && !replaying) setTimeout(applyAutoConnect, 750);
-    // новости: обновить список/метку настроения под новый инструмент
+    // новости не зависят от баров — сразу
     if (slot === state && (newsOpen || newsMoodEnabled)) setTimeout(() => loadNews(), 400);
-    // обновить наложение 2-го графика под новый ТФ/инструмент
-    if (slot.compareInstrument) setTimeout(() => refreshCompare(slot), 800);
-    // обновить ОИ под новый инструмент
-    if (slot.oiPane) setTimeout(() => rebuildOI(slot), 900);
-    // пересчитать арбитражный спред под новый ТФ
-    if (slot.arbBundle) setTimeout(() => buildArb(slot, slot.arbBundle), 1000);
-    // пересчитать базис к споту
-    if (slot.basisPane) setTimeout(() => rebuildBasis(slot), 1100);
-    // восстановить рисунки нового инструмента (после подгрузки истории)
-    if (slot.drawStore && slot.drawStore[insId] && slot.drawStore[insId].length) {
-      setTimeout(() => {
-        if (slot._loadedInsId !== insId) return;   // за это время инструмент сменили — не восстанавливаем чужое
-        (slot.drawStore[insId] || []).forEach((d) => {
-          const owner = d && d.extendData && d.extendData._ins;
-          if (owner && owner !== insId) return;    // чужой рисунок затесался в хранилище — НЕ восстанавливаем
-          const ed = edIns(d.extendData, { instrument: ins });   // жёстко закрепляем владельца = текущий инструмент
-          try { const id = c.createOverlay(Object.assign({ name: d.name, points: clonePoints(d.points), extendData: ed, styles: d.styles, lock: d.lock }, overlayEvents())); const oid = (typeof id === 'string') ? id : (Array.isArray(id) ? id[0] : null); if (oid) slot.drawings[oid] = Object.assign({}, d, { extendData: ed }); } catch (e) {}
-        });
-        try { sweepForeignOverlays(slot); } catch (e) {}   // и сразу подмести всё, что не наше
-        try { setDrawBehind(slot); } catch (e) {}          // применить режим «за барами / поверх»
-      }, 950);
-    }
-    if (!replaying) setTimeout(() => setInitialView(slot), 900);   // дефолт-обзор по ТФ
-    // свинги: строились на своём ТФ и хранятся по timestamp — при смене ТФ они
-    // остаются (не перестраиваются). При смене ИНСТРУМЕНТА (insChanged) — снимаем.
-    if (insChanged) { slot.swings = null; slot.swingsOn = false; }
-    setTimeout(() => { try { applySwings(slot); } catch (e) {} }, 960);
-    // стрелки физлиц привязаны к ТФ → снимаем при любой перезагрузке (перестроить по кнопке).
-    try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {}
-    slot.futoi = null; slot.futoiOn = false; syncFutoiBtn(slot);
-    // поток физ/юр (FutoiFlow) привязан к барам → снимаем панель и сбрасываем кэш
-    // снимков; если серии были включены — пересобираем под новые бары.
-    try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
-    slot.futoiData = null; slot.futoiFlowOn = false;
-    if (futoiAnyOn()) setTimeout(() => { ensureFutoiData(slot).then((d) => { if (d) applyFutoiFlow(slot); }); }, 1000);
-    // tradestats-панели (ОИ по бару, покупатели/продавцы) — привязаны к барам/ТФ:
-    // снимаем и, если были включены, пересобираем под новые бары.
-    const troiWas = slot.troiOn, bsWas = slot.buysellOn;
-    try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
-    try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {}
-    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false;
-    if (troiWas) setTimeout(() => { rebuildTradeOI(slot); }, 1050);
-    if (bsWas) setTimeout(() => { rebuildBuySell(slot); }, 1100);
-    // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
-    if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
-    else if (slot.optlev) setTimeout(() => { try { applyOptionLevels(slot); } catch (e) {} }, 980);
-    // экспирации опционов — даты абсолютные: при смене инструмента пересобираем под
-    // новый базовый актив; при смене ТФ просто перерисовываем существующие.
-    if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptExpiry' }); } catch (e) {} const wasOn = slot.expiryOn; slot.expiry = null; slot.expiryOn = false; syncExpiryBtn(slot); if (wasOn) setTimeout(() => { try { buildExpiry(slot); } catch (e) {} }, 1000); }
-    else if (slot.expiry) setTimeout(() => { try { applyExpiry(slot); } catch (e) {} }, 990);
-    // много-экранное зеркало рисунков (одинаковый инструмент) — после отрисовки истории
-    if (slot === state && slots.length > 1) setTimeout(() => { try { mirrorToSiblings(state); } catch (e) {} }, 1050);
     if (slot === state) scheduleWsSave();   // авто-сохранение рабочего стола
-    renderLegend(slot);                                          // подпись слева сверху: тикер (свёрнуто)
-    setTimeout(() => { try { renderLegend(slot); } catch (e) {} }, 1000);   // после подгрузки истории — с последним баром
-    setTimeout(() => { try { setDrawBehind(slot); } catch (e) {} }, 1000);   // применить «за барами» после отрисовки canvas
+    renderLegend(slot);                     // подпись слева сверху: тикер (свёрнуто)
   }
   // стартовый обзор: сколько истории показать по ТФ (D1 ≈ 3 мес, H1 ≈ 1 мес)
   function setInitialView(slot) {
@@ -4073,10 +4082,8 @@
       slots.forEach((s) => scheduleApply(s));   // данные загружены — закрепляем высоты панелей всех слотов
       // данные (пере)загружены — гарантируем, что на графике нет ни одного чужого рисунка
       setTimeout(sweepAllSlots, 60); setTimeout(sweepAllSlots, 1100);
-      // коннекторы всегда живые: после (пере)загрузки данных переподписываем поток
-      // активного слота (вне реплея). Страж целостности в stream.js не даст чужому
-      // бару попасть в график.
-      if (window.LunStream && !(window.LUN_REPLAY && window.LUN_REPLAY.on)) { try { window.LunStream.attach(state); } catch (e) {} }
+      // поток переподписывает load() по готовности СВОЕГО загрузчика (afterLoaded) —
+      // здесь второй attach дал бы лишний опрос хвоста на каждую загрузку.
       if (state.markovPanes) setTimeout(refreshMarkovPanel, 200);
       // прогноз в активном слоте выключаем при перезагрузке данных (шаг ТФ иной)
       if (state.forecastOn) { window.LUN_FORECAST = { enabled: false }; state.forecastOn = false; try { state.chart.setOffsetRightDistance(80); } catch (e) {} syncToolbar(); }

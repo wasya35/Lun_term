@@ -95,11 +95,17 @@
       if (subs.get(slot.slotId) === sub) subs.delete(slot.slotId);
       return;
     }
+    // ХВОСТ, а не вся история: от последнего бара графика минус сутки. Раньше каждый
+    // опрос (каждые 5–30 с) перекачивал весь диапазон (M5 = 36 страниц).
+    const lastTs = () => { try { const l = slot.chart.getDataList(); return l && l.length ? l[l.length - 1].timestamp : null; } catch (e) { return null; } };
     const pull = async () => {
-      if (prov && prov.fetchCandles) return prov.fetchCandles(symbolObj, tf);
-      return window.LunData.fetchFor(ins, tf);
+      if (prov && prov.fetchCandles) return prov.fetchCandles(symbolObj, tf, { tail: true });
+      return window.LunData.fetchTail(ins, tf, lastTs());
     };
-    const refresh = async () => { try { const b = await pull(); if (!alive()) return; if (b && b.length) { push(b[b.length - 1]); if (b.length > 1) push(b[b.length - 2]); } } catch (e) {} };
+    const refresh = async () => {
+      if (slot.loader && slot.loader.ready === false) return;   // первичная история ещё грузится — не мешаем
+      try { const b = await pull(); if (!alive()) return; if (b && b.length) { push(b[b.length - 1]); if (b.length > 1) push(b[b.length - 2]); } } catch (e) {}
+    };
     sub.refresh = refresh;
 
     if (provId === 'bybit' && prov && prov.tfMap) {       // настоящий WS + страховочный опрос
@@ -143,8 +149,9 @@
   const connFor = (provId) => PROV2CONN[provId];
   const onStatus = (fn) => { statusCb = fn; setStatus('поток: выкл', '#6b7280'); };
 
-  // возврат вкладки из фона — разовая дозагрузка (закрыть дыру)
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') subs.forEach((s) => s.refresh && s.refresh()); });
+  // разовая дозагрузка хвоста по всем подпискам (возврат вкладки из фона, готовность истории)
+  const refreshAll = () => Promise.all([...subs.values()].map((s) => (s.refresh ? s.refresh() : null)));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refreshAll(); });
 
-  window.LunStream = { attach, detach, detachAll, setConnector, isOn, onStatus, connFor, enabled };
+  window.LunStream = { attach, detach, detachAll, setConnector, isOn, onStatus, connFor, enabled, refreshAll };
 })();

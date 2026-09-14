@@ -89,24 +89,65 @@
     throw lastErr || new Error('нет доступного шлюза к ISS');
   }
 
-  // постранично тянем ?start=N, пока таблица не иссякнет
-  async function getAllPages(baseUrl, table, maxPages = 40) {
-    const pages = []; let start = 0;
-    for (let i = 0; i < maxPages; i++) {
-      const sep = baseUrl.includes('?') ? '&' : '?';
-      const j = await fetchJSON(`${baseUrl}${sep}start=${start}`);
-      pages.push(j);
-      const rows = (j[table] && j[table].data) ? j[table].data.length : 0;
-      if (rows === 0) break;
-      start += rows;
+  /* --- ПАРАЛЛЕЛЬНАЯ пагинация ?start=N ---
+   * ISS отдаёт страницы фиксированного размера (свечи — 500 строк) и у candles НЕТ
+   * таблицы-курсора с общим числом строк. Раньше страницы шли строго по одной: M5 за
+   * 20 дней = 36 последовательных походов в прокси (~1.5 с каждый) → до минуты.
+   * Теперь: первая страница задаёт размер, дальше просим пачками по PAGE_PAR штук
+   * одновременно; короткая или пустая страница в пачке = конец ряда. Если таблица
+   * даёт <table>.cursor (TOTAL/PAGESIZE — history, tradestats), смещения известны
+   * заранее, и пустую «хвостовую» страницу не запрашиваем вовсе.
+   * fetchPage(start) -> Promise<json>. Порядок страниц = порядок смещений.
+   * pageSizeHint — известный размер полной страницы (свечи ISS: 500): первая страница
+   * короче него = ряд закончился, вторую не просим. */
+  const PAGE_PAR = 5;
+  const CANDLE_PAGE = 500;
+  async function pagesParallel(fetchPage, table, maxPages, pageSizeHint) {
+    maxPages = maxPages || 40;
+    const rowsOf = (j) => (j && j[table] && j[table].data) ? j[table].data.length : 0;
+    const first = await fetchPage(0);
+    const pages = [first];
+    const n0 = rowsOf(first);
+    if (n0 === 0 || maxPages <= 1) return pages;
+    if (pageSizeHint && n0 < pageSizeHint) return pages;
+    let total = null, pageSize = pageSizeHint || n0;
+    const cur = first[table + '.cursor'];
+    if (cur && cur.columns && cur.data && cur.data[0]) {
+      const ci = {}; cur.columns.forEach((c, i) => (ci[c] = i));
+      const T = +cur.data[0][ci.TOTAL], P = +cur.data[0][ci.PAGESIZE];
+      if (T > 0 && P > 0) { total = T; pageSize = P; }
+    }
+    if (total !== null && n0 >= total) return pages;
+    let start = n0, count = 1, done = false;
+    while (!done && count < maxPages) {
+      const starts = [];
+      for (let k = 0; k < PAGE_PAR && count + starts.length < maxPages; k++) {
+        const s = start + k * pageSize;
+        if (total !== null && s >= total) break;
+        starts.push(s);
+      }
+      if (!starts.length) break;
+      const batch = await Promise.all(starts.map((s) => fetchPage(s)));
+      for (const j of batch) {
+        count++;
+        const n = rowsOf(j);
+        if (n > 0) pages.push(j);
+        if (n < pageSize) { done = true; break; }
+      }
+      start += starts.length * pageSize;
     }
     return pages;
+  }
+
+  async function getAllPages(baseUrl, table, maxPages = 40, pageSizeHint) {
+    const sep = baseUrl.includes('?') ? '&' : '?';
+    return pagesParallel((start) => fetchJSON(`${baseUrl}${sep}start=${start}`), table, maxPages, pageSizeHint);
   }
 
   async function fetchCandles(secid, interval, from, till) {
     const url = `${BASE}/securities/${encodeURIComponent(secid)}/candles.json`
       + `?interval=${interval}&from=${from}&till=${till}&iss.reverse=false`;
-    return parseCandles(await getAllPages(url, 'candles'));
+    return parseCandles(await getAllPages(url, 'candles', 40, CANDLE_PAGE));
   }
 
   async function fetchFront(asset, today) {
@@ -130,7 +171,7 @@
   async function fetchCandlesFrom(engine, market, secid, interval, from, till, maxPages) {
     const url = `https://iss.moex.com/iss/engines/${engine}/markets/${market}/securities/`
       + `${encodeURIComponent(secid)}/candles.json?interval=${interval}&from=${from}&till=${till}&iss.reverse=false`;
-    return parseCandles(await getAllPages(url, 'candles', maxPages || 40));
+    return parseCandles(await getAllPages(url, 'candles', maxPages || 40, CANDLE_PAGE));
   }
 
   // Порядковый номер экспирации из тикера (SiZ5 -> дек-2025). Месяц — предпосл.
@@ -257,41 +298,83 @@
   // Онлайн-FUTOI через НАШ серверный прокси api.php?fn=algopack (ключ AlgoPack
   // лежит на сервере, в браузер не попадает). Требует залогиненного пользователя.
   // Постранично тянем &start=N (same-origin, куки сессии). Бросает при 401/500/сети.
+  async function fetchAlgopackJSON(params) {
+    const res = await fetch('api.php?fn=algopack&' + params, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('algopack HTTP ' + res.status);
+    const j = await res.json();
+    if (j && j.error) throw new Error(j.error);
+    return j;
+  }
+  // Страницы датасета AlgoPack (tradestats и пр.) — параллельно по data.cursor.
   async function fetchAlgopackPages(params, table, maxPages = 20) {
-    const pages = []; let start = 0;
-    for (let i = 0; i < maxPages; i++) {
-      const res = await fetch('api.php?fn=algopack&' + params + '&start=' + start, { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('algopack HTTP ' + res.status);
-      const j = await res.json();
-      if (j && j.error) throw new Error(j.error);
-      pages.push(j);
-      const rows = (j[table] && j[table].data) ? j[table].data.length : 0;
-      if (rows === 0) break;
-      start += rows;
-    }
-    return pages;
+    return pagesParallel((start) => fetchAlgopackJSON(params + '&start=' + start), table, maxPages);
   }
   window.LUN_FUTOI_SRC = '';                       // 'online' | 'delayed' — для статуса
 
-  // FUTOI — открытый интерес по физлицам/юрлицам (аналитический продукт MOEX).
-  // code — код актива фьючерса (Si, GD, Eu, BR, CR ...). Возвращает строки по
-  // датам/времени с колонками clgroup (FIZ/YUR), pos_long, pos_short, *_num.
-  // Сначала пробуем ОНЛАЙН (AlgoPack, реальное время) через серверный прокси;
-  // при неудаче — публичный ОТЛОЖЕННЫЙ фид ISS (T−15) напрямую/через ISS-шлюз.
-  async function fetchFUTOI(code, from, till) {
+  /* --- FUTOI: открытый интерес физ/юр (аналитический продукт MOEX) ---
+   * ФАКТЫ (проверены по ответам 2026-09-10): и apim (по ключу), и публичный ISS
+   * отдают НЕ БОЛЬШЕ 1000 строк за запрос (новые сверху, ≈2.7 дня 5-мин снимков
+   * физ+юр), параметр start= ИГНОРИРУЮТ (30 «страниц» приходили одинаковыми), date=
+   * не принимают, а окно from=till возвращает день целиком (~404 строки). Публичный
+   * фид бесплатно закрыт за последние 14 дней. Поэтому диапазон режем на ОКНА по
+   * датам (2 дня интрадей; 10 дней в дневном режиме — их сервер сам сжимает до
+   * последнего снимка дня) и тянем окна параллельно, строки дедупим.
+   * code — код актива (Si, GD, BR ...). opts.daily — только последний снимок дня по
+   * группе (дневной ОИ физ/юр на долгую историю).
+   * Источник: онлайн через api.php?fn=algopack (ключ на сервере), при 401/нет ключа
+   * — публичный ISS кусками по 2 дня. */
+  const DAY_MS = 86400000;
+  const ymd = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const parseYmd = (s) => Date.parse(String(s).slice(0, 10) + 'T00:00:00Z');
+  function dateWindows(from, till, days) {
+    const out = []; let a = parseYmd(from); const end = parseYmd(till);
+    if (!Number.isFinite(a) || !Number.isFinite(end)) return out;
+    while (a <= end) { const b = Math.min(end, a + (days - 1) * DAY_MS); out.push([ymd(a), ymd(b)]); a = b + DAY_MS; }
+    return out;
+  }
+  async function mapLimit(items, limit, fn) {
+    const out = new Array(items.length); let i = 0;
+    const worker = async () => { while (i < items.length) { const k = i++; out[k] = await fn(items[k], k); } };
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+    return out;
+  }
+  const fKey = (r, keys) => keys.map((k) => r[k] != null ? r[k] : (r[k.toUpperCase()] != null ? r[k.toUpperCase()] : '')).join('|');
+  // последний снимок каждого дня по (дата, группа, тикер)
+  function futoiDaily(rows) {
+    const best = new Map();
+    for (const r of rows) { const k = fKey(r, ['tradedate', 'clgroup', 'ticker']); const t = String(fKey(r, ['tradetime'])); const cur = best.get(k); if (!cur || t > cur.t) best.set(k, { t, r }); }
+    return [...best.values()].map((x) => x.r);
+  }
+  function futoiDedupe(rows) {
+    const seen = new Set(); const out = [];
+    for (const r of rows) { const k = fKey(r, ['tradedate', 'tradetime', 'clgroup', 'ticker']); if (seen.has(k)) continue; seen.add(k); out.push(r); }
+    return out;
+  }
+  async function fetchFUTOI(code, from, till, opts) {
+    opts = opts || {}; const daily = !!opts.daily;
     const wantOnline = !(window.LUN && window.LUN.ALGOPACK && window.LUN.ALGOPACK.online === false);
-    if (wantOnline) {
-      try {
-        // 5-минутные внутридневные снимки физ/юр приходят по from/till (НЕ по date=,
-        // который apim игнорирует). Данные новые-сверху, пагинация &start=N.
-        const params = 'ds=futoi&secid=' + encodeURIComponent(code) + '&from=' + from + '&till=' + till;
-        const rows = collectFutoiRows(await fetchAlgopackPages(params, 'futoi', 30));
-        if (rows.length) { window.LUN_FUTOI_SRC = 'online'; return rows; }
-      } catch (e) { /* падаем на отложенный ТОЛЬКО для этого вызова, без стоп-крана на сессию */ }
-    }
-    window.LUN_FUTOI_SRC = 'delayed';
-    const url = `https://iss.moex.com/iss/analyticalproducts/futoi/securities/${encodeURIComponent(code)}.json?iss.meta=off&from=${from}&till=${till}`;
-    return collectFutoiRows(await getAllPages(url, 'futoi'));
+    let online = false, delayed = false, onlineDead = !wantOnline;   // 401/нет ключа — дальше сразу резерв
+    const pub = async (a, b) => {
+      const url = `https://iss.moex.com/iss/analyticalproducts/futoi/securities/${encodeURIComponent(code)}.json?iss.meta=off&from=${a}&till=${b}`;
+      return collectFutoiRows([await fetchJSON(url)]);
+    };
+    const one = async ([a, b]) => {
+      if (!onlineDead) {
+        try {
+          const j = await fetchAlgopackJSON('ds=futoi&secid=' + encodeURIComponent(code) + '&from=' + a + '&till=' + b + (daily ? '&daily=1' : ''));
+          const rows = collectFutoiRows([j]);
+          if (rows.length) { online = true; return rows; }
+        } catch (e) { if (/HTTP (401|500)|login required|not configured/.test(String(e && e.message))) onlineDead = true; }
+      }
+      let rows = [];
+      for (const [c, d] of dateWindows(a, b, 2)) { try { rows = rows.concat(await pub(c, d)); } catch (e) { /* окно недоступно — пропускаем */ } }
+      if (rows.length) delayed = true;
+      return daily ? futoiDaily(rows) : rows;
+    };
+    const parts = await mapLimit(dateWindows(from, till, daily ? 10 : 2), 4, one);
+    window.LUN_FUTOI_SRC = online ? 'online' : (delayed ? 'delayed' : '');
+    const all = futoiDedupe([].concat.apply([], parts));
+    return daily ? futoiDaily(all) : all;
   }
 
   // TradeStats (AlgoPack SuperCandles) — ГОТОВЫЕ данные ПО КАЖДОМУ 5-мин бару

@@ -251,10 +251,15 @@
    *  продавцы (агрессор). Индикаторы: TradeOI (ОИ по бару) и BuySell.
    * ===================================================================== */
   const tsNum = (r, keys) => { for (const k of keys) if (r[k] != null) return +r[k] || 0; return 0; };
+  // tradetime в tradestats — КОНЕЦ 5-мин интервала (сверено с минутными свечами:
+  // строка 14:05:00 = сделки 14:00–14:05). Бар графика помечен началом, поэтому ts
+  // сдвигаем на интервал назад — иначе покупатели/продавцы и ΔОИ ложились на бар позже.
+  const TS_INTERVAL_MS = 5 * 60000;
   function normalizeTradeStats(rows) {
     const out = [];
     for (const r of rows || []) {
-      const ts = rowTs(r); if (ts == null) continue;
+      const tEnd = rowTs(r); if (tEnd == null) continue;
+      const ts = tEnd - TS_INTERVAL_MS;
       out.push({
         ts, date: r.tradedate || r.TRADEDATE || '', time: (r.tradetime || r.TRADETIME || '').slice(0, 8),
         oi: tsNum(r, ['oi_close', 'OI_CLOSE']),
