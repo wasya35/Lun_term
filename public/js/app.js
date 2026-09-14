@@ -1808,6 +1808,30 @@
     if (!on) { mBox.style.display = 'none'; mLabel.style.display = 'none'; mDrag = null; }
     const b = document.querySelector('[data-role="measure"]'); if (b) b.classList.toggle('active', on);
   }
+  // Быстрая линейка: зажать Shift + ЛКМ и протянуть — мерит, пока держишь; отпустил —
+  // измерение исчезает (тумблер не нужен). Ловим на capture-фазе РАНЬШЕ графика,
+  // чтобы Shift-протяжка не двигала/не выделяла график.
+  function startShiftMeasure(e) {
+    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot) return;
+    const c0 = measureCoord(slot, e.clientX, e.clientY); if (!c0) return;
+    ensureMeasure();
+    mBox.style.display = 'block'; mLabel.style.display = 'block';
+    mDrag = { slot, x0: e.clientX, y0: e.clientY, c0 };
+    e.preventDefault(); e.stopPropagation();
+    const move = (ev) => measureMove(ev);
+    const up = () => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      mDrag = null;
+      if (!measureMode) { mBox.style.display = 'none'; mLabel.style.display = 'none'; }
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+    measureMove(e);
+  }
+  document.addEventListener('mousedown', (e) => {
+    if (measureMode || !e.shiftKey || e.button !== 0) return;
+    if (!measureSlotAt(e.clientX, e.clientY)) return;
+    startShiftMeasure(e);
+  }, true);
 
   /* ---------- Data Window (значения под курсором) ---------- */
   let dataWinEl = null, dataWinOpen = false;
@@ -3505,7 +3529,7 @@
       if (t.key) b.innerHTML = t.label + '<span class="hk">' + t.key.toUpperCase() + '</span>';   // хоткей справа
       regHotkey(t.key, () => startDraw(t.id));
     });
-    mkBtn(drawWrap, '📏 Линейка (Δ%, бары)', (b) => { closeMenus(); setMeasure(!measureMode); }, false, 'Измерение: зажми ЛКМ и протяни по графику — покажет изменение цены, %, число баров и время. Повторный клик — выключить').dataset.role = 'measure';
+    mkBtn(drawWrap, '📏 Линейка (Δ%, бары)', (b) => { closeMenus(); setMeasure(!measureMode); }, false, 'Измерение: зажми ЛКМ и протяни. Быстро — без кнопки: Shift + ЛКМ-протяжка (отпустил — исчезло). Показывает Δцены, %, число баров и время. Повторный клик — выключить').dataset.role = 'measure';
     mkBtn(drawWrap, '🎚 Типы линий (добавить/править)…', () => { closeMenus(); lineTypesModal(); }, false, 'Пресеты стиля линий: поддержка/сопротивление, трендовая, брейкер/ордер-блок, имбаланс, дивергенции + свои');
     mkBtn(drawWrap, '⚙ Настройки рисования (притяжка, Gann Box прогноз)…', () => { closeMenus(); drawSettingsModal(); }, false, 'Притяжка к вершинам баров, прогнозные Gann Box по диагонали');
     mkBtn(drawWrap, '✕ очистить всё', () => { closeMenus(); state.chart.removeOverlay(); }).className = 'danger';

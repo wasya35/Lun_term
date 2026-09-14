@@ -322,12 +322,15 @@
         const h = Math.max(1, (Math.abs(d) / maxAbs) * maxBar);
         ctx.fillStyle = (up ? 'rgba(38,166,154,' : 'rgba(239,83,80,') + ALPHA[tier] + ')';
         if (up) ctx.fillRect(x - bw / 2, zeroY - h, bw, h); else ctx.fillRect(x - bw / 2, zeroY, bw, h);
-        if (tier >= 2) labels.push({ x, y: up ? zeroY - h : zeroY + h, up, ab: Math.abs(d), tier });
+        if (tier >= 3) labels.push({ x, y: up ? zeroY - h : zeroY + h, up, ab: Math.abs(d) });   // подписи только на самых крупных ΔОИ (не засоряем)
       }
-      labels.forEach((l) => { ctx.fillStyle = l.up ? '#26a69a' : '#ef5350'; ctx.font = (l.tier === 3 ? 'bold ' : '') + '10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = l.up ? 'bottom' : 'top'; ctx.fillText((l.up ? '+' : '−') + kfmt(l.ab) + (l.tier === 3 ? '!' : ''), l.x, l.up ? l.y - 1 : l.y + 1); });
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif'; ctx.fillStyle = '#8b93a7';
+      labels.forEach((l) => { ctx.fillStyle = l.up ? '#26a69a' : '#ef5350'; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = l.up ? 'bottom' : 'top'; ctx.fillText((l.up ? '+' : '−') + kfmt(l.ab), l.x, l.up ? l.y - 1 : l.y + 1); });
+      // шапка слева: «ΔОИ по бару» и сразу величина ОИ (без слова «пороги» и списка)
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif';
       const last = rows[rows.length - 1] || {};
-      ctx.fillText('ΔОИ по бару · ОИ ' + kfmt(last.oi || 0) + ' · пороги ' + thr.map(kfmt).join(' · '), 6, 3);
+      ctx.fillStyle = '#8b93a7'; ctx.fillText('ΔОИ по бару', 6, 3);
+      const lblW = ctx.measureText('ΔОИ по бару').width;
+      ctx.fillStyle = '#c8d0de'; ctx.fillText('ОИ ' + kfmt(last.oi || 0), 6 + lblW + 10, 3);
       return true;
     },
   });
