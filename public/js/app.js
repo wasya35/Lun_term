@@ -1453,6 +1453,27 @@
     const d = await ensureFutoiData(slot); if (!d) return;
     window.LunFutoi.openWindow({ code: d.code, snaps: d.snaps, src: d.src });
   }
+  /* ---------- Физ/Юр НА СВЕЧАХ (стрелки счетов + кружки бид/аск) ----------
+   * Оверлей на ценовой панели (FutoiOnPrice). Данные — те же снимки FUTOI. */
+  window.LUN_FUTOI_MARK = window.LUN_FUTOI_MARK || {};
+  const markAnyOn = () => Object.keys(window.LUN_FUTOI_MARK).some((k) => window.LUN_FUTOI_MARK[k]);
+  function applyFutoiMarks(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiOnPrice' }); } catch (e) {}
+    if (!markAnyOn()) { slot.futoiMarkOn = false; return; }
+    const d = slot.futoiData, snaps = (d && d.snaps) || [];
+    try {
+      c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK) } }, true);
+      slot.futoiMarkOn = true;
+    } catch (e) { slot.futoiMarkOn = false; }
+  }
+  async function toggleFutoiMark(key, btn) {
+    window.LUN_FUTOI_MARK[key] = !window.LUN_FUTOI_MARK[key];
+    if (btn) btn.classList.toggle('active', !!window.LUN_FUTOI_MARK[key]);
+    if (markAnyOn() && !state.futoiData) { const d = await ensureFutoiData(state); if (!d) { window.LUN_FUTOI_MARK[key] = false; if (btn) btn.classList.remove('active'); return; } }
+    applyFutoiMarks(state); scheduleWsSave();
+  }
   /* ---------- TradeStats (AlgoPack): ГОТОВЫЕ бар-данные ОИ и покупатели/продавцы ----
    * Тянем tradestats по КОНТРАКТУ (SiU6), берём oi_close (ОИ на бар) и vol_b/vol_s
    * (покупатели/продавцы). Ничего не пересчитываем. Только онлайн (подписка). */
@@ -1956,7 +1977,8 @@
     try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiArrows' }); } catch (e) {}
     slot.futoi = null; slot.futoiOn = false; syncFutoiBtn(slot);
     try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
-    slot.futoiData = null; slot.futoiFlowOn = false;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiOnPrice' }); } catch (e) {}
+    slot.futoiData = null; slot.futoiFlowOn = false; slot.futoiMarkOn = false;
     const troiWas = slot.troiOn, bsWas = slot.buysellOn;
     try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {}
@@ -2000,7 +2022,7 @@
       if (slot.oiPane) rebuildOI(slot);
       if (slot.arbBundle) buildArb(slot, slot.arbBundle);
       if (slot.basisPane) rebuildBasis(slot);
-      if (futoiAnyOn()) ensureFutoiData(slot).then((d) => { if (d) applyFutoiFlow(slot); });
+      if (futoiAnyOn() || markAnyOn()) ensureFutoiData(slot).then((d) => { if (!d) return; if (futoiAnyOn()) applyFutoiFlow(slot); if (markAnyOn()) applyFutoiMarks(slot); });
       if (troiWas) rebuildTradeOI(slot);
       if (bsWas) rebuildBuySell(slot);
     };
@@ -3353,6 +3375,24 @@
       ['yurS+', 'Ю.Шорт+', 'Юрики открывают шорт'], ['yurS-', 'Ю.Шорт−', 'Юрики закрывают шорт'],
     ];
     flowDefs.forEach(([key, label, tip]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiSeries(key, bb); }, false, tip + ' (столбики в панели «Поток физ/юр»)'); b.dataset.sync = 'flow:' + key; });
+    // ── НА СВЕЧАХ: счета физ/юр (стрелки) ──
+    const accHdr = document.createElement('div'); accHdr.className = 'menu-note';
+    accHdr.style.cssText = 'color:#8fb0c8;font-weight:600;margin-top:6px'; accHdr.textContent = '· на свечах: счета лиц (стрелки) ·';
+    indWrap.appendChild(accHdr);
+    const accDefs = [
+      ['fizLong+', 'Ф лонг+ (откр)'], ['fizLong-', 'Ф лонг− (закр)'], ['fizShort+', 'Ф шорт+ (откр)'], ['fizShort-', 'Ф шорт− (закр)'],
+      ['yurLong+', 'Ю лонг+ (откр)'], ['yurLong-', 'Ю лонг− (закр)'], ['yurShort+', 'Ю шорт+ (откр)'], ['yurShort-', 'Ю шорт− (закр)'],
+    ];
+    accDefs.forEach(([key, label]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiMark(key, bb); }, false, 'Счета физ/юр на свечах: стрелка при открытии/закрытии лонга/шорта (по числу лиц)'); b.dataset.sync = 'mark:' + key; });
+    // ── НА СВЕЧАХ: бид/аск физ/юр (кружки Ф/Ю) ──
+    const baHdr = document.createElement('div'); baHdr.className = 'menu-note';
+    baHdr.style.cssText = 'color:#8fb0c8;font-weight:600'; baHdr.textContent = '· на свечах: бид/аск (кружки Ф/Ю) ·';
+    indWrap.appendChild(baHdr);
+    const baDefs = [
+      ['fizBid+', 'Ф бид+'], ['fizBid-', 'Ф бид−'], ['fizAsk+', 'Ф аск+'], ['fizAsk-', 'Ф аск−'],
+      ['yurBid+', 'Ю бид+'], ['yurBid-', 'Ю бид−'], ['yurAsk+', 'Ю аск+'], ['yurAsk-', 'Ю аск−'],
+    ];
+    baDefs.forEach(([key, label]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiMark(key, bb); }, false, 'Бид (лонг-сторона, зелёный) / аск (шорт, красный) физ/юр — кружок с буквой на свече (по контрактам)'); b.dataset.sync = 'mark:' + key; });
     // стрелки массового открытия физлиц на свечах + порог
     mkBtn(indWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
     mkBtn(indWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');

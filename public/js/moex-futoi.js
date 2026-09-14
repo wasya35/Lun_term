@@ -362,5 +362,70 @@
     },
   });
 
-  window.LunFutoi = { normalize, normalizeTradeStats, openWindow, SERIES };
+  /* --- Физ/Юр НА СВЕЧАХ ------------------------------------------------------
+   * Стрелки = счета (число лиц): лонг+/− (открытие/закрытие лонга), шорт+/−.
+   * Кружки = бид/аск по контрактам: бид (лонг-сторона) зелёный, аск (шорт) красный,
+   * с буквой Ф/Ю. Показываем событие на баре, если |дельта| ≥ порога (счета — лиц,
+   * бид/аск — контрактов). Бычьи (лонг/бид) — под свечой, медвежьи (шорт/аск) — над.
+   * extendData: { snaps, show, thAcc, thCon }. show — включённые ключи. */
+  const MARK_DEFS = [
+    // счета (стрелки) — метрика = число лиц
+    { key: 'fizLong+', kind: 'arrow', m: 'dFizLn', sign: 1,  side: 'below', up: true,  col: '#26a69a', tag: 'Ф' },
+    { key: 'fizLong-', kind: 'arrow', m: 'dFizLn', sign: -1, side: 'below', up: false, col: '#7ec9b6', tag: 'Ф' },
+    { key: 'fizShort+', kind: 'arrow', m: 'dFizSn', sign: 1,  side: 'above', up: false, col: '#ef5350', tag: 'Ф' },
+    { key: 'fizShort-', kind: 'arrow', m: 'dFizSn', sign: -1, side: 'above', up: true,  col: '#f0a6a6', tag: 'Ф' },
+    { key: 'yurLong+', kind: 'arrow', m: 'dYurLn', sign: 1,  side: 'below', up: true,  col: '#2f8fd0', tag: 'Ю' },
+    { key: 'yurLong-', kind: 'arrow', m: 'dYurLn', sign: -1, side: 'below', up: false, col: '#8fc3e6', tag: 'Ю' },
+    { key: 'yurShort+', kind: 'arrow', m: 'dYurSn', sign: 1,  side: 'above', up: false, col: '#e0a030', tag: 'Ю' },
+    { key: 'yurShort-', kind: 'arrow', m: 'dYurSn', sign: -1, side: 'above', up: true,  col: '#e8c98a', tag: 'Ю' },
+    // бид/аск (кружки) — метрика = контракты; бид=лонг-сторона(зел), аск=шорт(красн)
+    { key: 'fizBid+', kind: 'circle', m: 'dFizL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ф' },
+    { key: 'fizBid-', kind: 'circle', m: 'dFizL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ф' },
+    { key: 'fizAsk+', kind: 'circle', m: 'dFizS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ф' },
+    { key: 'fizAsk-', kind: 'circle', m: 'dFizS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ф' },
+    { key: 'yurBid+', kind: 'circle', m: 'dYurL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ю' },
+    { key: 'yurBid-', kind: 'circle', m: 'dYurL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ю' },
+    { key: 'yurAsk+', kind: 'circle', m: 'dYurS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ю' },
+    { key: 'yurAsk-', kind: 'circle', m: 'dYurS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ю' },
+  ];
+  function markTriangle(ctx, x, y, s, up) { ctx.beginPath(); if (up) { ctx.moveTo(x, y); ctx.lineTo(x - s, y + s * 1.5); ctx.lineTo(x + s, y + s * 1.5); } else { ctx.moveTo(x, y); ctx.lineTo(x - s, y - s * 1.5); ctx.lineTo(x + s, y - s * 1.5); } ctx.closePath(); ctx.fill(); }
+  kc.registerIndicator({
+    name: 'FutoiOnPrice', shortName: 'Физ/Юр на свечах', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
+      const ed = indicator.extendData || {}, snaps = ed.snaps || [], show = ed.show || {};
+      const thA = ed.thAcc || 20, thC = ed.thCon || 300;
+      if (!snaps.length) return true;
+      const active = MARK_DEFS.filter((d) => show[d.key]); if (!active.length) return true;
+      const list = chart.getDataList(), buckets = bucketByBar(snaps, list);
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
+      ctx.textAlign = 'center'; ctx.font = '9px system-ui, sans-serif';
+      for (let i = from; i < to; i++) {
+        const a = buckets.get(i); if (!a) continue; const bar = list[i]; if (!bar) continue;
+        const x = xAxis.convertToPixel(i);
+        let offBelow = 6, offAbove = 6;
+        for (const d of active) {
+          const v = a[d.m] || 0; const th = d.kind === 'arrow' ? thA : thC;
+          const pass = d.sign > 0 ? (v >= th) : (v <= -th); if (!pass) continue;
+          const below = d.side === 'below';
+          const baseY = below ? yAxis.convertToPixel(bar.low) : yAxis.convertToPixel(bar.high);
+          const y = below ? baseY + offBelow : baseY - offAbove;
+          ctx.globalAlpha = d.dim ? 0.5 : 1;
+          if (d.kind === 'arrow') {
+            ctx.fillStyle = d.col; markTriangle(ctx, x, below ? y : y, 4, d.up);
+            offBelow += below ? 13 : 0; offAbove += below ? 0 : 13;
+          } else {
+            ctx.fillStyle = d.col; ctx.beginPath(); ctx.arc(x, below ? y + 5 : y - 5, 5.5, 0, 6.283); ctx.fill();
+            ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(d.tag, x, below ? y + 5 : y - 5);
+            offBelow += below ? 15 : 0; offAbove += below ? 0 : 15;
+          }
+          ctx.globalAlpha = 1;
+        }
+      }
+      return true;
+    },
+  });
+
+  window.LunFutoi = { normalize, normalizeTradeStats, openWindow, SERIES, MARK_DEFS };
 })();
