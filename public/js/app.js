@@ -1465,7 +1465,7 @@
     try {
       const F = window.LUN.FUTOI || {};
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
-        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), thArrow: F.arrowMin || 500, thCircle: F.circleMin || 4000 } }, true);
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: Object.assign({}, F.marks) } }, true);
       slot.futoiMarkOn = true;
     } catch (e) { slot.futoiMarkOn = false; }
   }
@@ -1566,22 +1566,33 @@
       T.barThresholds = a; bg.remove(); if (state.troiOn) rebuildTradeOI(state); scheduleWsSave();
     };
   }
-  // Пороги показа маркеров Физ/Юр — по РАЗМЕРУ ПОЗИЦИИ (контракты). Отдельно для
-  // стрелок (счета) и кружков бид/аск («ФАС» — обычно от 4000). Меньше — не рисуем.
+  // Полная палитра порогов маркеров Физ/Юр — по РАЗМЕРУ ПОЗИЦИИ (контракты за бар).
+  // 8 порогов: {физ|юр} × {стрелки счета | кружки бид/аск} × {открытие | закрытие}.
+  // Меньше порога — маркер не рисуется. Юрики фильтруем по контрактам, не по лицам.
+  const FMK_DEF = { fizArrOpen: 500, fizArrClose: 500, fizCircOpen: 4000, fizCircClose: 4000, yurArrOpen: 500, yurArrClose: 500, yurCircOpen: 4000, yurCircClose: 4000 };
   function futoiMarkThresholdModal() {
     const F = window.LUN.FUTOI || (window.LUN.FUTOI = {});
-    const a0 = F.arrowMin || 500, c0 = F.circleMin || 4000;
-    openModal('Пороги маркеров Физ/Юр', '<p>Фильтр по размеру позиции за бар (контракты). Меньше порога — маркер не показывается. Юрики торгуют крупными объёмами при малом числе лиц, поэтому фильтр именно по контрактам.</p>'
-      + '<div style="display:flex;gap:14px;align-items:center;margin:10px 0;font-size:15px">'
-      + '<label>Стрелки (счета) от: <input id="fmk-arrow" type="number" value="' + a0 + '" style="width:100px"></label>'
-      + '<label>Кружки бид/аск (ФАС) от: <input id="fmk-circle" type="number" value="' + c0 + '" style="width:100px"></label></div>'
-      + '<button id="fmk-apply" class="lun-btn">Применить</button>');
+    const M = F.marks || (F.marks = Object.assign({}, FMK_DEF));
+    const g = (k) => (M[k] != null ? M[k] : FMK_DEF[k]);
+    const inp = (k) => '<input id="fmk-' + k + '" type="number" value="' + g(k) + '" style="width:92px">';
+    // строка настроек: заголовок группы + поле «открытие» + поле «закрытие»
+    const row = (title, base, col) => '<tr><td style="padding:5px 10px 5px 0;color:' + col + ';font-weight:600;white-space:nowrap">' + title + '</td>'
+      + '<td style="padding:5px 8px">' + inp(base + 'Open') + '</td><td style="padding:5px 8px">' + inp(base + 'Close') + '</td></tr>';
+    openModal('Пороги маркеров Физ/Юр',
+      '<p style="font-size:14px;color:#a9b4c6">Фильтр по размеру позиции за бар (контракты). Маркер меньше порога — не показывается. Юрики торгуют крупными объёмами при малом числе лиц, поэтому фильтр именно по контрактам.</p>'
+      + '<table style="border-collapse:collapse;font-size:15px;margin:6px 0">'
+      + '<tr><th></th><th style="padding:4px 8px;color:#26a69a;text-align:left">Открытие (+)</th><th style="padding:4px 8px;color:#ef5350;text-align:left">Закрытие (−)</th></tr>'
+      + row('Физ · стрелки (счета)', 'fizArr', '#26a69a')
+      + row('Физ · кружки бид/аск (ФАС)', 'fizCirc', '#26a69a')
+      + row('Юр · стрелки (счета)', 'yurArr', '#3d8bdb')
+      + row('Юр · кружки бид/аск (ФАС)', 'yurCirc', '#e8942e')
+      + '</table>'
+      + '<div style="display:flex;gap:8px;margin-top:6px"><button id="fmk-apply" class="lun-btn">Применить</button>'
+      + '<button id="fmk-reset" class="lun-btn" style="background:#2a3242">Сбросить</button></div>');
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
-    bg.querySelector('#fmk-apply').onclick = () => {
-      F.arrowMin = Math.max(0, +bg.querySelector('#fmk-arrow').value || 500);
-      F.circleMin = Math.max(0, +bg.querySelector('#fmk-circle').value || 4000);
-      bg.remove(); if (markAnyOn()) applyFutoiMarks(state); scheduleWsSave();
-    };
+    const readAll = () => { Object.keys(FMK_DEF).forEach((k) => { M[k] = Math.max(0, +bg.querySelector('#fmk-' + k).value || 0); }); };
+    bg.querySelector('#fmk-apply').onclick = () => { readAll(); bg.remove(); if (markAnyOn()) applyFutoiMarks(state); scheduleWsSave(); };
+    bg.querySelector('#fmk-reset').onclick = () => { Object.assign(M, FMK_DEF); Object.keys(FMK_DEF).forEach((k) => { bg.querySelector('#fmk-' + k).value = FMK_DEF[k]; }); };
   }
 
   /* ---------- опционные уровни (макс-ОИ страйки) ---------- */

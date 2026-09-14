@@ -403,8 +403,13 @@
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
       const ed = indicator.extendData || {}, snaps = ed.snaps || [], show = ed.show || {};
-      const thArrow = ed.thArrow || 500;    // порог стрелок (счета) — по контрактам
-      const thCircle = ed.thCircle || 4000; // порог кружков бид/аск (ФАС) — по контрактам
+      // Пороги по РАЗМЕРУ ПОЗИЦИИ (контракты) — своя настройка на каждую группу:
+      // {физ|юр}×{стрелки|кружки}×{откр|закр}. Ключ: fizArrOpen … yurCircClose.
+      const marks = ed.marks || {};
+      const th4 = (d) => {
+        const gk = (d.who === 'Физики' ? 'fiz' : 'yur') + (d.kind === 'arrow' ? 'Arr' : 'Circ') + (d.sign > 0 ? 'Open' : 'Close');
+        const v = marks[gk]; return v != null ? v : (d.kind === 'arrow' ? 500 : 4000);
+      };
       window.LUN_FUTOI_HITS = [];   // сбрасываем зоны клика (для тултипа по клику)
       if (!snaps.length) return true;
       const active = MARK_DEFS.filter((d) => show[d.key]); if (!active.length) return true;
@@ -418,7 +423,7 @@
         let offBelow = 8, offAbove = 8;
         for (const d of active) {
           const vol = a[d.mc] || 0, schet = a[d.mn] || 0;            // контракты / лица
-          const th = d.kind === 'arrow' ? thArrow : thCircle;
+          const th = th4(d);
           const pass = d.sign > 0 ? (vol >= th) : (vol <= -th); if (!pass) continue;
           const vl = d.kind === 'arrow' ? schet : vol;              // стрелки — лица, кружки — контракты
           const below = d.side === 'below';
