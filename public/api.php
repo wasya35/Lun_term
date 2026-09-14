@@ -117,11 +117,16 @@ function http_get($url) {
 // Поэтому: пробуем curl, а при его сбое — уходим через OpenSSL-потоки PHP
 // (file_get_contents), которые используют системный OpenSSL и сертификат разбирают.
 // Возвращает ['body'=>string|false, 'code'=>int, 'err'=>string, 'via'=>'curl'|'stream'].
+// Флаг «curl к apim на этом хостинге не работает» живёт в файле (сутки): static-
+// переменная жила только внутри ОДНОГО PHP-запроса, и каждая из десятков страниц
+// свечей платила лишний провальный TLS-хендшейк curl перед рабочим потоком.
+function apim_nocurl_file() { return __DIR__ . '/lun_data/apim_nocurl.txt'; }
 function moex_authed_get($url, $key) {
-  static $skipCurl = false;   // на этом хостинге curl (NSS) не парсит сертификат apim —
-                              // после первого провала ходим сразу через OpenSSL-потоки.
-  $curlErr = 'skipped';
+  static $skipCurl = null;
+  if ($skipCurl === null) { $f = apim_nocurl_file(); $skipCurl = is_file($f) && (time() - filemtime($f) < 86400); }
+  $curlErr = 'skipped'; $triedCurl = false;
   if (!$skipCurl && function_exists('curl_init')) {
+    $triedCurl = true;
     $ch = curl_init($url);
     curl_setopt_array($ch, [
       CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true,
@@ -146,7 +151,8 @@ function moex_authed_get($url, $key) {
   ]);
   $body = @file_get_contents($url, false, $ctx);
   if ($body === false) return ['body' => false, 'code' => 0, 'err' => 'curl: ' . $curlErr . ' | stream: тоже не удалось (allow_url_fopen?)', 'via' => 'stream'];
-  $skipCurl = true;   // поток сработал — дальше не тратим время на curl
+  // поток сработал после провала curl — запоминаем на сутки для ВСЕХ следующих запросов
+  if ($triedCurl) { @file_put_contents(apim_nocurl_file(), gmdate('c'), LOCK_EX); $skipCurl = true; }
   $code = 0;
   if (isset($http_response_header) && is_array($http_response_header)) {
     foreach ($http_response_header as $h) { if (preg_match('#^HTTP/\S+\s+(\d+)#', $h, $m)) $code = (int)$m[1]; }
@@ -212,6 +218,75 @@ function cache_put($key, $val) {
   @file_put_contents(lun_priv_dir('cache') . '/' . md5($key), $val, LOCK_EX);
   // раз в ~50 запросов подчищаем протухшее (>1ч), чтобы папка не пухла.
   if (mt_rand(1, 50) === 1) { foreach (glob(lun_priv_dir('cache') . '/*') ?: [] as $g) { if (time() - filemtime($g) > 3600) @unlink($g); } }
+}
+
+// долгий кэш (закрытые исторические интервалы — не меняются): отдельная папка со
+// своей чисткой, чтобы часовая чистка основного кэша его не выметала.
+function cache_long_get($key, $ttl) {
+  $f = lun_priv_dir('cache_long') . '/' . md5($key);
+  if (is_file($f) && (time() - filemtime($f) < $ttl)) { $v = @file_get_contents($f); if ($v !== false) return $v; }
+  return null;
+}
+function cache_long_put($key, $val) {
+  @file_put_contents(lun_priv_dir('cache_long') . '/' . md5($key), $val, LOCK_EX);
+  if (mt_rand(1, 100) === 1) { foreach (glob(lun_priv_dir('cache_long') . '/*') ?: [] as $g) { if (time() - filemtime($g) > 8 * 86400) @unlink($g); } }
+}
+
+/* FUTOI в ДНЕВНОМ режиме. Факт (2026-09-10): и apim, и публичный ISS отдают не
+ * больше 1000 строк за запрос (≈2.7 дня 5-мин снимков физ+юр) и игнорируют start=,
+ * зато окно from..till в 1–2 дня приходит целиком (день ≈ 404 строки). Поэтому
+ * сервер сам идёт по под-окнам в 2 дня, берёт ПОСЛЕДНИЙ снимок дня по группе
+ * (FIZ/YUR) и отдаёт 2 строки на день — браузеру не нужны мегабайты снимков ради
+ * дневного ОИ. Под-окно: apim (по ключу), при неудаче — публичный ISS (T−15; за
+ * последние 14 дней он закрыт — тогда день просто пропускается). Закрытые интервалы
+ * (till раньше сегодняшнего МСК-дня) кэшируются на неделю. */
+function futoi_table_from_body($body) {
+  $j = json_decode((string)$body, true); if (!is_array($j)) return null;
+  foreach ($j as $t) {
+    if (is_array($t) && isset($t['columns'], $t['data']) && is_array($t['columns']) && is_array($t['data']) && in_array('clgroup', $t['columns'], true)) return $t;
+  }
+  return null;
+}
+function futoi_daily_reduce($cols, $rows) {
+  $ci = array_flip($cols); $best = [];
+  foreach ($rows as $r) {
+    $k = ($r[$ci['tradedate']] ?? '') . '|' . ($r[$ci['clgroup']] ?? '') . '|' . ($r[$ci['ticker']] ?? '');
+    $t = (string)($r[$ci['tradetime']] ?? '');
+    if (!isset($best[$k]) || strcmp($t, $best[$k][0]) > 0) $best[$k] = [$t, $r];
+  }
+  $out = []; foreach ($best as $b) $out[] = $b[1];
+  usort($out, function ($a, $b) use ($ci) { return strcmp(($a[$ci['tradedate']] ?? '') . ($a[$ci['clgroup']] ?? ''), ($b[$ci['tradedate']] ?? '') . ($b[$ci['clgroup']] ?? '')); });
+  return $out;
+}
+function futoi_daily_respond($secid, $from, $till, $key) {
+  $f0 = strtotime($from . ' UTC'); $t0 = strtotime($till . ' UTC');
+  if ($f0 === false || $t0 === false || $t0 < $f0) { http_response_code(400); echo json_encode(['error' => 'bad dates']); return; }
+  if (($t0 - $f0) > 31 * 86400) { http_response_code(400); echo json_encode(['error' => 'daily span > 31 days']); return; }
+  $todayMsk = gmdate('Y-m-d', time() + 3 * 3600);
+  $closed = strcmp(gmdate('Y-m-d', $t0), $todayMsk) < 0;
+  $ck = 'futoiD|' . $secid . '|' . gmdate('Y-m-d', $f0) . '|' . gmdate('Y-m-d', $t0);
+  $hit = $closed ? cache_long_get($ck, 7 * 86400) : cache_get($ck, 60);
+  if ($hit !== null) { echo $hit; return; }
+  $path = '/iss/analyticalproducts/futoi/securities/' . rawurlencode($secid) . '.json';
+  $cols = null; $rows = [];
+  for ($a = $f0; $a <= $t0; $a += 2 * 86400) {
+    $b = min($t0, $a + 86400);
+    $qs = 'from=' . gmdate('Y-m-d', $a) . '&till=' . gmdate('Y-m-d', $b);
+    $t = null;
+    $r = moex_authed_get('https://apim.moex.com' . $path . '?' . $qs, $key);
+    if ($r['body'] !== false && (int)$r['code'] === 200) $t = futoi_table_from_body($r['body']);
+    if (!$t || empty($t['data'])) {
+      try { $t = futoi_table_from_body(http_get('https://iss.moex.com' . $path . '?iss.meta=off&' . $qs)); } catch (Exception $e) { $t = null; }
+    }
+    if ($t && !empty($t['data'])) {
+      if ($cols === null) $cols = $t['columns'];
+      if ($t['columns'] === $cols) foreach ($t['data'] as $row) $rows[] = $row;
+    }
+  }
+  if ($cols === null) { echo json_encode(['futoi' => ['columns' => [], 'data' => []]]); return; }
+  $out = json_encode(['futoi' => ['columns' => $cols, 'data' => futoi_daily_reduce($cols, $rows)]]);
+  if ($closed) cache_long_put($ck, $out); else cache_put($ck, $out);
+  echo $out;
 }
 
 // rate-limit по IP (фикс. окно). true = можно, false = превышено.
@@ -318,6 +393,10 @@ if (!defined('LUN_NO_DISPATCH')) {
     header('Content-Type: application/json; charset=utf-8');
     send_cors();
     if (empty($_SESSION['uid'])) { http_response_code(401); echo json_encode(['error' => 'login required']); exit; }
+    // Сессия дальше не нужна — отпускаем блокировку файла сессии СЕЙЧАС. Иначе
+    // параллельные запросы одного браузера (окна FUTOI, страницы tradestats) ждали
+    // друг друга в очереди на всё время похода в MOEX.
+    session_write_close();
     if (!rate_ok('algopack', 300, 60)) too_many();
     $keyFile = __DIR__ . '/lun_data/pk.php';
     $KEY = is_file($keyFile) ? (include $keyFile) : null;
@@ -331,6 +410,8 @@ if (!defined('LUN_NO_DISPATCH')) {
     }
     $qs = $q ? ('?' . http_build_query($q)) : '';
     if ($ds === 'futoi') {
+      // дневной режим (daily=1): сервер сам режет на под-окна и сжимает до дня
+      if (!empty($_GET['daily']) && $secid !== '' && !empty($q['from']) && !empty($q['till'])) { futoi_daily_respond($secid, $q['from'], $q['till'], $KEY); exit; }
       $issPath = $secid !== '' ? "/iss/analyticalproducts/futoi/securities/$secid.json$qs" : "/iss/analyticalproducts/futoi/securities.json$qs";
     } elseif (in_array($ds, ['tradestats', 'obstats', 'orderstats', 'hi2', 'alerts'], true)) {
       $issPath = $secid !== '' ? "/iss/datashop/algopack/$mkt/$ds/$secid.json$qs" : "/iss/datashop/algopack/$mkt/$ds.json$qs";
@@ -355,6 +436,7 @@ if (!defined('LUN_NO_DISPATCH')) {
     @session_start();
     header('Content-Type: application/json; charset=utf-8'); send_cors();
     if (empty($_SESSION['uid'])) { http_response_code(401); echo json_encode(['error' => 'login required']); exit; }
+    session_write_close();
     $keyFile = __DIR__ . '/lun_data/pk.php';
     $KEY = is_file($keyFile) ? (include $keyFile) : null;
     $hasKey = is_string($KEY) && $KEY !== '';
@@ -390,6 +472,11 @@ if (!defined('LUN_NO_DISPATCH')) {
       'date_3daysAgo'   => $probe("/iss/analyticalproducts/futoi/securities/Si.json?date=$y3"),
       'from_today_till_today' => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$today&till=$today"),
       'from_3d_till_today'    => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$y3&till=$today"),
+      // start= игнорируется? (если first/last совпадают с from_3d_till_today — да)
+      'from_3d_till_today_start1000' => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$y3&till=$today&start=1000"),
+      // окно в 2 дня приходит целиком? (rows < 1000 и обе даты в first/last)
+      'window_2d_y1_today'    => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$y1&till=$today"),
+      'nocurl_flag'           => is_file(apim_nocurl_file()) ? gmdate('c', filemtime(apim_nocurl_file())) : 'нет (curl ещё пробуется)',
     ]];
     echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT); exit;
   }
