@@ -163,13 +163,16 @@
     // setSymbol/setPeriod успели дёрнуть getBars, НЕ должен перезаписать новый
     // ТФ, если его запрос вернётся последним. Поэтому проверяем stale до и после
     // загрузки.
+    // ready: первичная история отдана графику. До этого поток (stream.js) молчит —
+    // иначе его опрос шёл параллельно с загрузкой и удваивал трафик.
     const loader = {
-      pushBar: null, stale: false, replayBuffer: null,
+      pushBar: null, stale: false, replayBuffer: null, ready: false,
       getBars: async ({ type, symbol, period, callback }) => {
         if (loader.stale || type !== 'init') { callback([], false); return; }
         const tf = window.LUN.TIMEFRAMES.find((t) => t.span === period.span && t.type === period.type) || { iss: 60 };
         let bars = await loadCandles(symbol, tf);
         if (loader.stale) { callback([], false); return; }   // ТФ уже сменили — не перетираем
+        loader.ready = true;
         // РЕПЛЕЙ: отдаём только прошлое до cutoff, будущее прячем в буфер —
         // шаг вперёд «доливает» бары через realtime-колбэк (см. app.js).
         loader.replayBuffer = null;
@@ -182,7 +185,8 @@
         callback(bars || demoBars(symbol, period), false);
         if (bars) console.info('[data]', window.LUN_DATA_SOURCE);
         else console.warn('[data] демо-режим:', window.LUN_DATA_ERROR);
-        window.dispatchEvent(new CustomEvent('lun:datasource'));
+        // detail.loader — чтобы app.js понимал, ЧЕЙ это загрузчик (какой слот готов)
+        window.dispatchEvent(new CustomEvent('lun:datasource', { detail: { loader, bars: bars ? bars.length : 0 } }));
       },
       subscribeBar: ({ callback }) => { loader.pushBar = callback; },
       unsubscribeBar: () => { loader.pushBar = null; },
@@ -201,5 +205,28 @@
     return bars;
   }
 
-  window.LunData = { makeDataLoader, resolveTicker, fetchFor };
+  /* ХВОСТ для опроса (stream.js): только свежие бары от sinceMs (обычно последний
+   * бар графика) минус сутки — 1–3 страницы вместо полной истории (36 страниц на M5).
+   * Не трогает строку статуса и не запускает склейку непрерывного фьючерса. */
+  async function fetchTail(instrument, tf, sinceMs) {
+    const provId = instrument.provider || 'moex';
+    if (provId !== 'moex') {
+      const prov = window.LunProviders && window.LunProviders.get(provId);
+      if (!prov) return null;
+      const symbol = Object.assign({}, instrument, { symbol: instrument.symbol || instrument.ticker });
+      return prov.fetchCandles(symbol, tf, { tail: true });
+    }
+    const ticker = await resolveTicker(instrument);
+    const eng = instrument.engine || 'futures', mkt = instrument.market || 'forts';
+    const now = Date.now();
+    const base = Math.min(Number.isFinite(sinceMs) ? sinceMs : now, now);
+    // дневки/недели — шире (выходные, праздники), минутки — сутки
+    const backDays = tf.type === 'week' ? 21 : (tf.type === 'day' ? 7 : 1);
+    const from = fmtDate(new Date(base - backDays * 86400000)), till = fmtDate(new Date(now));
+    const agg = (tf.iss === 5 || tf.iss === 15);
+    if (agg) return window.LunISS.aggregate(await window.LunISS.fetchCandlesFrom(eng, mkt, ticker, 1, from, till, 8), tf.iss);
+    return window.LunISS.fetchCandlesFrom(eng, mkt, ticker, tf.iss, from, till, 3);
+  }
+
+  window.LunData = { makeDataLoader, resolveTicker, fetchFor, fetchTail };
 })();
