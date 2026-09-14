@@ -1464,7 +1464,7 @@
     const d = slot.futoiData, snaps = (d && d.snaps) || [];
     try {
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
-        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK) } }, true);
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), thAcc: (window.LUN.FUTOI && window.LUN.FUTOI.markThreshold) || 50 } }, true);
       slot.futoiMarkOn = true;
     } catch (e) { slot.futoiMarkOn = false; }
   }
@@ -1480,23 +1480,26 @@
   function ensureFutoiTip() {
     if (futoiTip) return;
     futoiTip = document.createElement('div');
-    futoiTip.style.cssText = 'position:fixed;z-index:260;background:#121722;border:1px solid #2a3a4f;border-radius:8px;padding:8px 12px;font-size:12px;color:#d7deea;pointer-events:none;white-space:nowrap;display:none;box-shadow:0 8px 24px rgba(0,0,0,.55);line-height:1.5';
+    futoiTip.style.cssText = 'position:fixed;z-index:260;background:#121722;border:1px solid #2a3a4f;border-radius:8px;padding:10px 14px;font-size:15px;color:#d7deea;pointer-events:none;white-space:nowrap;display:none;box-shadow:0 8px 24px rgba(0,0,0,.55);line-height:1.6';
     document.body.appendChild(futoiTip);
   }
   function hideFutoiTip() { if (futoiTip) futoiTip.style.display = 'none'; }
+  // Тултип ТОЛЬКО при клике ПО МАРКЕРУ (треугольник/кружок) — хит-тест по зонам,
+  // сохранённым при отрисовке FutoiOnPrice (window.LUN_FUTOI_HITS в пикселях графика).
   document.addEventListener('click', (e) => {
-    if (!markAnyOn() || !window.LunFutoi || !window.LunFutoi.barAgg) { hideFutoiTip(); return; }
-    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot || !slot.futoiData) { hideFutoiTip(); return; }
-    const co = measureCoord(slot, e.clientX, e.clientY); if (!co || co.dataIndex == null) { hideFutoiTip(); return; }
-    let list = []; try { list = slot.chart.getDataList(); } catch (_) {}
-    const idx = Math.round(co.dataIndex); if (idx < 0 || idx >= list.length) { hideFutoiTip(); return; }
-    const a = window.LunFutoi.barAgg(slot.futoiData.snaps, list, idx); if (!a) { hideFutoiTip(); return; }
+    const hits = window.LUN_FUTOI_HITS;
+    if (!markAnyOn() || !hits || !hits.length) { hideFutoiTip(); return; }
+    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot) { hideFutoiTip(); return; }
+    let rect; try { rect = slot.cellEl.getBoundingClientRect(); } catch (_) { hideFutoiTip(); return; }
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    let best = null, bd = Infinity;
+    for (const h of hits) { const dx = px - h.x, dy = py - h.y, dd = dx * dx + dy * dy, rr = h.r + 5; if (dd <= rr * rr && dd < bd) { bd = dd; best = h; } }
+    if (!best) { hideFutoiTip(); return; }
     const kf = (n) => (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(Math.round(n)).toLocaleString('ru-RU');
     const col = (n) => n > 0 ? '#34c98a' : n < 0 ? '#ef5c6a' : '#8b93a7';
-    const row = (who, sch, vol) => `<div><span style="color:#9fb0c4">${who}:</span> Счета <b style="color:${col(sch)}">${kf(sch)}</b> · Объём <b style="color:${col(vol)}">${kf(vol)}</b> контр.</div>`;
-    const html = `<div style="color:#7fd0c0;margin-bottom:4px;font-weight:600">Физ/Юр · бар ${a.date || ''} ${(a.time || '').slice(0, 5)}</div>`
-      + row('Физики лонг', a.dFizLn, a.dFizL) + row('Физики шорт', a.dFizSn, a.dFizS)
-      + row('Юрики лонг', a.dYurLn, a.dYurL) + row('Юрики шорт', a.dYurSn, a.dYurS);
+    const html = `<div style="color:#7fd0c0;margin-bottom:5px;font-weight:600;font-size:16px">${best.who} · ${best.sd}</div>`
+      + `<div>Счета: <b style="color:${col(best.schet)}">${kf(best.schet)}</b> лиц</div>`
+      + `<div>Объём: <b style="color:${col(best.vol)}">${kf(best.vol)}</b> контрактов</div>`;
     ensureFutoiTip(); futoiTip.innerHTML = html; futoiTip.style.display = 'block';
     futoiTip.style.left = Math.min(window.innerWidth - futoiTip.offsetWidth - 8, e.clientX + 14) + 'px';
     futoiTip.style.top = Math.max(8, e.clientY - 10) + 'px';
@@ -1530,6 +1533,7 @@
     slot = slot || state; const c = slot && slot.chart; if (!c) return false;
     const d = await ensureTradeStats(slot); if (!d) return false;
     const thr = (window.LUN.OI_EXTREMES && window.LUN.OI_EXTREMES.barThresholds) || [5000, 10000, 50000];
+    window.__troiRows = d.rows; window.__troiThr = thr;   // для живого показа ОИ бара под курсором
     try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
     try { c.createIndicator({ name: 'TradeOI', paneId: TROI_PANE, shortName: 'ОИ (бар)', extendData: { rows: d.rows, thr } }, false); slot.troiOn = true; wishPane(TROI_PANE, { height: 92, order: 91 }); }
     catch (e) { slot.troiOn = false; }
@@ -3842,6 +3846,8 @@
             if (ts == null) ts = (d.timestamp != null ? d.timestamp : (bar ? bar.timestamp : null));
           }
           slot.legendBar = bar; slot.legendIdx = idx; slot.legendTs = ts;
+          // ОИ панель: показать величину/ΔОИ бара под курсором (overrideIndicator триггерит перерисовку)
+          if (slot.troiOn && slot._troiHoverIdx !== idx) { slot._troiHoverIdx = idx; try { slot.chart.overrideIndicator({ name: 'TradeOI', paneId: TROI_PANE, extendData: { hoverIdx: idx } }); } catch (e) {} }
           if (slot.legendOpen) renderLegend(slot);
           if (slot === state && dataWinOpen) updateDataWin({ dataIndex: idx, kLineData: bar });
           // плавающую подсказку аспектов у курсора убрали — аспекты подписаны прямо

@@ -295,42 +295,47 @@
     name: 'TradeOI', shortName: 'ΔОИ (бар)', series: 'normal', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
-      const ed = indicator.extendData || {}, rows = ed.rows || [], thr = ed.thr || [5000, 10000, 50000];
+      const ed = indicator.extendData || {};
+      const rows = ed.rows || window.__troiRows || [];
+      const thr = ed.thr || window.__troiThr || [5000, 10000, 50000];
       const H = bounding.height, W = bounding.width, list = chart.getDataList();
-      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-      if (!rows.length) { ctx.fillStyle = '#8b93a7'; ctx.fillText('ΔОИ (бар): нет данных tradestats', 6, 3); return true; }
+      ctx.textBaseline = 'top';
+      if (!rows.length) { ctx.font = '16px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#8b93a7'; ctx.fillText('ΔОИ (бар): нет данных tradestats', 6, 4); return true; }
       const map = tsByBar(rows, list), range = chart.getVisibleRange();
       const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
-      // зона столбиков ΔОИ (верх ~78% высоты), снизу — полоска уровня ОИ
-      const zeroY = Math.round(H * 0.44), maxBar = H * 0.36;
-      const oiTop = H * 0.82, oiBot = H * 0.98;
+      const zeroY = Math.round(H * 0.46), maxBar = H * 0.34;
+      const oiTop = H * 0.80, oiBot = H * 0.98;
       let maxAbs = 1, oiMn = Infinity, oiMx = -Infinity;
       for (let i = from; i < to; i++) { const a = map.get(i); if (!a) continue; if (Math.abs(a.doi) > maxAbs) maxAbs = Math.abs(a.doi); if (a.oi != null) { if (a.oi < oiMn) oiMn = a.oi; if (a.oi > oiMx) oiMx = a.oi; } }
       ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(W, zeroY); ctx.stroke();
       const tierOf = (ab) => ab >= thr[2] ? 3 : (ab >= thr[1] ? 2 : (ab >= thr[0] ? 1 : 0)), ALPHA = [0.42, 0.62, 0.82, 1];
       let bw = 6; try { bw = chart.getBarSpace().bar; } catch (e) {} bw = Math.max(1, bw * 0.72);
-      const labels = [];
       // уровень ОИ снизу — линия
       const yOI = (v) => (oiMx > oiMn) ? oiBot - ((v - oiMn) / (oiMx - oiMn)) * (oiBot - oiTop) : (oiTop + oiBot) / 2;
       ctx.strokeStyle = 'rgba(120,140,180,0.55)'; ctx.lineWidth = 1; ctx.beginPath(); let started = false;
       for (let i = from; i < to; i++) { const a = map.get(i); if (!a || a.oi == null) continue; const x = xAxis.convertToPixel(i), y = yOI(a.oi); if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y); }
       if (started) ctx.stroke();
-      // столбики ΔОИ
+      // столбики ΔОИ — БЕЗ подписей на барах
       for (let i = from; i < to; i++) {
         const a = map.get(i); if (!a) continue; const d = a.doi || 0; if (!d) continue;
         const up = d > 0, tier = tierOf(Math.abs(d)), x = xAxis.convertToPixel(i);
         const h = Math.max(1, (Math.abs(d) / maxAbs) * maxBar);
         ctx.fillStyle = (up ? 'rgba(38,166,154,' : 'rgba(239,83,80,') + ALPHA[tier] + ')';
         if (up) ctx.fillRect(x - bw / 2, zeroY - h, bw, h); else ctx.fillRect(x - bw / 2, zeroY, bw, h);
-        if (tier >= 3) labels.push({ x, y: up ? zeroY - h : zeroY + h, up, ab: Math.abs(d) });   // подписи только на самых крупных ΔОИ (не засоряем)
       }
-      labels.forEach((l) => { ctx.fillStyle = l.up ? '#26a69a' : '#ef5350'; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = l.up ? 'bottom' : 'top'; ctx.fillText((l.up ? '+' : '−') + kfmt(l.ab), l.x, l.up ? l.y - 1 : l.y + 1); });
-      // шапка слева: «ΔОИ по бару» и сразу величина ОИ (без слова «пороги» и списка)
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = '10px system-ui, sans-serif';
-      const last = rows[rows.length - 1] || {};
-      ctx.fillStyle = '#8b93a7'; ctx.fillText('ΔОИ по бару', 6, 3);
-      const lblW = ctx.measureText('ΔОИ по бару').width;
-      ctx.fillStyle = '#c8d0de'; ctx.fillText('ОИ ' + kfmt(last.oi || 0), 6 + lblW + 10, 3);
+      // СПРАВА: ОИ и ΔОИ бара под курсором (ed.hoverIdx) — или последнего. Со знаком.
+      let hi = (ed.hoverIdx != null && ed.hoverIdx >= 0 && ed.hoverIdx < list.length) ? ed.hoverIdx : (list.length - 1);
+      let a = map.get(hi); for (let i = hi; i >= 0 && !a; i--) a = map.get(i);
+      ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textBaseline = 'top';
+      if (a) {
+        const doi = a.doi || 0, up = doi >= 0;
+        const s2 = 'ΔОИ ' + (up ? '+' : '−') + kfmt(doi);
+        const s1 = 'ОИ ' + kfmt(a.oi || 0) + '   ';
+        ctx.textAlign = 'right';
+        ctx.fillStyle = up ? '#34c98a' : '#ef5c6a'; ctx.fillText(s2, W - 8, 5);
+        const w2 = ctx.measureText(s2).width;
+        ctx.fillStyle = '#c8d0de'; ctx.fillText(s1, W - 8 - w2, 5);
+      }
       return true;
     },
   });
@@ -344,7 +349,7 @@
       const ed = indicator.extendData || {}, rows = ed.rows || [];
       const H = bounding.height, W = bounding.width, mid = Math.round(H / 2), list = chart.getDataList();
       ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
-      ctx.font = '10px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      ctx.font = '14px system-ui, sans-serif'; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
       if (!rows.length) { ctx.fillStyle = '#8b93a7'; ctx.fillText('Покуп/Прод: нет данных tradestats', 6, 3); return true; }
       const map = tsByBar(rows, list), range = chart.getVisibleRange();
       const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
@@ -357,7 +362,7 @@
         ctx.fillStyle = 'rgba(239,83,80,0.85)'; ctx.fillRect(x - bw / 2, mid, bw, hs);
       }
       ctx.fillStyle = '#26a69a'; ctx.fillText('покупатели ▲', 6, 3);
-      ctx.fillStyle = '#ef5350'; ctx.fillText('продавцы ▼', 92, 3);
+      ctx.fillStyle = '#ef5350'; ctx.fillText('продавцы ▼', 118, 3);
       return true;
     },
   });
@@ -368,57 +373,71 @@
    * с буквой Ф/Ю. Показываем событие на баре, если |дельта| ≥ порога (счета — лиц,
    * бид/аск — контрактов). Бычьи (лонг/бид) — под свечой, медвежьи (шорт/аск) — над.
    * extendData: { snaps, show, thAcc, thCon }. show — включённые ключи. */
+  // mf = метрика ФИЛЬТРА (число лиц), ml = метрика ПОДПИСИ (стрелки — лица, кружки —
+  // контракты). Объём контрактов = ml без хвостовой 'n' (dFizLn→dFizL).
   const MARK_DEFS = [
-    // счета (стрелки) — метрика = число лиц
-    { key: 'fizLong+', kind: 'arrow', m: 'dFizLn', sign: 1,  side: 'below', up: true,  col: '#26a69a', tag: 'Ф' },
-    { key: 'fizLong-', kind: 'arrow', m: 'dFizLn', sign: -1, side: 'below', up: false, col: '#7ec9b6', tag: 'Ф' },
-    { key: 'fizShort+', kind: 'arrow', m: 'dFizSn', sign: 1,  side: 'above', up: false, col: '#ef5350', tag: 'Ф' },
-    { key: 'fizShort-', kind: 'arrow', m: 'dFizSn', sign: -1, side: 'above', up: true,  col: '#f0a6a6', tag: 'Ф' },
-    { key: 'yurLong+', kind: 'arrow', m: 'dYurLn', sign: 1,  side: 'below', up: true,  col: '#2f8fd0', tag: 'Ю' },
-    { key: 'yurLong-', kind: 'arrow', m: 'dYurLn', sign: -1, side: 'below', up: false, col: '#8fc3e6', tag: 'Ю' },
-    { key: 'yurShort+', kind: 'arrow', m: 'dYurSn', sign: 1,  side: 'above', up: false, col: '#e0a030', tag: 'Ю' },
-    { key: 'yurShort-', kind: 'arrow', m: 'dYurSn', sign: -1, side: 'above', up: true,  col: '#e8c98a', tag: 'Ю' },
-    // бид/аск (кружки) — метрика = контракты; бид=лонг-сторона(зел), аск=шорт(красн)
-    { key: 'fizBid+', kind: 'circle', m: 'dFizL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ф' },
-    { key: 'fizBid-', kind: 'circle', m: 'dFizL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ф' },
-    { key: 'fizAsk+', kind: 'circle', m: 'dFizS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ф' },
-    { key: 'fizAsk-', kind: 'circle', m: 'dFizS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ф' },
-    { key: 'yurBid+', kind: 'circle', m: 'dYurL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ю' },
-    { key: 'yurBid-', kind: 'circle', m: 'dYurL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ю' },
-    { key: 'yurAsk+', kind: 'circle', m: 'dYurS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ю' },
-    { key: 'yurAsk-', kind: 'circle', m: 'dYurS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ю' },
+    { key: 'fizLong+', kind: 'arrow', mf: 'dFizLn', ml: 'dFizLn', sign: 1,  side: 'below', up: true,  col: '#26a69a', tag: 'Ф', who: 'Физики', sd: 'лонг' },
+    { key: 'fizLong-', kind: 'arrow', mf: 'dFizLn', ml: 'dFizLn', sign: -1, side: 'below', up: false, col: '#7ec9b6', tag: 'Ф', who: 'Физики', sd: 'лонг' },
+    { key: 'fizShort+', kind: 'arrow', mf: 'dFizSn', ml: 'dFizSn', sign: 1,  side: 'above', up: false, col: '#ef5350', tag: 'Ф', who: 'Физики', sd: 'шорт' },
+    { key: 'fizShort-', kind: 'arrow', mf: 'dFizSn', ml: 'dFizSn', sign: -1, side: 'above', up: true,  col: '#f0a6a6', tag: 'Ф', who: 'Физики', sd: 'шорт' },
+    { key: 'yurLong+', kind: 'arrow', mf: 'dYurLn', ml: 'dYurLn', sign: 1,  side: 'below', up: true,  col: '#2f8fd0', tag: 'Ю', who: 'Юрики', sd: 'лонг' },
+    { key: 'yurLong-', kind: 'arrow', mf: 'dYurLn', ml: 'dYurLn', sign: -1, side: 'below', up: false, col: '#8fc3e6', tag: 'Ю', who: 'Юрики', sd: 'лонг' },
+    { key: 'yurShort+', kind: 'arrow', mf: 'dYurSn', ml: 'dYurSn', sign: 1,  side: 'above', up: false, col: '#e0a030', tag: 'Ю', who: 'Юрики', sd: 'шорт' },
+    { key: 'yurShort-', kind: 'arrow', mf: 'dYurSn', ml: 'dYurSn', sign: -1, side: 'above', up: true,  col: '#e8c98a', tag: 'Ю', who: 'Юрики', sd: 'шорт' },
+    { key: 'fizBid+', kind: 'circle', mf: 'dFizLn', ml: 'dFizL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ф', who: 'Физики', sd: 'бид' },
+    { key: 'fizBid-', kind: 'circle', mf: 'dFizLn', ml: 'dFizL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ф', who: 'Физики', sd: 'бид' },
+    { key: 'fizAsk+', kind: 'circle', mf: 'dFizSn', ml: 'dFizS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ф', who: 'Физики', sd: 'аск' },
+    { key: 'fizAsk-', kind: 'circle', mf: 'dFizSn', ml: 'dFizS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ф', who: 'Физики', sd: 'аск' },
+    { key: 'yurBid+', kind: 'circle', mf: 'dYurLn', ml: 'dYurL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ю', who: 'Юрики', sd: 'бид' },
+    { key: 'yurBid-', kind: 'circle', mf: 'dYurLn', ml: 'dYurL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ю', who: 'Юрики', sd: 'бид' },
+    { key: 'yurAsk+', kind: 'circle', mf: 'dYurSn', ml: 'dYurS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ю', who: 'Юрики', sd: 'аск' },
+    { key: 'yurAsk-', kind: 'circle', mf: 'dYurSn', ml: 'dYurS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ю', who: 'Юрики', sd: 'аск' },
   ];
-  function markTriangle(ctx, x, y, s, up) { ctx.beginPath(); if (up) { ctx.moveTo(x, y); ctx.lineTo(x - s, y + s * 1.5); ctx.lineTo(x + s, y + s * 1.5); } else { ctx.moveTo(x, y); ctx.lineTo(x - s, y - s * 1.5); ctx.lineTo(x + s, y - s * 1.5); } ctx.closePath(); ctx.fill(); }
+  function markTriangle(ctx, x, y, s, up) { ctx.beginPath(); if (up) { ctx.moveTo(x, y); ctx.lineTo(x - s, y + s * 1.6); ctx.lineTo(x + s, y + s * 1.6); } else { ctx.moveTo(x, y); ctx.lineTo(x - s, y - s * 1.6); ctx.lineTo(x + s, y - s * 1.6); } ctx.closePath(); ctx.fill(); }
+  const numLbl = (n) => (n > 0 ? '+' : '−') + Math.abs(Math.round(n)).toLocaleString('ru-RU');
   kc.registerIndicator({
     name: 'FutoiOnPrice', shortName: 'Физ/Юр на свечах', series: 'price', figures: [],
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
       const ed = indicator.extendData || {}, snaps = ed.snaps || [], show = ed.show || {};
-      const thA = ed.thAcc || 20, thC = ed.thCon || 300;
+      const thA = ed.thAcc || 50;   // фильтр по числу лиц (счетам)
+      window.LUN_FUTOI_HITS = [];   // сбрасываем зоны клика (для тултипа по клику)
       if (!snaps.length) return true;
       const active = MARK_DEFS.filter((d) => show[d.key]); if (!active.length) return true;
       const list = chart.getDataList(), buckets = bucketByBar(snaps, list);
       const range = chart.getVisibleRange();
       const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
-      ctx.textAlign = 'center'; ctx.font = '9px system-ui, sans-serif';
+      const R = 14;   // радиус кружка (крупный)
       for (let i = from; i < to; i++) {
         const a = buckets.get(i); if (!a) continue; const bar = list[i]; if (!bar) continue;
         const x = xAxis.convertToPixel(i);
-        let offBelow = 6, offAbove = 6;
+        let offBelow = 8, offAbove = 8;
         for (const d of active) {
-          const v = a[d.m] || 0; const th = d.kind === 'arrow' ? thA : thC;
-          const pass = d.sign > 0 ? (v >= th) : (v <= -th); if (!pass) continue;
+          const vf = a[d.mf] || 0;                                   // фильтр по лицам
+          const pass = d.sign > 0 ? (vf >= thA) : (vf <= -thA); if (!pass) continue;
+          const vl = a[d.ml] || 0;                                   // значение подписи (лица/контракты)
+          const schet = a[d.mf] || 0, vol = a[d.mf.slice(0, -1)] || 0;
           const below = d.side === 'below';
           const baseY = below ? yAxis.convertToPixel(bar.low) : yAxis.convertToPixel(bar.high);
-          const y = below ? baseY + offBelow : baseY - offAbove;
-          ctx.globalAlpha = d.dim ? 0.5 : 1;
+          ctx.globalAlpha = d.dim ? 0.55 : 1;
           if (d.kind === 'arrow') {
-            ctx.fillStyle = d.col; markTriangle(ctx, x, below ? y : y, 4, d.up);
-            offBelow += below ? 13 : 0; offAbove += below ? 0 : 13;
+            const ty = below ? baseY + offBelow : baseY - offAbove;
+            ctx.fillStyle = d.col; markTriangle(ctx, x, ty, 7, d.up);
+            const ly = below ? ty + 12 : ty - 12;
+            ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = below ? 'top' : 'bottom';
+            ctx.fillStyle = d.col; ctx.fillText(numLbl(vl), x, ly);
+            window.LUN_FUTOI_HITS.push({ x, y: ty, r: 12, who: d.who, sd: d.sd, schet, vol });
+            offBelow += below ? 34 : 0; offAbove += below ? 0 : 34;
           } else {
-            ctx.fillStyle = d.col; ctx.beginPath(); ctx.arc(x, below ? y + 5 : y - 5, 5.5, 0, 6.283); ctx.fill();
-            ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.fillText(d.tag, x, below ? y + 5 : y - 5);
-            offBelow += below ? 15 : 0; offAbove += below ? 0 : 15;
+            const cy = below ? baseY + offBelow + R : baseY - offAbove - R;
+            ctx.fillStyle = d.col; ctx.beginPath(); ctx.arc(x, cy, R, 0, 6.283); ctx.fill();
+            ctx.fillStyle = '#fff'; ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(d.tag, x, cy + 1);
+            const ly = below ? cy + R + 2 : cy - R - 2;
+            ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
+            ctx.fillStyle = d.col; ctx.fillText(numLbl(vl), x, ly);
+            window.LUN_FUTOI_HITS.push({ x, y: cy, r: R + 2, who: d.who, sd: d.sd, schet, vol });
+            offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;
           }
           ctx.globalAlpha = 1;
         }
