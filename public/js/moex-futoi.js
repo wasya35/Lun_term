@@ -326,7 +326,7 @@
       // СПРАВА: ОИ и ΔОИ бара под курсором (ed.hoverIdx) — или последнего. Со знаком.
       let hi = (ed.hoverIdx != null && ed.hoverIdx >= 0 && ed.hoverIdx < list.length) ? ed.hoverIdx : (list.length - 1);
       let a = map.get(hi); for (let i = hi; i >= 0 && !a; i--) a = map.get(i);
-      ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textBaseline = 'top';
+      ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textBaseline = 'top';
       if (a) {
         const doi = a.doi || 0, up = doi >= 0;
         const s2 = 'ΔОИ ' + (up ? '+' : '−') + kfmt(doi);
@@ -373,25 +373,28 @@
    * с буквой Ф/Ю. Показываем событие на баре, если |дельта| ≥ порога (счета — лиц,
    * бид/аск — контрактов). Бычьи (лонг/бид) — под свечой, медвежьи (шорт/аск) — над.
    * extendData: { snaps, show, thAcc, thCon }. show — включённые ключи. */
-  // mf = метрика ФИЛЬТРА (число лиц), ml = метрика ПОДПИСИ (стрелки — лица, кружки —
-  // контракты). Объём контрактов = ml без хвостовой 'n' (dFizLn→dFizL).
+  // ФИЛЬТР — по РАЗМЕРУ ПОЗИЦИИ (контракты, mc): физ и юр в одном масштабе, поэтому
+  // юрики (мало лиц, но крупные объёмы) больше не пропадают. mn — число лиц (счета).
+  // Стрелки: порог thArrow, подпись = счета (лица). Кружки бид/аск («ФАС»): порог
+  // thCircle, подпись = контракты. Физ — зелёный/красный, Юр — голубой/оранжевый.
+  const YB = '#3d8bdb', YBd = '#7fb3e6', YO = '#e8942e', YOd = '#f0bd7a';   // юрики: синий / оранжевый
   const MARK_DEFS = [
-    { key: 'fizLong+', kind: 'arrow', mf: 'dFizLn', ml: 'dFizLn', sign: 1,  side: 'below', up: true,  col: '#26a69a', tag: 'Ф', who: 'Физики', sd: 'лонг' },
-    { key: 'fizLong-', kind: 'arrow', mf: 'dFizLn', ml: 'dFizLn', sign: -1, side: 'below', up: false, col: '#7ec9b6', tag: 'Ф', who: 'Физики', sd: 'лонг' },
-    { key: 'fizShort+', kind: 'arrow', mf: 'dFizSn', ml: 'dFizSn', sign: 1,  side: 'above', up: false, col: '#ef5350', tag: 'Ф', who: 'Физики', sd: 'шорт' },
-    { key: 'fizShort-', kind: 'arrow', mf: 'dFizSn', ml: 'dFizSn', sign: -1, side: 'above', up: true,  col: '#f0a6a6', tag: 'Ф', who: 'Физики', sd: 'шорт' },
-    { key: 'yurLong+', kind: 'arrow', mf: 'dYurLn', ml: 'dYurLn', sign: 1,  side: 'below', up: true,  col: '#2f8fd0', tag: 'Ю', who: 'Юрики', sd: 'лонг' },
-    { key: 'yurLong-', kind: 'arrow', mf: 'dYurLn', ml: 'dYurLn', sign: -1, side: 'below', up: false, col: '#8fc3e6', tag: 'Ю', who: 'Юрики', sd: 'лонг' },
-    { key: 'yurShort+', kind: 'arrow', mf: 'dYurSn', ml: 'dYurSn', sign: 1,  side: 'above', up: false, col: '#e0a030', tag: 'Ю', who: 'Юрики', sd: 'шорт' },
-    { key: 'yurShort-', kind: 'arrow', mf: 'dYurSn', ml: 'dYurSn', sign: -1, side: 'above', up: true,  col: '#e8c98a', tag: 'Ю', who: 'Юрики', sd: 'шорт' },
-    { key: 'fizBid+', kind: 'circle', mf: 'dFizLn', ml: 'dFizL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ф', who: 'Физики', sd: 'бид' },
-    { key: 'fizBid-', kind: 'circle', mf: 'dFizLn', ml: 'dFizL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ф', who: 'Физики', sd: 'бид' },
-    { key: 'fizAsk+', kind: 'circle', mf: 'dFizSn', ml: 'dFizS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ф', who: 'Физики', sd: 'аск' },
-    { key: 'fizAsk-', kind: 'circle', mf: 'dFizSn', ml: 'dFizS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ф', who: 'Физики', sd: 'аск' },
-    { key: 'yurBid+', kind: 'circle', mf: 'dYurLn', ml: 'dYurL', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ю', who: 'Юрики', sd: 'бид' },
-    { key: 'yurBid-', kind: 'circle', mf: 'dYurLn', ml: 'dYurL', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ю', who: 'Юрики', sd: 'бид' },
-    { key: 'yurAsk+', kind: 'circle', mf: 'dYurSn', ml: 'dYurS', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ю', who: 'Юрики', sd: 'аск' },
-    { key: 'yurAsk-', kind: 'circle', mf: 'dYurSn', ml: 'dYurS', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ю', who: 'Юрики', sd: 'аск' },
+    { key: 'fizLong+', kind: 'arrow', mc: 'dFizL', mn: 'dFizLn', sign: 1,  side: 'below', up: true,  col: '#26a69a', tag: 'Ф', who: 'Физики', sd: 'лонг' },
+    { key: 'fizLong-', kind: 'arrow', mc: 'dFizL', mn: 'dFizLn', sign: -1, side: 'below', up: false, col: '#7ec9b6', tag: 'Ф', who: 'Физики', sd: 'лонг' },
+    { key: 'fizShort+', kind: 'arrow', mc: 'dFizS', mn: 'dFizSn', sign: 1,  side: 'above', up: false, col: '#ef5350', tag: 'Ф', who: 'Физики', sd: 'шорт' },
+    { key: 'fizShort-', kind: 'arrow', mc: 'dFizS', mn: 'dFizSn', sign: -1, side: 'above', up: true,  col: '#f0a6a6', tag: 'Ф', who: 'Физики', sd: 'шорт' },
+    { key: 'yurLong+', kind: 'arrow', mc: 'dYurL', mn: 'dYurLn', sign: 1,  side: 'below', up: true,  col: YB,  tag: 'Ю', who: 'Юрики', sd: 'лонг' },
+    { key: 'yurLong-', kind: 'arrow', mc: 'dYurL', mn: 'dYurLn', sign: -1, side: 'below', up: false, col: YBd, tag: 'Ю', who: 'Юрики', sd: 'лонг' },
+    { key: 'yurShort+', kind: 'arrow', mc: 'dYurS', mn: 'dYurSn', sign: 1,  side: 'above', up: false, col: YO,  tag: 'Ю', who: 'Юрики', sd: 'шорт' },
+    { key: 'yurShort-', kind: 'arrow', mc: 'dYurS', mn: 'dYurSn', sign: -1, side: 'above', up: true,  col: YOd, tag: 'Ю', who: 'Юрики', sd: 'шорт' },
+    { key: 'fizBid+', kind: 'circle', mc: 'dFizL', mn: 'dFizLn', sign: 1,  side: 'below', col: '#1e9e86', tag: 'Ф', who: 'Физики', sd: 'бид' },
+    { key: 'fizBid-', kind: 'circle', mc: 'dFizL', mn: 'dFizLn', sign: -1, side: 'below', col: '#1e9e86', dim: true, tag: 'Ф', who: 'Физики', sd: 'бид' },
+    { key: 'fizAsk+', kind: 'circle', mc: 'dFizS', mn: 'dFizSn', sign: 1,  side: 'above', col: '#e0453f', tag: 'Ф', who: 'Физики', sd: 'аск' },
+    { key: 'fizAsk-', kind: 'circle', mc: 'dFizS', mn: 'dFizSn', sign: -1, side: 'above', col: '#e0453f', dim: true, tag: 'Ф', who: 'Физики', sd: 'аск' },
+    { key: 'yurBid+', kind: 'circle', mc: 'dYurL', mn: 'dYurLn', sign: 1,  side: 'below', col: YB, tag: 'Ю', who: 'Юрики', sd: 'бид' },
+    { key: 'yurBid-', kind: 'circle', mc: 'dYurL', mn: 'dYurLn', sign: -1, side: 'below', col: YB, dim: true, tag: 'Ю', who: 'Юрики', sd: 'бид' },
+    { key: 'yurAsk+', kind: 'circle', mc: 'dYurS', mn: 'dYurSn', sign: 1,  side: 'above', col: YO, tag: 'Ю', who: 'Юрики', sd: 'аск' },
+    { key: 'yurAsk-', kind: 'circle', mc: 'dYurS', mn: 'dYurSn', sign: -1, side: 'above', col: YO, dim: true, tag: 'Ю', who: 'Юрики', sd: 'аск' },
   ];
   function markTriangle(ctx, x, y, s, up) { ctx.beginPath(); if (up) { ctx.moveTo(x, y); ctx.lineTo(x - s, y + s * 1.6); ctx.lineTo(x + s, y + s * 1.6); } else { ctx.moveTo(x, y); ctx.lineTo(x - s, y - s * 1.6); ctx.lineTo(x + s, y - s * 1.6); } ctx.closePath(); ctx.fill(); }
   const numLbl = (n) => (n > 0 ? '+' : '−') + Math.abs(Math.round(n)).toLocaleString('ru-RU');
@@ -400,7 +403,8 @@
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
       const ed = indicator.extendData || {}, snaps = ed.snaps || [], show = ed.show || {};
-      const thA = ed.thAcc || 50;   // фильтр по числу лиц (счетам)
+      const thArrow = ed.thArrow || 500;    // порог стрелок (счета) — по контрактам
+      const thCircle = ed.thCircle || 4000; // порог кружков бид/аск (ФАС) — по контрактам
       window.LUN_FUTOI_HITS = [];   // сбрасываем зоны клика (для тултипа по клику)
       if (!snaps.length) return true;
       const active = MARK_DEFS.filter((d) => show[d.key]); if (!active.length) return true;
@@ -413,10 +417,10 @@
         const x = xAxis.convertToPixel(i);
         let offBelow = 8, offAbove = 8;
         for (const d of active) {
-          const vf = a[d.mf] || 0;                                   // фильтр по лицам
-          const pass = d.sign > 0 ? (vf >= thA) : (vf <= -thA); if (!pass) continue;
-          const vl = a[d.ml] || 0;                                   // значение подписи (лица/контракты)
-          const schet = a[d.mf] || 0, vol = a[d.mf.slice(0, -1)] || 0;
+          const vol = a[d.mc] || 0, schet = a[d.mn] || 0;            // контракты / лица
+          const th = d.kind === 'arrow' ? thArrow : thCircle;
+          const pass = d.sign > 0 ? (vol >= th) : (vol <= -th); if (!pass) continue;
+          const vl = d.kind === 'arrow' ? schet : vol;              // стрелки — лица, кружки — контракты
           const below = d.side === 'below';
           const baseY = below ? yAxis.convertToPixel(bar.low) : yAxis.convertToPixel(bar.high);
           ctx.globalAlpha = d.dim ? 0.55 : 1;

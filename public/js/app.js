@@ -1463,8 +1463,9 @@
     if (!markAnyOn()) { slot.futoiMarkOn = false; return; }
     const d = slot.futoiData, snaps = (d && d.snaps) || [];
     try {
+      const F = window.LUN.FUTOI || {};
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
-        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), thAcc: (window.LUN.FUTOI && window.LUN.FUTOI.markThreshold) || 50 } }, true);
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), thArrow: F.arrowMin || 500, thCircle: F.circleMin || 4000 } }, true);
       slot.futoiMarkOn = true;
     } catch (e) { slot.futoiMarkOn = false; }
   }
@@ -1563,6 +1564,23 @@
     bg.querySelector('#troi-apply').onclick = () => {
       const a = [+bg.querySelector('#troi-1').value || 5000, +bg.querySelector('#troi-2').value || 10000, +bg.querySelector('#troi-3').value || 50000].sort((x, y) => x - y);
       T.barThresholds = a; bg.remove(); if (state.troiOn) rebuildTradeOI(state); scheduleWsSave();
+    };
+  }
+  // Пороги показа маркеров Физ/Юр — по РАЗМЕРУ ПОЗИЦИИ (контракты). Отдельно для
+  // стрелок (счета) и кружков бид/аск («ФАС» — обычно от 4000). Меньше — не рисуем.
+  function futoiMarkThresholdModal() {
+    const F = window.LUN.FUTOI || (window.LUN.FUTOI = {});
+    const a0 = F.arrowMin || 500, c0 = F.circleMin || 4000;
+    openModal('Пороги маркеров Физ/Юр', '<p>Фильтр по размеру позиции за бар (контракты). Меньше порога — маркер не показывается. Юрики торгуют крупными объёмами при малом числе лиц, поэтому фильтр именно по контрактам.</p>'
+      + '<div style="display:flex;gap:14px;align-items:center;margin:10px 0;font-size:15px">'
+      + '<label>Стрелки (счета) от: <input id="fmk-arrow" type="number" value="' + a0 + '" style="width:100px"></label>'
+      + '<label>Кружки бид/аск (ФАС) от: <input id="fmk-circle" type="number" value="' + c0 + '" style="width:100px"></label></div>'
+      + '<button id="fmk-apply" class="lun-btn">Применить</button>');
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#fmk-apply').onclick = () => {
+      F.arrowMin = Math.max(0, +bg.querySelector('#fmk-arrow').value || 500);
+      F.circleMin = Math.max(0, +bg.querySelector('#fmk-circle').value || 4000);
+      bg.remove(); if (markAnyOn()) applyFutoiMarks(state); scheduleWsSave();
     };
   }
 
@@ -3424,7 +3442,8 @@
       ['fizBid+', 'Ф бид+'], ['fizBid-', 'Ф бид−'], ['fizAsk+', 'Ф аск+'], ['fizAsk-', 'Ф аск−'],
       ['yurBid+', 'Ю бид+'], ['yurBid-', 'Ю бид−'], ['yurAsk+', 'Ю аск+'], ['yurAsk-', 'Ю аск−'],
     ];
-    baDefs.forEach(([key, label]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiMark(key, bb); }, false, 'Бид (лонг-сторона, зелёный) / аск (шорт, красный) физ/юр — кружок с буквой на свече (по контрактам)'); b.dataset.sync = 'mark:' + key; });
+    baDefs.forEach(([key, label]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiMark(key, bb); }, false, 'Бид (лонг-сторона) / аск (шорт) физ/юр — кружок с буквой на свече. Физ — зел/красн, Юр — синий/оранж. Фильтр по контрактам.'); b.dataset.sync = 'mark:' + key; });
+    mkBtn(indWrap, '⚙ Пороги маркеров Физ/Юр…', () => { closeMenus(); futoiMarkThresholdModal(); }, false, 'Фильтр стрелок и кружков по размеру позиции (контракты). Кружки бид/аск обычно от 4000 («ФАС»)');
     // стрелки массового открытия физлиц на свечах + порог
     mkBtn(indWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
     mkBtn(indWrap, '⚙ Порог физлиц…', () => { closeMenus(); futoiSettingsModal(); }, false, 'Сколько физлиц в свече считать «массовым» открытием');
