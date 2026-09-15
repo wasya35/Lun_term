@@ -403,12 +403,15 @@
     calc: (dl) => dl.map((d) => d.timestamp),
     draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
       const ed = indicator.extendData || {}, snaps = ed.snaps || [], show = ed.show || {};
-      // Пороги по РАЗМЕРУ ПОЗИЦИИ (контракты) — своя настройка на каждую группу:
-      // {физ|юр}×{стрелки|кружки}×{откр|закр}. Ключ: fizArrOpen … yurCircClose.
+      // Пороги — СВОИ на каждый ТФ (приходят готовыми из app: marks под текущий ТФ).
+      // Стрелки фильтруем по ЧИСЛУ ЛИЦ (счетам) — так нет мусора «+0/+9»; кружки
+      // бид/аск — по КОНТРАКТАМ (объём, «ФАС»). Ключи: fizArrOpen … yurCircClose.
       const marks = ed.marks || {};
+      const weightMin = ed.weightMin || 0;   // удельный вес: |контракты| / |лица| (0 = выкл)
+      const ringMax = ed.ringMax || 0;       // доп. кольцо у юр-кружка, если лиц < ringMax (0 = выкл)
       const th4 = (d) => {
         const gk = (d.who === 'Физики' ? 'fiz' : 'yur') + (d.kind === 'arrow' ? 'Arr' : 'Circ') + (d.sign > 0 ? 'Open' : 'Close');
-        const v = marks[gk]; return v != null ? v : (d.kind === 'arrow' ? 500 : 4000);
+        const v = marks[gk]; return v != null ? v : (d.kind === 'arrow' ? 5 : 4000);
       };
       window.LUN_FUTOI_HITS = [];   // сбрасываем зоны клика (для тултипа по клику)
       if (!snaps.length) return true;
@@ -423,9 +426,13 @@
         let offBelow = 8, offAbove = 8;
         for (const d of active) {
           const vol = a[d.mc] || 0, schet = a[d.mn] || 0;            // контракты / лица
+          const filt = d.kind === 'arrow' ? schet : vol;            // стрелки — по лицам, кружки — по контрактам
           const th = th4(d);
-          const pass = d.sign > 0 ? (vol >= th) : (vol <= -th); if (!pass) continue;
-          const vl = d.kind === 'arrow' ? schet : vol;              // стрелки — лица, кружки — контракты
+          const pass = d.sign > 0 ? (filt >= th) : (filt <= -th); if (!pass) continue;
+          // удельный вес позиции (контрактов на лицо) — доп. фильтр «крупных лотов»
+          const weight = Math.abs(vol) / Math.max(1, Math.abs(schet));
+          if (weightMin > 0 && weight < weightMin) continue;
+          const vl = d.kind === 'arrow' ? schet : vol;              // подпись: стрелки — лица, кружки — контракты
           const below = d.side === 'below';
           const baseY = below ? yAxis.convertToPixel(bar.low) : yAxis.convertToPixel(bar.high);
           ctx.globalAlpha = d.dim ? 0.55 : 1;
@@ -435,17 +442,22 @@
             const ly = below ? ty + 12 : ty - 12;
             ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = below ? 'top' : 'bottom';
             ctx.fillStyle = d.col; ctx.fillText(numLbl(vl), x, ly);
-            window.LUN_FUTOI_HITS.push({ x, y: ty, r: 12, who: d.who, sd: d.sd, schet, vol });
+            window.LUN_FUTOI_HITS.push({ x, y: ty, r: 12, who: d.who, sd: d.sd, schet, vol, weight });
             offBelow += below ? 34 : 0; offAbove += below ? 0 : 34;
           } else {
             const cy = below ? baseY + offBelow + R : baseY - offAbove - R;
             ctx.fillStyle = d.col; ctx.beginPath(); ctx.arc(x, cy, R, 0, 6.283); ctx.fill();
+            // ВЗВЕШЕННЫЙ бид/аск юриков: концентрированная сделка (лиц мало) — доп. кольцо
+            if (d.who === 'Юрики' && ringMax > 0 && Math.abs(schet) < ringMax) {
+              ctx.globalAlpha = 1; ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2.5;
+              ctx.beginPath(); ctx.arc(x, cy, R + 4, 0, 6.283); ctx.stroke(); ctx.globalAlpha = d.dim ? 0.55 : 1;
+            }
             ctx.fillStyle = '#fff'; ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(d.tag, x, cy + 1);
             const ly = below ? cy + R + 2 : cy - R - 2;
             ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
             ctx.fillStyle = d.col; ctx.fillText(numLbl(vl), x, ly);
-            window.LUN_FUTOI_HITS.push({ x, y: cy, r: R + 2, who: d.who, sd: d.sd, schet, vol });
+            window.LUN_FUTOI_HITS.push({ x, y: cy, r: R + 4, who: d.who, sd: d.sd, schet, vol, weight });
             offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;
           }
           ctx.globalAlpha = 1;
