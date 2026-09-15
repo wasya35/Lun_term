@@ -1457,6 +1457,8 @@
    * Оверлей на ценовой панели (FutoiOnPrice). Данные — те же снимки FUTOI. */
   window.LUN_FUTOI_MARK = window.LUN_FUTOI_MARK || {};
   const markAnyOn = () => Object.keys(window.LUN_FUTOI_MARK).some((k) => window.LUN_FUTOI_MARK[k]);
+  // Ключи одной строки порогов ТФ (8 порогов + удельный вес + кольцо):
+  const FMK_KEYS = ['fizArrOpen', 'fizArrClose', 'fizCircOpen', 'fizCircClose', 'yurArrOpen', 'yurArrClose', 'yurCircOpen', 'yurCircClose'];
   // База (в пересчёте на 5-мин бар): стрелки — в ЛИЦАХ, кружки — в КОНТРАКТАХ.
   const FMK_BASE = { fizArrOpen: 15, fizArrClose: 15, fizCircOpen: 4000, fizCircClose: 4000, yurArrOpen: 3, yurArrClose: 3, yurCircOpen: 3000, yurCircClose: 3000 };
   // Множитель ТФ: сколько 5-мин снимков FUTOI попадает в один бар этого ТФ.
@@ -1468,7 +1470,8 @@
     if (tf.type === 'week') return tf.span * 800;                   // W1≈800
     return 1;
   }
-  // Дефолтные пороги для ТФ = база × множитель (округл.). Стрелки масштабируем мягче.
+  // Дефолтные пороги для ТФ = база × множитель (лишь СТАРТОВАЯ подсказка — каждый ТФ
+  // редактируется вручную в «портянке»). Плюс удельный вес и кольцо (общие дефолты).
   function futoiTfDefaults(tf) {
     const f = futoiTfFactor(tf), fa = Math.max(1, Math.pow(f, 0.7));   // счета растут мягче объёма
     return {
@@ -1476,13 +1479,16 @@
       yurArrOpen: Math.max(2, Math.round(FMK_BASE.yurArrOpen * fa)), yurArrClose: Math.max(2, Math.round(FMK_BASE.yurArrClose * fa)),
       fizCircOpen: Math.round(FMK_BASE.fizCircOpen * f), fizCircClose: Math.round(FMK_BASE.fizCircClose * f),
       yurCircOpen: Math.round(FMK_BASE.yurCircOpen * f), yurCircClose: Math.round(FMK_BASE.yurCircClose * f),
+      weightMin: 0, ringMax: 3,
     };
   }
-  // Пороги под ТФ: дефолты, поверх которых — пользовательские правки marksByTf[tfId].
-  function futoiMarksFor(tf) {
+  // Полные настройки под конкретный ТФ: дефолты ТФ + ручные правки LUN.FUTOI.tf[tfId].
+  function futoiTfSettings(tf) {
     const F = window.LUN.FUTOI || (window.LUN.FUTOI = {});
-    F.marksByTf = F.marksByTf || {};
-    return Object.assign(futoiTfDefaults(tf), F.marksByTf[(tf && tf.id) || ''] || {});
+    F.tf = F.tf || {};
+    // одноразовая миграция со старого хранилища (v133: marksByTf + глобальные weightMin/ringMax)
+    if (F.marksByTf && !F._migratedTf) { Object.keys(F.marksByTf).forEach((id) => { F.tf[id] = Object.assign({ weightMin: F.weightMin || 0, ringMax: F.ringMax != null ? F.ringMax : 3 }, F.marksByTf[id]); }); F._migratedTf = true; }
+    return Object.assign(futoiTfDefaults(tf), F.tf[(tf && tf.id) || ''] || {});
   }
   function applyFutoiMarks(slot) {
     slot = slot || state; const c = slot && slot.chart; if (!c) return;
@@ -1490,9 +1496,9 @@
     if (!markAnyOn()) { slot.futoiMarkOn = false; return; }
     const d = slot.futoiData, snaps = (d && d.snaps) || [];
     try {
-      const F = window.LUN.FUTOI || {};
+      const st = futoiTfSettings(slot.tf);
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
-        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: futoiMarksFor(slot.tf), weightMin: F.weightMin || 0, ringMax: F.ringMax != null ? F.ringMax : 3 } }, true);
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3 } }, true);
       slot.futoiMarkOn = true;
     } catch (e) { slot.futoiMarkOn = false; }
   }
@@ -1598,42 +1604,58 @@
   // Пороги маркеров Физ/Юр — СВОИ на каждый таймфрейм (редактируем текущий ТФ).
   // 8 порогов: {физ|юр} × {стрелки=лица | кружки бид/аск=контракты} × {откр | закр}.
   // Плюс удельный вес (контр./лицо) и доп. кольцо у юр-кружка при малом числе лиц.
-  const FMK_KEYS = ['fizArrOpen', 'fizArrClose', 'fizCircOpen', 'fizCircClose', 'yurArrOpen', 'yurArrClose', 'yurCircOpen', 'yurCircClose'];
+  // «Портянка» порогов: ВСЕ таймфреймы сразу, у каждого — свои настройки сделок
+  // (стрелки=лица) и бид/аск (кружки=контракты) + удельный вес + кольцо концентрации.
   function futoiMarkThresholdModal() {
     const F = window.LUN.FUTOI || (window.LUN.FUTOI = {});
-    F.marksByTf = F.marksByTf || {};
-    const tf = state.tf, tfId = (tf && tf.id) || '';
-    const def = futoiTfDefaults(tf);
-    const cur = Object.assign({}, def, F.marksByTf[tfId] || {});   // дефолты ТФ + правки юзера
-    const inp = (k) => '<input id="fmk-' + k + '" type="number" value="' + (cur[k] != null ? cur[k] : def[k]) + '" style="width:88px">';
-    const row = (title, base, col, unit) => '<tr><td style="padding:5px 10px 5px 0;color:' + col + ';font-weight:600;white-space:nowrap">' + title + ' <span style="color:#8b93a7;font-weight:400">(' + unit + ')</span></td>'
-      + '<td style="padding:5px 8px">' + inp(base + 'Open') + '</td><td style="padding:5px 8px">' + inp(base + 'Close') + '</td></tr>';
-    openModal('Пороги маркеров Физ/Юр · ' + (tf ? tf.title : '') ,
-      '<p style="font-size:14px;color:#a9b4c6">Настройки действуют для текущего таймфрейма <b style="color:#d7deea">' + (tf ? tf.title : '') + '</b> (у каждого ТФ — свои; по умолчанию масштабируются по величине бара). Стрелки фильтруются по <b>числу лиц</b> (это убирает мусор «+0/+9»), кружки бид/аск («ФАС») — по <b>контрактам</b>.</p>'
-      + '<table style="border-collapse:collapse;font-size:15px;margin:6px 0">'
-      + '<tr><th></th><th style="padding:4px 8px;color:#26a69a;text-align:left">Открытие (+)</th><th style="padding:4px 8px;color:#ef5350;text-align:left">Закрытие (−)</th></tr>'
-      + row('Физ · стрелки', 'fizArr', '#26a69a', 'лица')
-      + row('Физ · кружки бид/аск', 'fizCirc', '#26a69a', 'контракты')
-      + row('Юр · стрелки', 'yurArr', '#3d8bdb', 'лица')
-      + row('Юр · кружки бид/аск', 'yurCirc', '#e8942e', 'контракты')
-      + '</table>'
-      + '<div style="border-top:1px solid #232b3a;margin:8px 0;padding-top:8px;font-size:15px">'
-      + '<div style="margin-bottom:6px"><b style="color:#ffd24a">Взвешенный подход (юр. бид/аск)</b></div>'
-      + '<label style="display:block;margin:5px 0">Удельный вес позиции (контр./лицо) от: <input id="fmk-weightMin" type="number" value="' + (F.weightMin || 0) + '" style="width:88px"> <span style="color:#8b93a7">0 = выкл (общий фильтр крупных лотов)</span></label>'
-      + '<label style="display:block;margin:5px 0">Доп. кольцо у юр-кружка, если лиц меньше: <input id="fmk-ringMax" type="number" value="' + (F.ringMax != null ? F.ringMax : 3) + '" style="width:88px"> <span style="color:#8b93a7">0 = выкл (концентрация капитала)</span></label>'
-      + '</div>'
-      + '<div style="display:flex;gap:8px;margin-top:6px"><button id="fmk-apply" class="lun-btn">Применить</button>'
-      + '<button id="fmk-reset" class="lun-btn" style="background:#2a3242">Сбросить ТФ ' + (tf ? tf.title : '') + '</button></div>');
+    F.tf = F.tf || {};
+    const TFS = window.LUN.TIMEFRAMES || [];
+    const iid = (tfId, k) => 'fmk-' + tfId + '-' + k;
+    const inp = (tfId, k, v, w) => '<input id="' + iid(tfId, k) + '" type="number" value="' + v + '" style="width:' + (w || 78) + 'px">';
+    const row = (tfId, s, title, base, col, unit) => '<tr><td style="padding:3px 10px 3px 0;color:' + col + ';font-weight:600;white-space:nowrap">' + title + ' <span style="color:#8b93a7;font-weight:400;font-size:12px">' + unit + '</span></td>'
+      + '<td style="padding:3px 6px">' + inp(tfId, base + 'Open', s[base + 'Open']) + '</td><td style="padding:3px 6px">' + inp(tfId, base + 'Close', s[base + 'Close']) + '</td></tr>';
+    const block = (tf) => {
+      const s = futoiTfSettings(tf), tfId = tf.id;
+      return '<div data-tfblock="' + tfId + '" style="border:1px solid #232b3a;border-radius:8px;padding:8px 12px;margin:8px 0;background:#0d121b">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
+        + '<b style="font-size:17px;color:#d7deea">' + tf.title + '</b>'
+        + '<button data-reset="' + tfId + '" class="lun-btn" style="background:#2a3242;padding:2px 10px;font-size:12px">сброс ' + tf.title + '</button></div>'
+        + '<table style="border-collapse:collapse;font-size:14px">'
+        + '<tr><th></th><th style="padding:2px 6px;color:#26a69a;text-align:left;font-weight:600">Откр (+)</th><th style="padding:2px 6px;color:#ef5350;text-align:left;font-weight:600">Закр (−)</th></tr>'
+        + row(tfId, s, 'Физ · стрелки', 'fizArr', '#26a69a', 'лица')
+        + row(tfId, s, 'Физ · кружки', 'fizCirc', '#26a69a', 'контр')
+        + row(tfId, s, 'Юр · стрелки', 'yurArr', '#3d8bdb', 'лица')
+        + row(tfId, s, 'Юр · кружки', 'yurCirc', '#e8942e', 'контр')
+        + '</table>'
+        + '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:6px;font-size:13px;color:#a9b4c6">'
+        + '<label>Удельный вес (контр./лицо): ' + inp(tfId, 'weightMin', s.weightMin || 0, 70) + '</label>'
+        + '<label>Кольцо, если лиц &lt;: ' + inp(tfId, 'ringMax', s.ringMax != null ? s.ringMax : 3, 56) + '</label>'
+        + '</div></div>';
+    };
+    openModal('Пороги маркеров Физ/Юр — по таймфреймам',
+      '<p style="font-size:13px;color:#a9b4c6;margin:0 0 6px">Свои пороги на КАЖДЫЙ ТФ. Стрелки (сделки) фильтруются по <b>числу лиц</b> — это убирает мусор «+0/+9»; кружки бид/аск («ФАС») — по <b>контрактам</b>. Удельный вес = контракты/лица (фильтр крупных лотов). Кольцо — концентрация юр-капитала (мало лиц). Стартовые значения масштабированы по величине бара — правь под себя.</p>'
+      + '<div style="max-height:60vh;overflow:auto;padding-right:4px">' + TFS.map(block).join('') + '</div>'
+      + '<div style="display:flex;gap:8px;margin-top:8px"><button id="fmk-apply" class="lun-btn">Применить все</button></div>');
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
     bg.querySelector('#fmk-apply').onclick = () => {
-      const m = {};
-      FMK_KEYS.forEach((k) => { m[k] = Math.max(0, +bg.querySelector('#fmk-' + k).value || 0); });
-      F.marksByTf[tfId] = m;
-      F.weightMin = Math.max(0, +bg.querySelector('#fmk-weightMin').value || 0);
-      F.ringMax = Math.max(0, +bg.querySelector('#fmk-ringMax').value || 0);
+      TFS.forEach((tf) => {
+        const tfId = tf.id, m = {};
+        FMK_KEYS.forEach((k) => { m[k] = Math.max(0, +bg.querySelector('#' + iid(tfId, k)).value || 0); });
+        m.weightMin = Math.max(0, +bg.querySelector('#' + iid(tfId, 'weightMin')).value || 0);
+        m.ringMax = Math.max(0, +bg.querySelector('#' + iid(tfId, 'ringMax')).value || 0);
+        F.tf[tfId] = m;
+      });
       bg.remove(); if (markAnyOn()) applyFutoiMarks(state); scheduleWsSave();
     };
-    bg.querySelector('#fmk-reset').onclick = () => { FMK_KEYS.forEach((k) => { bg.querySelector('#fmk-' + k).value = def[k]; }); };
+    bg.querySelectorAll('[data-reset]').forEach((btn) => {
+      btn.onclick = () => {
+        const tf = TFS.find((t) => t.id === btn.getAttribute('data-reset')); if (!tf) return;
+        const def = futoiTfDefaults(tf);
+        FMK_KEYS.forEach((k) => { const el = bg.querySelector('#' + iid(tf.id, k)); if (el) el.value = def[k]; });
+        const w = bg.querySelector('#' + iid(tf.id, 'weightMin')); if (w) w.value = def.weightMin || 0;
+        const r = bg.querySelector('#' + iid(tf.id, 'ringMax')); if (r) r.value = def.ringMax != null ? def.ringMax : 3;
+      };
+    });
   }
 
   /* ---------- опционные уровни (макс-ОИ страйки) ---------- */
@@ -2996,7 +3018,7 @@
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
-      futoi: { marksByTf: (window.LUN.FUTOI && window.LUN.FUTOI.marksByTf) || {}, weightMin: (window.LUN.FUTOI && window.LUN.FUTOI.weightMin) || 0, ringMax: (window.LUN.FUTOI && window.LUN.FUTOI.ringMax != null) ? window.LUN.FUTOI.ringMax : 3 },
+      futoi: { tf: (window.LUN.FUTOI && window.LUN.FUTOI.tf) || {} },
       swings: s.swings || null,
       draw: { snap: !!window.LUN.SNAP, behind: !!(window.LUN.DRAW && window.LUN.DRAW.behind), boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
       lineTypes: window.LUN.LINETYPES || null, curLineType: window.LUN.CUR_LINETYPE || null, deltaReset: (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day',
@@ -3058,7 +3080,12 @@
       if (ws.barMode) window.LUN.BAR.mode = ws.barMode;
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.svir && ws.svir.planets) window.LUN.SVIR = ws.svir;
-      if (ws.futoi) { window.LUN.FUTOI = window.LUN.FUTOI || {}; if (ws.futoi.marksByTf) window.LUN.FUTOI.marksByTf = ws.futoi.marksByTf; if (ws.futoi.weightMin != null) window.LUN.FUTOI.weightMin = ws.futoi.weightMin; if (ws.futoi.ringMax != null) window.LUN.FUTOI.ringMax = ws.futoi.ringMax; }
+      if (ws.futoi) {
+        window.LUN.FUTOI = window.LUN.FUTOI || {}; window.LUN.FUTOI.tf = window.LUN.FUTOI.tf || {};
+        if (ws.futoi.tf) Object.assign(window.LUN.FUTOI.tf, ws.futoi.tf);
+        // миграция старого стола (v133): marksByTf + глобальные weightMin/ringMax → tf[id]
+        if (ws.futoi.marksByTf) Object.keys(ws.futoi.marksByTf).forEach((id) => { window.LUN.FUTOI.tf[id] = Object.assign({ weightMin: ws.futoi.weightMin || 0, ringMax: ws.futoi.ringMax != null ? ws.futoi.ringMax : 3 }, ws.futoi.marksByTf[id]); });
+      }
       if (Array.isArray(ws.vwapList) && ws.vwapList.length) {
         // миграция: старые дефолтные цвета -> новая осевая палитра по типу якоря
         const OLD = window.LUN.VWAP_OLD_DEFAULTS || [], AX = window.LUN.VWAP_AXIS_COLOR || {};
