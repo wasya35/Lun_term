@@ -1663,6 +1663,60 @@
     return slot.obImbOn;
   }
   function removeOBImb(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: OBIMB_PANE }); } catch (e) {} } slot.obImbOn = false; }
+  /* ---------- MegaAlerts: аномалии/крупняк с backtest (AlgoPack) ---------- */
+  async function ensureAlerts(slot, force) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return null;
+    const ins = slot.instrument;
+    if ((ins.provider || 'moex') !== 'moex') { alert('Мега-алерты — только инструменты MOEX.'); return null; }
+    if (!window.LunISS || !window.LunISS.fetchAlerts) { alert('Модуль ISS не загрузился (iss-client.js).'); return null; }
+    const list = c.getDataList(); if (!list || !list.length) { alert('Нет баров на графике.'); return null; }
+    const ticker = await window.LunData.resolveTicker(ins);
+    const asset = futoiCode(ins, ticker);
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+    const lastMs = list[list.length - 1].timestamp, firstMs = list[0].timestamp;
+    const fromMs = Math.max(firstMs, lastMs - 10 * 86400000);   // алерты — рыночный фид, окно ≤10 дней
+    const key = ticker + '|' + fmt(fromMs) + '|' + fmt(lastMs);
+    if (!force && slot.alerts && slot.alerts.key === key) return slot.alerts;
+    let rows;
+    try { rows = await window.LunISS.fetchAlerts(ticker, fmt(fromMs), fmt(lastMs + 86400000), algoMkt(ins)); }
+    catch (e) { alert('Мега-алерты не загрузились (' + ticker + '): ' + e.message); return null; }
+    // фильтр к текущему инструменту (фид может прийти рыночным, по всем бумагам)
+    const A = String(asset || '').toUpperCase(), T = String(ticker || '').toUpperCase();
+    rows = rows.filter((r) => { const s = String(r.secid || r.SECID || '').toUpperCase(), ac = String(r.asset_code || r.ASSET_CODE || '').toUpperCase(); return s === T || (A && ac === A); });
+    if (!rows.length) { alert('Мега-алертов по «' + ticker + '» нет за период (или нужна подписка AlgoPack).'); return null; }
+    slot.alerts = { key, ticker, rows: window.LunFutoi.normalizeAlerts(rows) };
+    return slot.alerts;
+  }
+  async function applyAlerts(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return false;
+    const d = await ensureAlerts(slot); if (!d) return false;
+    window.__alertRows = d.rows;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'MegaAlerts' }); } catch (e) {}
+    try { c.createIndicator({ name: 'MegaAlerts', paneId: 'candle_pane', shortName: 'Мега-алерты', extendData: { rows: d.rows } }, true); slot.alertsOn = true; } catch (e) { slot.alertsOn = false; }
+    return slot.alertsOn;
+  }
+  function removeAlerts(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'MegaAlerts' }); } catch (e) {} } slot.alertsOn = false; }
+  // тултип по клику на мега-алерт: тип + backtest-стата из reference (90 дней)
+  document.addEventListener('click', (e) => {
+    const hits = window.LUN_ALERT_HITS;
+    if (!state.alertsOn || !hits || !hits.length) return;
+    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot) return;
+    let rect; try { rect = slot.cellEl.getBoundingClientRect(); } catch (_) { return; }
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    let best = null, bd = Infinity;
+    for (const h of hits) { const dx = px - h.x, dy = py - h.y, dd = dx * dx + dy * dy, rr = h.r + 6; if (dd <= rr * rr && dd < bd) { bd = dd; best = h; } }
+    if (!best) return;
+    const al = best.al, m = best.meta, ref = al.ref || {};
+    const fwd = (k, lbl) => { const a = ref[k]; if (!Array.isArray(a) || a.length < 5) return ''; const up = +a[0], dn = +a[1], un = a[2], dnn = a[3], avg = +a[4]; const ac = avg > 0 ? '#34c98a' : avg < 0 ? '#ef5c6a' : '#c8d0de'; return `<div>${lbl}: <span style="color:#34c98a">▲+${up}% (${un})</span> / <span style="color:#ef5c6a">▼${dn}% (${dnn})</span> · ср <b style="color:${ac}">${avg > 0 ? '+' : ''}${avg}%</b></div>`; };
+    let html = `<div style="color:${m.c};font-weight:700;font-size:16px;margin-bottom:4px">⚡ ${m.t}</div>`
+      + `<div style="color:#a9b4c6">Значение ${al.value} · порог ${al.threshold}</div>`;
+    const stats = fwd('m_5', 'через 5м') + fwd('m_15', '15м') + fwd('m_30', '30м') + fwd('h_1', '60м');
+    if (stats) html += `<div style="margin-top:5px;color:#8fb0c8;font-size:12px">После таких сигналов (90 дней):</div>` + stats;
+    if (ref.vol_b != null || ref.vol_s != null) html += `<div style="margin-top:4px">В сигнале: покупки <b style="color:#34c98a">${Math.round(ref.vol_b || 0)}</b> / продажи <b style="color:#ef5c6a">${Math.round(ref.vol_s || 0)}</b> лотов</div>`;
+    ensureFutoiTip(); futoiTip.innerHTML = html; futoiTip.style.display = 'block';
+    futoiTip.style.left = Math.min(window.innerWidth - futoiTip.offsetWidth - 8, e.clientX + 14) + 'px';
+    futoiTip.style.top = Math.max(8, e.clientY - 10) + 'px';
+  });
   // выбор порогов ΔОИ по бару (5k/10k/50k и свои)
   function troiThresholdModal() {
     const T = window.LUN.OI_EXTREMES || (window.LUN.OI_EXTREMES = {});
@@ -2260,6 +2314,9 @@
     try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiOnPrice' }); } catch (e) {}
     slot.futoiData = null; slot.futoiFlowOn = false; slot.futoiMarkOn = false;
+    const alertsWas = slot.alertsOn;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'MegaAlerts' }); } catch (e) {}
+    slot.alerts = null; slot.alertsOn = false;
     const troiWas = slot.troiOn, bsWas = slot.buysellOn, hi2Was = slot.hi2On, obWas = slot.obImbOn;
     try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {}
@@ -2311,6 +2368,7 @@
       if (bsWas) rebuildBuySell(slot);
       if (hi2Was) rebuildHI2(slot);
       if (obWas) rebuildOBImb(slot);
+      if (alertsWas) applyAlerts(slot);
     };
     if (slot._onLoaded) window.removeEventListener('lun:datasource', slot._onLoaded);   // прошлая загрузка ещё не пришла — её обработчик снимаем
     const onLoaded = (e) => {
@@ -3200,7 +3258,7 @@
         vwap: !!s.vwapOn, expiry: !!s.expiryOn,
         // индикаторы МОЕКС (FUTOI): маркеры физ/юр на свечах, поток физ/юр, ΔОИ, покуп/прод
         futoiMark: Object.assign({}, window.LUN_FUTOI_MARK || {}), futoiFlow: Object.assign({}, window.LUN_FUTOI_SHOW || {}),
-        troi: !!s.troiOn, buysell: !!s.buysellOn, hi2: !!s.hi2On, hi2Metric: window.__hi2Metric || null, obimb: !!s.obImbOn,
+        troi: !!s.troiOn, buysell: !!s.buysellOn, hi2: !!s.hi2On, hi2Metric: window.__hi2Metric || null, obimb: !!s.obImbOn, alerts: !!s.alertsOn,
       },
       drawings: Object.values(s.drawings || {}),
       drawStore: s.drawStore || null,
@@ -3271,7 +3329,7 @@
       if (ws.inds) {
         if (ws.inds.futoiMark) window.LUN_FUTOI_MARK = Object.assign({}, ws.inds.futoiMark);
         if (ws.inds.futoiFlow) window.LUN_FUTOI_SHOW = Object.assign({}, ws.inds.futoiFlow);
-        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell; state.hi2On = !!ws.inds.hi2; state.obImbOn = !!ws.inds.obimb;
+        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell; state.hi2On = !!ws.inds.hi2; state.obImbOn = !!ws.inds.obimb; state.alertsOn = !!ws.inds.alerts;
         if (ws.inds.hi2Metric) window.__hi2Metric = ws.inds.hi2Metric;
       }
       // рисунки ВСЕХ инструментов — из drawStore; активный инструмент восстановит load()
@@ -3767,6 +3825,12 @@
       else { b.classList.remove('active'); removeOBImb(state); }
     }, false, 'Дисбаланс глубины стакана по бару (AlgoPack obstats, 20 уровней): перевес бидов (поддержка) вверх зелёным, асков (сопротивление) вниз красным; L1 — объём на лучшей цене (стена)');
     obBtn.dataset.sync = 'obimb';
+    const alBtn = mkBtn(indWrap, '⚡ Мега-алерты (крупняк) на свечах', (b) => {
+      const on = !b.classList.contains('active');
+      if (on) applyAlerts(state).then((ok) => b.classList.toggle('active', ok !== false));
+      else { b.classList.remove('active'); removeAlerts(state); }
+    }, false, 'Аномалии AlgoPack MegaAlerts: крупные покупки/продажи, экстремумы цены/ОИ/нетто-объёма — маркеры на свечах. Клик по маркеру — тип + статистика «что было после таких сигналов за 90 дней»');
+    alBtn.dataset.sync = 'alerts';
     // окно данных FUTOI (по бару / накопительно)
     mkBtn(indWrap, '📋 Данные FUTOI (по бару / накопительно)', () => { closeMenus(); openFutoiData(state); }, false, 'Таблица позиций физ/юр лонг/шорт по каждому снимку и накопительно, с числом лиц').dataset.role = 'futoidata';
     // поток физ/юр: 8 тумблеров (лонг/шорт × открытие+/закрытие−) → панель «Поток физ/юр»
@@ -4159,6 +4223,7 @@
       case 'buysell': return !!state.buysellOn;
       case 'hi2': return !!state.hi2On;
       case 'obimb': return !!state.obImbOn;
+      case 'alerts': return !!state.alertsOn;
       case 'mark': return !!(window.LUN_FUTOI_MARK && window.LUN_FUTOI_MARK[arg]);
       case 'flow': return !!(window.LUN_FUTOI_SHOW && window.LUN_FUTOI_SHOW[arg]);
     }

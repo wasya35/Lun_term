@@ -498,6 +498,72 @@
     },
   });
 
+  /* --- MegaAlerts: аномалии (крупняк) с 90-дневной backtest-статой -----------
+   * Маркеры на свечах: крупные покупки/продажи, экстремумы цены/ОИ/нетто-объёма.
+   * Бычьи — под свечой, медвежьи — над. Клик по маркеру → тултип с типом и статой
+   * «после таких сигналов цена за 90 дней в среднем росла/падала X% в N случаях». */
+  const ALERT_META = {
+    vol_b_99_9_pctl: { d: 'up', c: '#26a69a', g: 'B', t: 'Крупная покупка' },
+    vol_b_max: { d: 'up', c: '#1e9e86', g: 'B', t: 'Макс покупка (90д)' },
+    vol_s_99_9_pctl: { d: 'dn', c: '#ef5350', g: 'S', t: 'Крупная продажа' },
+    vol_s_max: { d: 'dn', c: '#e0453f', g: 'S', t: 'Макс продажа (90д)' },
+    vol_99_9_pctl: { d: 'up', c: '#e0a030', g: 'V', t: 'Большой объём' },
+    vol_max: { d: 'up', c: '#e0a030', g: 'V', t: 'Макс объём (90д)' },
+    'net_vol_99_9_pctl+': { d: 'up', c: '#26a69a', g: 'N', t: 'Крупная покупка (нетто)' },
+    'net_vol_99_9_pctl-': { d: 'dn', c: '#ef5350', g: 'N', t: 'Крупная продажа (нетто)' },
+    net_vol_max: { d: 'up', c: '#1e9e86', g: 'N', t: 'Макс покупка нетто (90д)' },
+    net_vol_min: { d: 'dn', c: '#e0453f', g: 'N', t: 'Макс продажа нетто (90д)' },
+    'pr_change_99_9_pctl+': { d: 'up', c: '#34c98a', g: '▲', t: 'Сильный рост цены' },
+    'pr_change_99_9_pctl-': { d: 'dn', c: '#ef5c6a', g: '▼', t: 'Сильное падение цены' },
+    pr_change_max: { d: 'up', c: '#34c98a', g: '▲', t: 'Макс рост цены (90д)' },
+    pr_change_min: { d: 'dn', c: '#ef5c6a', g: '▼', t: 'Макс падение цены (90д)' },
+    pr_high_max: { d: 'up', c: '#34c98a', g: 'H', t: 'Новый максимум (90д)' },
+    pr_low_min: { d: 'dn', c: '#ef5c6a', g: 'L', t: 'Новый минимум (90д)' },
+    'oi_close_change_99_9_pctl+': { d: 'up', c: '#3d8bdb', g: 'O', t: 'Крупный приток ОИ' },
+    'oi_close_change_99_9_pctl-': { d: 'dn', c: '#e8942e', g: 'O', t: 'Крупный отток ОИ' },
+    oi_low_min: { d: 'dn', c: '#e8942e', g: 'O', t: 'Мин ОИ (90д)' },
+  };
+  const alertMeta = (type) => ALERT_META[type] || { d: 'up', c: '#e0a030', g: '!', t: type };
+  function parseAlertRef(s) { try { const a = JSON.parse(s); const o = Array.isArray(a) ? a[0] : a; return o || null; } catch (e) { return null; } }
+  function normalizeAlerts(rows) {
+    const out = [];
+    for (const r of rows || []) { const ts = rowTs(r); if (ts == null) continue;
+      out.push({ ts, type: String(r.alert_type || r.ALERT_TYPE || ''), value: +r.value || 0, threshold: +r.threshold || 0, ref: parseAlertRef(r.reference || r.REFERENCE) }); }
+    out.sort((a, b) => a.ts - b.ts); return out;
+  }
+  function alertsByBar(rows, list) {
+    const map = new Map(); if (!rows.length || !list.length) return map;
+    const lo = barIndexer(list);
+    for (const r of rows) { const i = lo(r.ts); if (i < 0) continue; let a = map.get(i); if (!a) { a = []; map.set(i, a); } a.push(r); }
+    return map;
+  }
+  kc.registerIndicator({
+    name: 'MegaAlerts', shortName: 'Мега-алерты (крупняк)', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, yAxis, indicator }) => {
+      const ed = indicator.extendData || {}, rows = ed.rows || window.__alertRows || [];
+      window.LUN_ALERT_HITS = [];
+      if (!rows.length) return true;
+      const list = chart.getDataList(), map = alertsByBar(rows, list), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
+      for (let i = from; i < to; i++) {
+        const arr = map.get(i); if (!arr) continue; const bar = list[i]; if (!bar) continue; const x = xAxis.convertToPixel(i);
+        let offB = 10, offA = 10;
+        for (const al of arr) {
+          const m = alertMeta(al.type), below = m.d === 'up';
+          const baseY = below ? yAxis.convertToPixel(bar.low) : yAxis.convertToPixel(bar.high);
+          const cy = below ? baseY + offB + 9 : baseY - offA - 9;
+          ctx.fillStyle = m.c; ctx.beginPath(); ctx.arc(x, cy, 9, 0, 6.283); ctx.fill();
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(m.g, x, cy + 1);
+          window.LUN_ALERT_HITS.push({ x, y: cy, r: 11, al, meta: m });
+          if (below) offB += 24; else offA += 24;
+        }
+      }
+      return true;
+    },
+  });
+
   /* --- Физ/Юр НА СВЕЧАХ ------------------------------------------------------
    * Стрелки = счета (число лиц): лонг+/− (открытие/закрытие лонга), шорт+/−.
    * Кружки = бид/аск по контрактам: бид (лонг-сторона) зелёный, аск (шорт) красный,
@@ -648,5 +714,5 @@
     }
     return Object.assign({ date, time }, b);
   }
-  window.LunFutoi = { normalize, normalizeTradeStats, normalizeHI2, hi2Metrics, normalizeOBStats, openWindow, SERIES, MARK_DEFS, barAgg };
+  window.LunFutoi = { normalize, normalizeTradeStats, normalizeHI2, hi2Metrics, normalizeOBStats, normalizeAlerts, alertMeta, openWindow, SERIES, MARK_DEFS, barAgg };
 })();
