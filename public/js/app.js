@@ -1586,6 +1586,52 @@
     return slot.buysellOn;
   }
   function removeBuySell(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {} } slot.buysellOn = false; }
+  /* ---------- HI2: концентрация участников (крупняк, AlgoPack) ----------
+   * hhi_* по бару: высокая концентрация = торговлю двигают немногие крупные игроки. */
+  const HI2_PANE = 'pane_hi2';
+  const algoMkt = (ins) => ins.engine === 'stock' ? 'eq' : (ins.engine === 'currency' ? 'fx' : 'fo');
+  async function ensureHI2(slot, force) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return null;
+    const ins = slot.instrument;
+    if ((ins.provider || 'moex') !== 'moex') { alert('HI2 — только инструменты MOEX.'); return null; }
+    if (!window.LunISS || !window.LunISS.fetchHI2) { alert('Модуль ISS не загрузился (iss-client.js).'); return null; }
+    const list = c.getDataList(); if (!list || !list.length) { alert('Нет баров на графике.'); return null; }
+    const ticker = await window.LunData.resolveTicker(ins);
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+    const lastMs = list[list.length - 1].timestamp, firstMs = list[0].timestamp;
+    const fromMs = Math.max(firstMs, lastMs - 30 * 86400000);
+    const key = ticker + '|' + fmt(fromMs) + '|' + fmt(lastMs);
+    if (!force && slot.hi2 && slot.hi2.key === key && slot.hi2.metric === window.__hi2Metric) return slot.hi2;
+    let rows;
+    try { rows = await window.LunISS.fetchHI2(ticker, fmt(fromMs), fmt(lastMs + 86400000), algoMkt(ins)); }
+    catch (e) { alert('HI2 не загрузился (' + ticker + '): ' + e.message); return null; }
+    if (!rows.length) { alert('HI2 по «' + ticker + '» пуст (нужна подписка AlgoPack на этот датасет).'); return null; }
+    const metrics = window.LunFutoi.hi2Metrics(rows);
+    let metric = window.__hi2Metric;
+    if (!metric || metrics.indexOf(metric) < 0) metric = metrics.find((m) => /agr|aggr/i.test(m)) || metrics.find((m) => /volume/i.test(m)) || metrics[0];
+    window.__hi2Metric = metric;
+    slot.hi2 = { key, ticker, rows: window.LunFutoi.normalizeHI2(rows, metric), metrics, metric, raw: rows };
+    return slot.hi2;
+  }
+  async function rebuildHI2(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return false;
+    const d = await ensureHI2(slot); if (!d) return false;
+    window.__hi2Rows = d.rows; window.__hi2Metric = d.metric;
+    try { c.removeIndicator({ paneId: HI2_PANE }); } catch (e) {}
+    try { c.createIndicator({ name: 'HI2Pane', paneId: HI2_PANE, shortName: 'Концентрация HI2', extendData: { rows: d.rows, metric: d.metric } }, false); slot.hi2On = true; wishPane(HI2_PANE, { height: 84, order: 95 }); }
+    catch (e) { slot.hi2On = false; }
+    return slot.hi2On;
+  }
+  function removeHI2(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: HI2_PANE }); } catch (e) {} } slot.hi2On = false; }
+  // переключение метрики HI2 (из доступных в загруженных данных)
+  function hi2MetricModal() {
+    const d = state.hi2;
+    if (!d || !d.metrics || !d.metrics.length) { alert('Сначала включите «Концентрация HI2» — нужно загрузить данные.'); return; }
+    const opts = d.metrics.map((m) => '<button data-m="' + m + '" class="lun-btn" style="display:block;width:100%;text-align:left;margin:3px 0;background:' + (m === d.metric ? '#1b3a2a' : '#0d121b') + '">' + m + (m === d.metric ? ' · активна' : '') + '</button>').join('');
+    openModal('Метрика концентрации HI2', '<p style="font-size:13px;color:#a9b4c6">hhi_agressive — агрессивные (тейкеры), hhi_netflow_buy/sell — концентрация направленного потока, hhi_volume — по объёму. Выше = меньше игроков двигают рынок.</p>' + opts);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelectorAll('[data-m]').forEach((b) => { b.onclick = () => { window.__hi2Metric = b.getAttribute('data-m'); bg.remove(); rebuildHI2(state); scheduleWsSave(); }; });
+  }
   // выбор порогов ΔОИ по бару (5k/10k/50k и свои)
   function troiThresholdModal() {
     const T = window.LUN.OI_EXTREMES || (window.LUN.OI_EXTREMES = {});
@@ -2183,10 +2229,11 @@
     try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiOnPrice' }); } catch (e) {}
     slot.futoiData = null; slot.futoiFlowOn = false; slot.futoiMarkOn = false;
-    const troiWas = slot.troiOn, bsWas = slot.buysellOn;
+    const troiWas = slot.troiOn, bsWas = slot.buysellOn, hi2Was = slot.hi2On;
     try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {}
-    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false;
+    try { c.removeIndicator({ paneId: HI2_PANE }); } catch (e) {}
+    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false; slot.hi2 = null; slot.hi2On = false;
     // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
     if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
     // экспирации опционов — даты абсолютные: при смене инструмента пересобираем под
@@ -2230,6 +2277,7 @@
       if (futoiAnyOn() || markAnyOn()) ensureFutoiData(slot).then((d) => { if (!d) return; if (futoiAnyOn()) applyFutoiFlow(slot); if (markAnyOn()) applyFutoiMarks(slot); });
       if (troiWas) rebuildTradeOI(slot);
       if (bsWas) rebuildBuySell(slot);
+      if (hi2Was) rebuildHI2(slot);
     };
     if (slot._onLoaded) window.removeEventListener('lun:datasource', slot._onLoaded);   // прошлая загрузка ещё не пришла — её обработчик снимаем
     const onLoaded = (e) => {
@@ -3119,7 +3167,7 @@
         vwap: !!s.vwapOn, expiry: !!s.expiryOn,
         // индикаторы МОЕКС (FUTOI): маркеры физ/юр на свечах, поток физ/юр, ΔОИ, покуп/прод
         futoiMark: Object.assign({}, window.LUN_FUTOI_MARK || {}), futoiFlow: Object.assign({}, window.LUN_FUTOI_SHOW || {}),
-        troi: !!s.troiOn, buysell: !!s.buysellOn,
+        troi: !!s.troiOn, buysell: !!s.buysellOn, hi2: !!s.hi2On, hi2Metric: window.__hi2Metric || null,
       },
       drawings: Object.values(s.drawings || {}),
       drawStore: s.drawStore || null,
@@ -3190,7 +3238,8 @@
       if (ws.inds) {
         if (ws.inds.futoiMark) window.LUN_FUTOI_MARK = Object.assign({}, ws.inds.futoiMark);
         if (ws.inds.futoiFlow) window.LUN_FUTOI_SHOW = Object.assign({}, ws.inds.futoiFlow);
-        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell;
+        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell; state.hi2On = !!ws.inds.hi2;
+        if (ws.inds.hi2Metric) window.__hi2Metric = ws.inds.hi2Metric;
       }
       // рисунки ВСЕХ инструментов — из drawStore; активный инструмент восстановит load()
       if (ws.drawStore && typeof ws.drawStore === 'object') state.drawStore = ws.drawStore;
@@ -3672,6 +3721,13 @@
       else { b.classList.remove('active'); removeBuySell(state); }
     }, false, 'Агрессивные покупки/продажи по каждому бару (AlgoPack tradestats vol_b/vol_s): покупатели вверх, продавцы вниз');
     bsBtn.dataset.sync = 'buysell';
+    const hi2Btn = mkBtn(indWrap, 'Концентрация HI2 (крупняк)', (b) => {
+      const on = !b.classList.contains('active');
+      if (on) rebuildHI2(state).then((ok) => b.classList.toggle('active', ok !== false));
+      else { b.classList.remove('active'); removeHI2(state); }
+    }, false, 'Индекс концентрации участников (Херфиндаль, AlgoPack HI2): высокие столбики — рынок двигают немногие крупные игроки. Метрика — соседняя кнопка');
+    hi2Btn.dataset.sync = 'hi2';
+    mkBtn(indWrap, '⚙ Метрика HI2…', () => { closeMenus(); hi2MetricModal(); }, false, 'Выбор метрики концентрации: агрессивные/пассивные, покупки/продажи, нетто-поток, объём');
     // окно данных FUTOI (по бару / накопительно)
     mkBtn(indWrap, '📋 Данные FUTOI (по бару / накопительно)', () => { closeMenus(); openFutoiData(state); }, false, 'Таблица позиций физ/юр лонг/шорт по каждому снимку и накопительно, с числом лиц').dataset.role = 'futoidata';
     // поток физ/юр: 8 тумблеров (лонг/шорт × открытие+/закрытие−) → панель «Поток физ/юр»
@@ -4062,6 +4118,7 @@
       case 'basis': return !!state.basisPane;
       case 'troi': return !!state.troiOn;
       case 'buysell': return !!state.buysellOn;
+      case 'hi2': return !!state.hi2On;
       case 'mark': return !!(window.LUN_FUTOI_MARK && window.LUN_FUTOI_MARK[arg]);
       case 'flow': return !!(window.LUN_FUTOI_SHOW && window.LUN_FUTOI_SHOW[arg]);
     }
@@ -4136,6 +4193,7 @@
           slot.legendBar = bar; slot.legendIdx = idx; slot.legendTs = ts;
           // ОИ панель: показать величину/ΔОИ бара под курсором (overrideIndicator триггерит перерисовку)
           if (slot.troiOn && slot._troiHoverIdx !== idx) { slot._troiHoverIdx = idx; try { slot.chart.overrideIndicator({ name: 'TradeOI', paneId: TROI_PANE, extendData: { hoverIdx: idx } }); } catch (e) {} }
+          if (slot.hi2On && slot._hi2HoverIdx !== idx) { slot._hi2HoverIdx = idx; try { slot.chart.overrideIndicator({ name: 'HI2Pane', paneId: HI2_PANE, extendData: { hoverIdx: idx } }); } catch (e) {} }
           if (slot.legendOpen) renderLegend(slot);
           if (slot === state && dataWinOpen) updateDataWin({ dataIndex: idx, kLineData: bar });
           // плавающую подсказку аспектов у курсора убрали — аспекты подписаны прямо

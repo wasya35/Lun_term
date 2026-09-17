@@ -396,6 +396,23 @@
     return out;
   }
 
+  // Общий загрузчик AlgoPack-датасета по бару (hi2/obstats/alerts) — как tradestats.
+  async function fetchAlgopackDS(ds, secid, from, till, mkt) {
+    mkt = mkt || 'fo';
+    const params = 'ds=' + ds + '&mkt=' + mkt + '&secid=' + encodeURIComponent(secid)
+      + (from ? '&from=' + from : '') + (till ? '&till=' + till : '');
+    const pages = await fetchAlgopackPages(params, 'data', 40);
+    const out = [];
+    for (const j of pages) { const t = j.data || j[ds] || null; if (t && t.columns && t.data) for (const o of rowsToObjects(t)) out.push(o); }
+    return out;
+  }
+  // HI2 — индекс концентрации участников (по бару, длинный формат metric/value).
+  const fetchHI2 = (secid, from, till, mkt) => fetchAlgopackDS('hi2', secid, from, till, mkt);
+  // OBStats — статистика стакана по бару (объёмы по уровням, дисбаланс, спреды).
+  const fetchOBStats = (secid, from, till, mkt) => fetchAlgopackDS('obstats', secid, from, till, mkt);
+  // MegaAlerts — торговые аномалии (крупняк) с 90-дневной статистикой в reference.
+  const fetchAlerts = (secid, from, till, mkt) => fetchAlgopackDS('alerts', secid, from, till, mkt);
+
   // Дневная история открытого интереса по конкретному контракту (OPENPOSITION).
   async function fetchOIHistory(secid, from, till) {
     const url = `https://iss.moex.com/iss/history/engines/futures/markets/forts/securities/${encodeURIComponent(secid)}.json`
@@ -450,5 +467,5 @@
     return out;
   }
 
-  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchTradeStats, fetchOIHistory, fetchOptions, parseOptSecid, classifyExpiry };
+  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchTradeStats, fetchHI2, fetchOBStats, fetchAlerts, fetchOIHistory, fetchOptions, parseOptSecid, classifyExpiry };
 })();

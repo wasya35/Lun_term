@@ -367,6 +367,59 @@
     },
   });
 
+  /* --- HI2: концентрация участников (крупняк) --------------------------------
+   * Длинный формат metric/value: у одного ts много метрик (hhi_agressive,
+   * hhi_netflow_buy, …). Выбираем одну метрику, берём МАКС в баре (пик концентрации).
+   * HHI 0..10000; выше — торговлю двигают немногие крупные участники. */
+  function hi2Metrics(rows) {
+    const set = new Set(); for (const r of rows || []) { const m = r.metric || r.METRIC; if (m) set.add(String(m)); }
+    return [...set];
+  }
+  function normalizeHI2(rows, metric) {
+    const out = [];
+    for (const r of rows || []) {
+      if (metric && String(r.metric || r.METRIC || '') !== metric) continue;
+      const ts = rowTs(r); if (ts == null) continue;
+      out.push({ ts, value: +(r.value != null ? r.value : r.VALUE) || 0 });
+    }
+    out.sort((a, b) => a.ts - b.ts);
+    return out;
+  }
+  function hi2ByBar(rows, list) {
+    const map = new Map(); if (!rows.length || !list.length) return map;
+    const lo = barIndexer(list);
+    for (const r of rows) { const i = lo(r.ts); if (i < 0) continue; const cur = map.get(i); if (cur == null || r.value > cur) map.set(i, r.value); }
+    return map;
+  }
+  kc.registerIndicator({
+    name: 'HI2Pane', shortName: 'Концентрация HI2', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {};
+      const rows = ed.rows || window.__hi2Rows || [];
+      const metric = ed.metric || window.__hi2Metric || 'hhi_agressive';
+      const H = bounding.height, W = bounding.width, list = chart.getDataList();
+      ctx.textBaseline = 'top';
+      if (!rows.length) { ctx.font = '16px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#8b93a7'; ctx.fillText('HI2: нет данных (нужна подписка AlgoPack)', 6, 4); return true; }
+      const map = hi2ByBar(rows, list), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
+      let mx = 1; for (let i = from; i < to; i++) { const v = map.get(i); if (v != null && v > mx) mx = v; }
+      let bw = 6; try { bw = chart.getBarSpace().bar; } catch (e) {} bw = Math.max(1, bw * 0.72);
+      const base = H - 2;
+      for (let i = from; i < to; i++) {
+        const v = map.get(i); if (v == null) continue; const x = xAxis.convertToPixel(i);
+        const t = Math.min(1, v / mx), h = Math.max(1, t * (H * 0.82));
+        ctx.fillStyle = 'rgba(' + Math.round(80 + 175 * t) + ',' + Math.round(160 - 120 * t) + ',' + Math.round(120 - 60 * t) + ',0.9)';
+        ctx.fillRect(x - bw / 2, base - h, bw, h);
+      }
+      let hi = (ed.hoverIdx != null && ed.hoverIdx >= 0 && ed.hoverIdx < list.length) ? ed.hoverIdx : (list.length - 1);
+      let v = map.get(hi); for (let i = hi; i >= 0 && v == null; i--) v = map.get(i);
+      ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#c8d0de'; ctx.fillText(metric + '   HI2 ' + (v != null ? Math.round(v) : '—'), W - 8, 5);
+      return true;
+    },
+  });
+
   /* --- Физ/Юр НА СВЕЧАХ ------------------------------------------------------
    * Стрелки = счета (число лиц): лонг+/− (открытие/закрытие лонга), шорт+/−.
    * Кружки = бид/аск по контрактам: бид (лонг-сторона) зелёный, аск (шорт) красный,
@@ -517,5 +570,5 @@
     }
     return Object.assign({ date, time }, b);
   }
-  window.LunFutoi = { normalize, normalizeTradeStats, openWindow, SERIES, MARK_DEFS, barAgg };
+  window.LunFutoi = { normalize, normalizeTradeStats, normalizeHI2, hi2Metrics, openWindow, SERIES, MARK_DEFS, barAgg };
 })();

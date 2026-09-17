@@ -477,6 +477,11 @@ if (!defined('LUN_NO_DISPATCH')) {
       // окно в 2 дня приходит целиком? (rows < 1000 и обе даты в first/last)
       'window_2d_y1_today'    => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$y1&till=$today"),
       'nocurl_flag'           => is_file(apim_nocurl_file()) ? gmdate('c', filemtime(apim_nocurl_file())) : 'нет (curl ещё пробуется)',
+      // проверка доступа ключа к другим датасетам AlgoPack (SuperCandles/HI2/MegaAlerts)
+      'tradestats_fo' => $probe("/iss/datashop/algopack/fo/tradestats/SiU6.json?from=$y1&till=$today"),
+      'obstats_fo'    => $probe("/iss/datashop/algopack/fo/obstats/SiU6.json?from=$y1&till=$today"),
+      'hi2_fo'        => $probe("/iss/datashop/algopack/fo/hi2/SiU6.json?from=$y1&till=$today"),
+      'alerts_fo'     => $probe("/iss/datashop/algopack/fo/alerts.json?from=$y1&till=$today"),
     ]];
     echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT); exit;
   }
