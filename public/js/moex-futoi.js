@@ -396,6 +396,14 @@
     { key: 'yurAsk+', kind: 'circle', mc: 'dYurS', mn: 'dYurSn', sign: 1,  side: 'above', col: YO, tag: 'Ю', who: 'Юрики', sd: 'аск' },
     { key: 'yurAsk-', kind: 'circle', mc: 'dYurS', mn: 'dYurSn', sign: -1, side: 'above', col: YO, dim: true, tag: 'Ю', who: 'Юрики', sd: 'аск' },
   ];
+  // «ПЕРЕВЕС» бид/аск — нетто (лонг − шорт) ОДНИМ кружком на доминирующей стороне бара:
+  // перевес лонга/бида → кружок снизу (бид-цвет), перевес шорта/аска → сверху (аск-цвет).
+  // Убирает «парность» (и бид, и аск), сразу видно, кто в баре сильнее. Порог — по
+  // соответствующему кружковому порогу (fizCircOpen/yurCircOpen), в контрактах.
+  const NET_DEFS = [
+    { key: 'fizNet', mcL: 'dFizL', mcS: 'dFizS', mnL: 'dFizLn', mnS: 'dFizSn', who: 'Физики', tag: 'Ф', colBid: '#26a69a', colAsk: '#ef5350', thKey: 'fizCircOpen' },
+    { key: 'yurNet', mcL: 'dYurL', mcS: 'dYurS', mnL: 'dYurLn', mnS: 'dYurSn', who: 'Юрики', tag: 'Ю', colBid: '#3d8bdb', colAsk: '#e8942e', thKey: 'yurCircOpen' },
+  ];
   function markTriangle(ctx, x, y, s, up) { ctx.beginPath(); if (up) { ctx.moveTo(x, y); ctx.lineTo(x - s, y + s * 1.6); ctx.lineTo(x + s, y + s * 1.6); } else { ctx.moveTo(x, y); ctx.lineTo(x - s, y - s * 1.6); ctx.lineTo(x + s, y - s * 1.6); } ctx.closePath(); ctx.fill(); }
   const numLbl = (n) => (n > 0 ? '+' : '−') + Math.abs(Math.round(n)).toLocaleString('ru-RU');
   kc.registerIndicator({
@@ -415,7 +423,9 @@
       };
       window.LUN_FUTOI_HITS = [];   // сбрасываем зоны клика (для тултипа по клику)
       if (!snaps.length) return true;
-      const active = MARK_DEFS.filter((d) => show[d.key]); if (!active.length) return true;
+      const active = MARK_DEFS.filter((d) => show[d.key]);
+      const activeNet = NET_DEFS.filter((d) => show[d.key]);
+      if (!active.length && !activeNet.length) return true;
       const list = chart.getDataList(), buckets = bucketByBar(snaps, list);
       const range = chart.getVisibleRange();
       const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
@@ -461,6 +471,30 @@
             offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;
           }
           ctx.globalAlpha = 1;
+        }
+        // ПЕРЕВЕС (нетто бид−аск) — один кружок на доминирующей стороне
+        for (const nd of activeNet) {
+          const netVol = (a[nd.mcL] || 0) - (a[nd.mcS] || 0);
+          const netSchet = (a[nd.mnL] || 0) - (a[nd.mnS] || 0);
+          const th = marks[nd.thKey] != null ? marks[nd.thKey] : 4000;
+          if (Math.abs(netVol) < th) continue;
+          const weight = Math.abs(netVol) / Math.max(1, Math.abs(netSchet));
+          if (weightMin > 0 && weight < weightMin) continue;
+          const below = netVol >= 0;                 // перевес лонга/бида — снизу, шорта/аска — сверху
+          const col = below ? nd.colBid : nd.colAsk;
+          const baseY = below ? yAxis.convertToPixel(bar.low) : yAxis.convertToPixel(bar.high);
+          const cy = below ? baseY + offBelow + R : baseY - offAbove - R;
+          ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, cy, R, 0, 6.283); ctx.fill();
+          if (nd.who === 'Юрики' && ringMax > 0 && Math.abs(netSchet) < ringMax) {
+            ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, cy, R + 4, 0, 6.283); ctx.stroke();
+          }
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillText(nd.tag, x, cy + 1);
+          const ly = below ? cy + R + 2 : cy - R - 2;
+          ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
+          ctx.fillStyle = col; ctx.fillText(numLbl(netVol), x, ly);
+          window.LUN_FUTOI_HITS.push({ x, y: cy, r: R + 4, who: nd.who, sd: 'перевес ' + (below ? 'бид' : 'аск'), schet: netSchet, vol: netVol, weight });
+          offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;
         }
       }
       return true;

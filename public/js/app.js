@@ -3580,6 +3580,11 @@
       ['yurBid+', 'Ю бид+'], ['yurBid-', 'Ю бид−'], ['yurAsk+', 'Ю аск+'], ['yurAsk-', 'Ю аск−'],
     ];
     baDefs.forEach(([key, label]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiMark(key, bb); }, false, 'Бид (лонг-сторона) / аск (шорт) физ/юр — кружок с буквой на свече. Физ — зел/красн, Юр — синий/оранж. Фильтр по контрактам.'); b.dataset.sync = 'mark:' + key; });
+    // ── НА СВЕЧАХ: перевес бид/аск (нетто) — ОДИН кружок на доминирующей стороне ──
+    const netHdr = document.createElement('div'); netHdr.className = 'menu-note';
+    netHdr.style.cssText = 'color:#8fb0c8;font-weight:600'; netHdr.textContent = '· на свечах: перевес бид/аск (нетто) ·';
+    indWrap.appendChild(netHdr);
+    [['fizNet', 'Ф перевес (нетто бид−аск)'], ['yurNet', 'Ю перевес (нетто бид−аск)']].forEach(([key, label]) => { const b = mkBtn(indWrap, label, (bb) => { closeMenus(); toggleFutoiMark(key, bb); }, false, 'Перевес сторон в баре: нетто (лонг−шорт) одним кружком. Перевес бида — снизу, аска — сверху. Убирает парность бид+аск, сразу видно кто сильнее. Порог — как у кружков бид/аск.'); b.dataset.sync = 'mark:' + key; });
     mkBtn(indWrap, '⚙ Пороги маркеров Физ/Юр…', () => { closeMenus(); futoiMarkThresholdModal(); }, false, 'Свои пороги на каждый ТФ: стрелки по числу лиц, кружки бид/аск по контрактам. Плюс удельный вес и доп. кольцо для концентрированных сделок юриков');
     // стрелки массового открытия физлиц на свечах + порог
     mkBtn(indWrap, '▲▼ Стрелки физлиц на свечах (M15/H1)', (b) => { closeMenus(); if (b.classList.contains('active')) removeFutoiArrows(state); else buildFutoiArrows(state); }, false, 'Массовое открытие физлиц в свече: вверх зелёная под свечой, вниз красная над (порог настраивается)').dataset.sync = 'futoiarr';
