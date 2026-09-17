@@ -1978,6 +1978,73 @@
     startShiftMeasure(e);
   }, true);
 
+  /* ---------- Множественный выбор рисунков РАМКОЙ (Alt+протяжка или режим) ----------
+   * Когда несколько углов Ганна лежат в одном месте — тычком не выбрать нужные. Здесь
+   * зажми ЛКМ и протяни рамку через рисунки: соберём ВСЕ, чьи точки/линии попали в
+   * рамку, и предложим удалить разом. Модификатор Alt — быстрый доступ; либо включи
+   * режим «Выбор рамкой» в меню Рисование (тогда без Alt, обычной протяжкой). */
+  let lassoMode = false, lassoDrag = null, lassoBox = null, lassoBar = null;
+  function setLasso(on) { lassoMode = on; const b = document.querySelector('[data-role="lasso"]'); if (b) b.classList.toggle('active', on); if (on) setMeasure(false); }
+  function ensureLassoBox() {
+    if (lassoBox) return;
+    lassoBox = document.createElement('div');
+    lassoBox.style.cssText = 'position:fixed;border:1.5px dashed #3aa0ff;background:rgba(58,160,255,0.12);z-index:250;pointer-events:none;display:none';
+    document.body.appendChild(lassoBox);
+  }
+  function tsToIndex(list, ts) {
+    let a = 0, b = list.length - 1, r = -1;
+    while (a <= b) { const m = (a + b) >> 1; if (list[m].timestamp <= ts) { r = m; a = m + 1; } else b = m - 1; }
+    if (r < 0) return 0;
+    if (r + 1 < list.length && Math.abs(list[r + 1].timestamp - ts) < Math.abs(list[r].timestamp - ts)) return r + 1;
+    return r;
+  }
+  function startLasso(e) {
+    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot) return;
+    ensureLassoBox(); lassoBox.style.display = 'block';
+    lassoDrag = { slot, x0: e.clientX, y0: e.clientY };
+    e.preventDefault(); e.stopPropagation();
+    const move = (ev) => { const x = Math.min(lassoDrag.x0, ev.clientX), y = Math.min(lassoDrag.y0, ev.clientY); lassoBox.style.left = x + 'px'; lassoBox.style.top = y + 'px'; lassoBox.style.width = Math.abs(ev.clientX - lassoDrag.x0) + 'px'; lassoBox.style.height = Math.abs(ev.clientY - lassoDrag.y0) + 'px'; };
+    const up = (ev) => {
+      window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
+      lassoBox.style.display = 'none'; const drag = lassoDrag; lassoDrag = null; if (!drag) return;
+      if (Math.abs(ev.clientX - drag.x0) + Math.abs(ev.clientY - drag.y0) < 6) return;   // просто клик — не рамка
+      finishLasso(drag, ev);
+    };
+    window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+  }
+  document.addEventListener('mousedown', (e) => {
+    if (measureMode || e.button !== 0) return;
+    if (!(lassoMode || e.altKey)) return;
+    if (!measureSlotAt(e.clientX, e.clientY)) return;
+    startLasso(e);
+  }, true);
+  function finishLasso(drag, ev) {
+    const slot = drag.slot, r = slot.cellEl.getBoundingClientRect();
+    const rect = { x0: Math.min(drag.x0, ev.clientX) - r.left, y0: Math.min(drag.y0, ev.clientY) - r.top, x1: Math.max(drag.x0, ev.clientX) - r.left, y1: Math.max(drag.y0, ev.clientY) - r.top };
+    const c = slot.chart, list = c.getDataList() || [];
+    const inRect = (p) => p && p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1;
+    const ids = [];
+    Object.keys(slot.drawings || {}).forEach((id) => {
+      const d = slot.drawings[id]; if (!d || !d.points || !d.points.length) return;
+      const pts = d.points.map((p) => { let di = p.dataIndex; if (di == null && p.timestamp != null && list.length) di = tsToIndex(list, p.timestamp); if (di == null) return null; try { return c.convertToPixel({ dataIndex: di, value: p.value }, { paneId: 'candle_pane' }); } catch (e) { return null; } }).filter(Boolean);
+      if (!pts.length) return;
+      let hit = pts.some(inRect);
+      if (!hit) for (let i = 1; i < pts.length && !hit; i++) { const a = pts[i - 1], b = pts[i]; for (let t = 0; t <= 24; t++) { if (inRect({ x: a.x + (b.x - a.x) * t / 24, y: a.y + (b.y - a.y) * t / 24 })) { hit = true; break; } } }
+      if (hit) ids.push(id);
+    });
+    showLassoBar(slot, ids, ev);
+  }
+  function showLassoBar(slot, ids, ev) {
+    if (!lassoBar) { lassoBar = document.createElement('div'); lassoBar.style.cssText = 'position:fixed;z-index:260;background:#121722;border:1px solid #2a3a4f;border-radius:8px;padding:8px 12px;font-size:14px;color:#d7deea;box-shadow:0 8px 24px rgba(0,0,0,.55);display:none;gap:8px;align-items:center'; document.body.appendChild(lassoBar); }
+    if (!ids.length) { lassoBar.style.display = 'none'; return; }
+    lassoBar.innerHTML = '<span>Выбрано рисунков: <b style="color:#3aa0ff">' + ids.length + '</b></span> <button id="lb-del" class="lun-btn" style="background:#5a2530;padding:3px 10px">Удалить все</button> <button id="lb-cancel" class="lun-btn" style="background:#2a3242;padding:3px 10px">Отмена</button>';
+    lassoBar.style.display = 'flex';
+    lassoBar.style.left = Math.min(window.innerWidth - 280, Math.max(8, ev.clientX - 40)) + 'px';
+    lassoBar.style.top = Math.max(8, ev.clientY - 48) + 'px';
+    lassoBar.querySelector('#lb-del').onclick = () => { ids.forEach((id) => { try { slot.chart.removeOverlay({ id }); } catch (e) {} if (slot.drawings) delete slot.drawings[id]; }); lassoBar.style.display = 'none'; if (state.selectedOverlayId && ids.indexOf(state.selectedOverlayId) >= 0) { state.selectedOverlayId = null; state.selectedOverlay = null; if (stylePanelEl) stylePanelEl.style.display = 'none'; } try { mirrorToSiblings(slot); } catch (e) {} scheduleWsSave(); };
+    lassoBar.querySelector('#lb-cancel').onclick = () => { lassoBar.style.display = 'none'; };
+  }
+
   /* ---------- Data Window (значения под курсором) ---------- */
   let dataWinEl = null, dataWinOpen = false;
   function ensureDataWin() {
@@ -3812,6 +3879,7 @@
       regHotkey(t.key, () => startDraw(t.id));
     });
     mkBtn(drawWrap, '📏 Линейка (Δ%, бары)', (b) => { closeMenus(); setMeasure(!measureMode); }, false, 'Измерение: зажми ЛКМ и протяни. Быстро — без кнопки: Shift + ЛКМ-протяжка (отпустил — исчезло). Показывает Δцены, %, число баров и время. Повторный клик — выключить').dataset.role = 'measure';
+    mkBtn(drawWrap, '⬚ Выбор рисунков рамкой', (b) => { closeMenus(); setLasso(!lassoMode); }, false, 'Когда несколько углов Ганна в одном месте — зажми ЛКМ и протяни рамку через рисунки: выберутся ВСЕ, кого задела рамка, и можно удалить разом. Быстро без режима — Alt + ЛКМ-протяжка. Повторный клик — выключить').dataset.role = 'lasso';
     mkBtn(drawWrap, '🎚 Типы линий (добавить/править)…', () => { closeMenus(); lineTypesModal(); }, false, 'Пресеты стиля линий: поддержка/сопротивление, трендовая, брейкер/ордер-блок, имбаланс, дивергенции + свои');
     mkBtn(drawWrap, '⚙ Настройки рисования (притяжка, Gann Box прогноз)…', () => { closeMenus(); drawSettingsModal(); }, false, 'Притяжка к вершинам баров, прогнозные Gann Box по диагонали');
     mkBtn(drawWrap, '✕ очистить всё', () => { closeMenus(); state.chart.removeOverlay(); }).className = 'danger';
