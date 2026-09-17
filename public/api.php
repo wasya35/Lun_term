@@ -465,6 +465,20 @@ if (!defined('LUN_NO_DISPATCH')) {
       $res['lastDate'] = $lastDate; $res['lastDate_FIZ_times'] = array_slice($times, 0, 40); $res['lastDate_FIZ_count'] = count($times);
       return $res;
     };
+    // универсальный пробник AlgoPack-датасета (таблица data): считает строки и показывает пример
+    $probeDS = function ($path) use ($KEY) {
+      $r = moex_authed_get('https://apim.moex.com' . $path, $KEY);
+      $res = ['code' => $r['code'], 'via' => $r['via']];
+      $j = json_decode($r['body'], true);
+      $tbl = (is_array($j) && isset($j['data']['columns'], $j['data']['data'])) ? $j['data'] : null;
+      if (!$tbl) { $res['rows'] = 0; $res['note'] = 'нет таблицы data'; $res['raw'] = mb_substr(preg_replace('/\s+/', ' ', (string)$r['body']), 0, 200); return $res; }
+      $rows = $tbl['data']; $res['rows'] = count($rows); $res['columns'] = $tbl['columns'];
+      $res['sample'] = array_slice($rows, 0, 3);
+      $ci = array_flip($tbl['columns']);
+      if (isset($ci['metric'])) { $m = []; foreach ($rows as $row) { $v = $row[$ci['metric']] ?? null; if ($v) $m[$v] = true; } $res['metrics'] = array_keys($m); }
+      if (isset($ci['alert_type'])) { $a = []; foreach ($rows as $row) { $v = $row[$ci['alert_type']] ?? null; if ($v) $a[$v] = true; } $res['alert_types'] = array_slice(array_keys($a), 0, 40); }
+      return $res;
+    };
     $today = gmdate('Y-m-d'); $y1 = gmdate('Y-m-d', time() - 86400); $y3 = gmdate('Y-m-d', time() - 3 * 86400);
     $out = ['server_time' => gmdate('c'), 'today' => $today, 'probes' => [
       'date_today'      => $probe("/iss/analyticalproducts/futoi/securities/Si.json?date=$today"),
@@ -478,10 +492,10 @@ if (!defined('LUN_NO_DISPATCH')) {
       'window_2d_y1_today'    => $probe("/iss/analyticalproducts/futoi/securities/Si.json?from=$y1&till=$today"),
       'nocurl_flag'           => is_file(apim_nocurl_file()) ? gmdate('c', filemtime(apim_nocurl_file())) : 'нет (curl ещё пробуется)',
       // проверка доступа ключа к другим датасетам AlgoPack (SuperCandles/HI2/MegaAlerts)
-      'tradestats_fo' => $probe("/iss/datashop/algopack/fo/tradestats/SiU6.json?from=$y1&till=$today"),
-      'obstats_fo'    => $probe("/iss/datashop/algopack/fo/obstats/SiU6.json?from=$y1&till=$today"),
-      'hi2_fo'        => $probe("/iss/datashop/algopack/fo/hi2/SiU6.json?from=$y1&till=$today"),
-      'alerts_fo'     => $probe("/iss/datashop/algopack/fo/alerts.json?from=$y1&till=$today"),
+      'tradestats_fo' => $probeDS("/iss/datashop/algopack/fo/tradestats/SiU6.json?from=$y1&till=$today"),
+      'obstats_fo'    => $probeDS("/iss/datashop/algopack/fo/obstats/SiU6.json?from=$y1&till=$today"),
+      'hi2_fo'        => $probeDS("/iss/datashop/algopack/fo/hi2/SiU6.json?from=$y1&till=$today"),
+      'alerts_fo'     => $probeDS("/iss/datashop/algopack/fo/alerts.json?from=$y1&till=$today"),
     ]];
     echo json_encode($out, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT); exit;
   }
