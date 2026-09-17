@@ -1479,7 +1479,7 @@
       yurArrOpen: Math.max(2, Math.round(FMK_BASE.yurArrOpen * fa)), yurArrClose: Math.max(2, Math.round(FMK_BASE.yurArrClose * fa)),
       fizCircOpen: Math.round(FMK_BASE.fizCircOpen * f), fizCircClose: Math.round(FMK_BASE.fizCircClose * f),
       yurCircOpen: Math.round(FMK_BASE.yurCircOpen * f), yurCircClose: Math.round(FMK_BASE.yurCircClose * f),
-      weightMin: 0, ringMax: 3,
+      weightMin: 0, ringMax: 3, netMult: 4,
     };
   }
   // Полные настройки под конкретный ТФ: дефолты ТФ + ручные правки LUN.FUTOI.tf[tfId].
@@ -1498,7 +1498,7 @@
     try {
       const st = futoiTfSettings(slot.tf);
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
-        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3 } }, true);
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3, netMult: st.netMult != null ? st.netMult : 4 } }, true);
       slot.futoiMarkOn = true;
     } catch (e) { slot.futoiMarkOn = false; }
   }
@@ -1535,7 +1535,8 @@
     const html = `<div style="color:#7fd0c0;margin-bottom:5px;font-weight:600;font-size:16px">${best.who} · ${best.sd}</div>`
       + `<div>Счета: <b style="color:${col(best.schet)}">${kf(best.schet)}</b> лиц</div>`
       + `<div>Объём: <b style="color:${col(best.vol)}">${kf(best.vol)}</b> контрактов</div>`
-      + `<div>Удельный вес: <b style="color:#ffd24a">${Math.round(wt).toLocaleString('ru-RU')}</b> контр./лицо</div>`;
+      + `<div>Удельный вес: <b style="color:#ffd24a">${Math.round(wt).toLocaleString('ru-RU')}</b> контр./лицо</div>`
+      + (best.big ? `<div style="color:#ffd24a;font-weight:600;margin-top:3px">◎ крупный перевес (кратно превышает порог)</div>` : '');
     ensureFutoiTip(); futoiTip.innerHTML = html; futoiTip.style.display = 'block';
     futoiTip.style.left = Math.min(window.innerWidth - futoiTip.offsetWidth - 8, e.clientX + 14) + 'px';
     futoiTip.style.top = Math.max(8, e.clientY - 10) + 'px';
@@ -1630,6 +1631,7 @@
         + '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:6px;font-size:13px;color:#a9b4c6">'
         + '<label>Удельный вес (контр./лицо): ' + inp(tfId, 'weightMin', s.weightMin || 0, 70) + '</label>'
         + '<label>Кольцо, если лиц &lt;: ' + inp(tfId, 'ringMax', s.ringMax != null ? s.ringMax : 3, 56) + '</label>'
+        + '<label title="Золотой кружок у перевеса Ф/Ю, если нетто ≥ N × порога кружка">Золото перевеса, если ≥ ×: ' + inp(tfId, 'netMult', s.netMult != null ? s.netMult : 4, 56) + '</label>'
         + '</div></div>';
     };
     openModal('Пороги маркеров Физ/Юр — по таймфреймам',
@@ -1643,6 +1645,7 @@
         FMK_KEYS.forEach((k) => { m[k] = Math.max(0, +bg.querySelector('#' + iid(tfId, k)).value || 0); });
         m.weightMin = Math.max(0, +bg.querySelector('#' + iid(tfId, 'weightMin')).value || 0);
         m.ringMax = Math.max(0, +bg.querySelector('#' + iid(tfId, 'ringMax')).value || 0);
+        m.netMult = Math.max(0, +bg.querySelector('#' + iid(tfId, 'netMult')).value || 0);
         F.tf[tfId] = m;
       });
       bg.remove(); if (markAnyOn()) applyFutoiMarks(state); scheduleWsSave();
@@ -1654,6 +1657,7 @@
         FMK_KEYS.forEach((k) => { const el = bg.querySelector('#' + iid(tf.id, k)); if (el) el.value = def[k]; });
         const w = bg.querySelector('#' + iid(tf.id, 'weightMin')); if (w) w.value = def.weightMin || 0;
         const r = bg.querySelector('#' + iid(tf.id, 'ringMax')); if (r) r.value = def.ringMax != null ? def.ringMax : 3;
+        const nm = bg.querySelector('#' + iid(tf.id, 'netMult')); if (nm) nm.value = def.netMult != null ? def.netMult : 4;
       };
     });
   }

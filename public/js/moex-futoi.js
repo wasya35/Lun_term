@@ -417,6 +417,7 @@
       const marks = ed.marks || {};
       const weightMin = ed.weightMin || 0;   // удельный вес: |контракты| / |лица| (0 = выкл)
       const ringMax = ed.ringMax || 0;       // доп. кольцо у юр-кружка, если лиц < ringMax (0 = выкл)
+      const netMult = ed.netMult || 0;       // золотое кольцо перевеса, если нетто ≥ netMult × порога (0 = выкл)
       const th4 = (d) => {
         const gk = (d.who === 'Физики' ? 'fiz' : 'yur') + (d.kind === 'arrow' ? 'Arr' : 'Circ') + (d.sign > 0 ? 'Open' : 'Close');
         const v = marks[gk]; return v != null ? v : (d.kind === 'arrow' ? 5 : 4000);
@@ -485,15 +486,20 @@
           const baseY = below ? yAxis.convertToPixel(bar.low) : yAxis.convertToPixel(bar.high);
           const cy = below ? baseY + offBelow + R : baseY - offAbove - R;
           ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, cy, R, 0, 6.283); ctx.fill();
+          // концентрация (мало лиц) — тонкое кольцо; крупный перевес (≥ netMult × порога) — жирное золотое
           if (nd.who === 'Юрики' && ringMax > 0 && Math.abs(netSchet) < ringMax) {
-            ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, cy, R + 4, 0, 6.283); ctx.stroke();
+            ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, cy, R + 4, 0, 6.283); ctx.stroke();
+          }
+          const bigNet = netMult > 0 && Math.abs(netVol) >= netMult * th;
+          if (bigNet) {
+            ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.arc(x, cy, R + 7, 0, 6.283); ctx.stroke();
           }
           ctx.fillStyle = '#fff'; ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText(nd.tag, x, cy + 1);
           const ly = below ? cy + R + 2 : cy - R - 2;
           ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
           ctx.fillStyle = col; ctx.fillText(numLbl(netVol), x, ly);
-          window.LUN_FUTOI_HITS.push({ x, y: cy, r: R + 4, who: nd.who, sd: 'перевес ' + (below ? 'бид' : 'аск'), schet: netSchet, vol: netVol, weight });
+          window.LUN_FUTOI_HITS.push({ x, y: cy, r: bigNet ? R + 7 : R + 4, who: nd.who, sd: 'перевес ' + (below ? 'бид' : 'аск'), schet: netSchet, vol: netVol, weight, big: bigNet });
           offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;
         }
       }
