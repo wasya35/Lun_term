@@ -3302,6 +3302,54 @@
   function addFav(ins) { const id = favId(ins); if (findFav(id)) return; const c = Object.assign({}, ins); if (!c.provider) c.provider = 'moex'; window.LUN_FAVS.push(c); saveFavs(); buildInstruments(); }
   function removeFav(id) { window.LUN_FAVS = (window.LUN_FAVS || []).filter((x) => favId(x) !== id); saveFavs(); buildInstruments(); }
   function favApi() { return { isFav: (x) => !!findFav(favId(x)), toggle: (x) => { const id = favId(x); if (findFav(id)) removeFav(id); else addFav(x); } }; }
+  /* ---------- выбор контракта MOEX-фьючерса (текущий/следующий/дальний) ----------
+   * Основная кнопка инструмента (Si) = склейка/фронт. Здесь — прямой выбор КОНКРЕТНОГО
+   * контракта (SiU6, SiZ6…): грузим его как отдельный «синтетический» инструмент
+   * (_pinnedContract), со своей разметкой. Данные — в пределах, что есть у контракта. */
+  const CMONTH = { F: '01', G: '02', H: '03', J: '04', K: '05', M: '06', N: '07', Q: '08', U: '09', V: '10', X: '11', Z: '12' };
+  function contractLabel(secid) {
+    const s = String(secid || ''); const mo = CMONTH[s.slice(-2, -1)]; if (!mo) return secid;
+    const asset = s.slice(0, -2), yd = +s.slice(-1), yr = new Date().getUTCFullYear();
+    let full = Math.floor(yr / 10) * 10 + yd; if (full < yr - 5) full += 10;
+    return asset + '-' + mo + '.' + String(full).slice(-2);
+  }
+  // Базовый (не-пинованный) инструмент-актив: из избранного по assetCode либо чистим пин.
+  function baseAssetOf(ins) {
+    if (!ins || !ins._pinnedContract) return ins;
+    const fav = (window.LUN_FAVS || []).find((f) => f.assetCode === ins.assetCode && !f._pinnedContract);
+    if (fav) return fav;
+    const b = Object.assign({}, ins); delete b._pinnedContract; b.id = ins.assetCode || ins.id; b.title = String(ins.title || '').split(' · ')[0]; return b;
+  }
+  function pinnedContractInstrument(base, secid) {
+    return Object.assign({}, base, { id: (base.assetCode || base.id) + '@' + secid, ticker: secid, _pinnedContract: secid, title: (String(base.title || base.id).split(' · ')[0]) + ' · ' + contractLabel(secid) });
+  }
+  async function contractPickerModal() {
+    const cur = state.instrument, base = baseAssetOf(cur);
+    if ((base.provider || 'moex') !== 'moex' || !base.assetCode) { alert('Выбор контракта — только для фьючерсов MOEX (Si, RTS, BR, GOLD…).'); return; }
+    openModal('Контракт · ' + String(base.title || base.id).split(' · ')[0], '<p id="cp-body" style="color:#8b93a7;font-size:14px">Загрузка списка контрактов…</p>');
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    let list = [];
+    try { list = await window.LunData.listContracts(base); } catch (e) {}
+    const body = bg.querySelector('#cp-body'); if (!body) return;
+    if (!list.length) { body.innerHTML = '<span style="color:#e0a030">Не удалось получить список контрактов (нет связи с MOEX или инструмент без фьючерсных контрактов).</span>'; return; }
+    const curSecid = cur._pinnedContract || null;
+    const rowsHtml = ['<div style="font-size:14px;color:#a9b4c6;margin-bottom:6px">Основная кнопка «' + (String(base.title || base.id).split(' · ')[0]) + '» — это склейка/фронт (участвует в основном показе). Ниже — конкретные контракты в пределах их данных:</div>'];
+    rowsHtml.push('<button data-secid="__front__" class="lun-btn" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:15px;background:' + (!curSecid ? '#1b3a2a' : '#0d121b') + '">↩ Склейка / фронт (основной' + (!curSecid ? ', активен' : '') + ')</button>');
+    list.forEach((c, i) => {
+      const role = i === 0 ? 'текущий' : (i === 1 ? 'следующий' : 'дальний +' + i);
+      const active = curSecid === c.ticker;
+      rowsHtml.push('<button data-secid="' + c.ticker + '" class="lun-btn" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:15px;background:' + (active ? '#1b3a2a' : '#0d121b') + '"><b>' + contractLabel(c.ticker) + '</b> · ' + c.ticker + ' · <span style="color:#8fb0c8">' + role + '</span> · эксп. ' + c.lastDelDate + (active ? ' · <span style="color:#34c98a">активен</span>' : '') + '</button>');
+    });
+    body.innerHTML = rowsHtml.join('');
+    bg.querySelectorAll('[data-secid]').forEach((btn) => {
+      btn.onclick = () => {
+        const sec = btn.getAttribute('data-secid');
+        state.instrument = sec === '__front__' ? base : pinnedContractInstrument(base, sec);
+        load(); bg.remove(); closeMenus();
+        try { const t = document.querySelector('[data-sync^="ins:"]'); if (t) syncToolbar(); } catch (e) {}
+      };
+    });
+  }
   function buildInstruments() {
     const insWrap = document.getElementById('instruments'); if (!insWrap) return;
     const MARKET = { moex: 'MOEX', bybit: 'Крипта', binance: 'Крипта', yahoo: 'США' };
@@ -3317,6 +3365,7 @@
       b.querySelector('.fav-star').onclick = (e) => { e.stopPropagation(); removeFav(favId(ins)); };
       insWrap.appendChild(b);
     });
+    mkBtn(insWrap, '📆 Контракт фьючерса (текущий / следующий)…', () => { closeMenus(); contractPickerModal(); }, false, 'Выбрать конкретный контракт MOEX-фьючерса (SiU6, SiZ6…) в пределах его данных. Основная кнопка инструмента остаётся склейкой/фронтом.');
     const findBtn = mkBtn(insWrap, '🔍 Поиск / добавить в избранное…', () => { closeMenus(); window.LunInstruments.open((instr) => { state.instrument = instr; load(); }, favApi()); }, false, 'Поиск инструмента; звёздочка ★ добавит в избранное');
     findBtn.classList.add('find-btn');
     mkBtn(insWrap, '➕ 2-й график (линией)', () => { closeMenus(); window.LunInstruments.open((instr) => addCompare(instr)); }, false, 'Наложить второй инструмент линией на активный график');

@@ -52,6 +52,9 @@
       if (prov && prov.resolveSymbol) { try { return await prov.resolveSymbol(instrument); } catch (e) { /* фолбэк ниже */ } }
       return instrument.symbol || instrument.ticker;
     }
+    // конкретный контракт (пользователь выбрал текущий/следующий) — отдаём как есть,
+    // склейку/фронт не резолвим. Основная кнопка инструмента остаётся без пина.
+    if (instrument._pinnedContract) return instrument._pinnedContract;
     if (!instrument.assetCode) return instrument.ticker;
     if (frontCache.has(instrument.assetCode)) return frontCache.get(instrument.assetCode);
     const today = new Date().toISOString().slice(0, 10);
@@ -228,5 +231,15 @@
     return window.LunISS.fetchCandlesFrom(eng, mkt, ticker, tf.iss, from, till, 3);
   }
 
-  window.LunData = { makeDataLoader, resolveTicker, fetchFor, fetchTail };
+  // Список доступных контрактов MOEX-фьючерса (для выбора текущий/следующий).
+  // Возвращает [{ticker, lastDelDate}] по возрастанию экспирации: [0] — фронт.
+  async function listContracts(instrument) {
+    if ((instrument.provider || 'moex') !== 'moex' || !instrument.assetCode) return [];
+    const today = new Date().toISOString().slice(0, 10);
+    try { const l = await window.LunISS.fetchFront(instrument.assetCode, today); if (l && l.length) return l; } catch (e) {}
+    try { const j = await apiFetch('front', 'asset=' + encodeURIComponent(instrument.assetCode) + '&all=1'); if (j && Array.isArray(j.list)) return j.list; } catch (e) {}
+    return [];
+  }
+
+  window.LunData = { makeDataLoader, resolveTicker, fetchFor, fetchTail, listContracts };
 })();
