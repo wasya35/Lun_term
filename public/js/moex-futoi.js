@@ -385,11 +385,19 @@
     out.sort((a, b) => a.ts - b.ts);
     return out;
   }
-  function hi2ByBar(rows, list) {
-    const map = new Map(); if (!rows.length || !list.length) return map;
-    const lo = barIndexer(list);
-    for (const r of rows) { const i = lo(r.ts); if (i < 0) continue; const cur = map.get(i); if (cur == null || r.value > cur) map.set(i, r.value); }
-    return map;
+  // HI2 приходит РАЗ в день (конец основной сессии ~18:50) — не по барам. Поэтому на
+  // каждый бар берём ПОСЛЕДНЕЕ известное значение (шаг «carry-forward»): дневной режим
+  // концентрации держится весь следующий торговый интервал. rows отсортированы по ts.
+  function hi2StepValues(rows, list, from, to) {
+    const out = new Array(list.length).fill(null);
+    if (!rows.length || !list.length) return out;
+    let j = 0, cur = null;
+    for (let i = 0; i < list.length; i++) {
+      const bt = list[i].timestamp;
+      while (j < rows.length && rows[j].ts <= bt) { cur = rows[j].value; j++; }
+      out[i] = cur;
+    }
+    return out;
   }
   kc.registerIndicator({
     name: 'HI2Pane', shortName: 'Концентрация HI2', series: 'normal', figures: [],
@@ -401,21 +409,91 @@
       const H = bounding.height, W = bounding.width, list = chart.getDataList();
       ctx.textBaseline = 'top';
       if (!rows.length) { ctx.font = '16px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#8b93a7'; ctx.fillText('HI2: нет данных (нужна подписка AlgoPack)', 6, 4); return true; }
-      const map = hi2ByBar(rows, list), range = chart.getVisibleRange();
+      const range = chart.getVisibleRange();
       const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
-      let mx = 1; for (let i = from; i < to; i++) { const v = map.get(i); if (v != null && v > mx) mx = v; }
-      let bw = 6; try { bw = chart.getBarSpace().bar; } catch (e) {} bw = Math.max(1, bw * 0.72);
-      const base = H - 2;
+      const vals = hi2StepValues(rows, list, from, to);
+      // нормировка: HHI 0..10000, но реально ~1000..4000 → берём max(видимый, 3000) как шкалу
+      let mx = 3000; for (let i = from; i < to; i++) { const v = vals[i]; if (v != null && v > mx) mx = v; }
+      const base = H - 2, top = H * 0.12;
+      // ступенчатая заливка + линия
+      const yOf = (v) => base - Math.min(1, v / mx) * (base - top);
+      ctx.beginPath(); let started = false, lastX = 0, lastY = base;
       for (let i = from; i < to; i++) {
-        const v = map.get(i); if (v == null) continue; const x = xAxis.convertToPixel(i);
-        const t = Math.min(1, v / mx), h = Math.max(1, t * (H * 0.82));
-        ctx.fillStyle = 'rgba(' + Math.round(80 + 175 * t) + ',' + Math.round(160 - 120 * t) + ',' + Math.round(120 - 60 * t) + ',0.9)';
-        ctx.fillRect(x - bw / 2, base - h, bw, h);
+        const v = vals[i]; if (v == null) continue; const x = xAxis.convertToPixel(i), y = yOf(v);
+        if (!started) { ctx.moveTo(x, base); ctx.lineTo(x, y); started = true; } else { ctx.lineTo(x, lastY); ctx.lineTo(x, y); }
+        lastX = x; lastY = y;
       }
-      let hi = (ed.hoverIdx != null && ed.hoverIdx >= 0 && ed.hoverIdx < list.length) ? ed.hoverIdx : (list.length - 1);
-      let v = map.get(hi); for (let i = hi; i >= 0 && v == null; i--) v = map.get(i);
+      if (started) { ctx.lineTo(lastX, base); ctx.closePath(); const t = Math.min(1, lastY ? (base - lastY) / (base - top) : 0);
+        ctx.fillStyle = 'rgba(120,150,200,0.16)'; ctx.fill(); }
+      // линия поверх, цвет по уровню концентрации
+      ctx.beginPath(); started = false;
+      for (let i = from; i < to; i++) {
+        const v = vals[i]; if (v == null) continue; const x = xAxis.convertToPixel(i), y = yOf(v);
+        if (!started) { ctx.moveTo(x, y); started = true; } else { ctx.lineTo(x, lastY); ctx.lineTo(x, y); }
+        lastY = y;
+      }
+      ctx.strokeStyle = '#e0a030'; ctx.lineWidth = 1.6; if (started) ctx.stroke();
+      let hi = (ed.hoverIdx != null && ed.hoverIdx >= 0 && ed.hoverIdx < list.length) ? ed.hoverIdx : (to - 1);
+      const hv = vals[hi];
       ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-      ctx.fillStyle = '#c8d0de'; ctx.fillText(metric + '   HI2 ' + (v != null ? Math.round(v) : '—'), W - 8, 5);
+      ctx.fillStyle = '#c8d0de'; ctx.fillText(metric + '   HI2 ' + (hv != null ? Math.round(hv) : '—') + ' (день)', W - 8, 5);
+      return true;
+    },
+  });
+
+  /* --- OBStats: стакан по бару (дисбаланс глубины + стены) -------------------
+   * Фьючерсный obstats: vol_b_l1..l20 / vol_s_l1..l20 (объём заявок по уровням),
+   * spread_l1, mid_price. Дисбаланс = (бид−аск)/(бид+аск) по 20 уровням: перевес
+   * бидов (поддержка) вверх зелёным, асков (сопротивление) вниз красным. L1 = стена
+   * на лучшей цене. tradetime — конец интервала, сдвигаем на бар назад (как tradestats). */
+  function normalizeOBStats(rows) {
+    const out = [];
+    for (const r of rows || []) {
+      const tEnd = rowTs(r); if (tEnd == null) continue;
+      const g = (k) => { const v = r[k] != null ? r[k] : r[k.toUpperCase()]; return +v || 0; };
+      out.push({ ts: tEnd - TS_INTERVAL_MS,
+        bid: g('vol_b_l20') || g('vol_b_l10'), ask: g('vol_s_l20') || g('vol_s_l10'),
+        bidL1: g('vol_b_l1'), askL1: g('vol_s_l1'), spread: g('spread_l1'), mid: g('mid_price') });
+    }
+    out.sort((a, b) => a.ts - b.ts);
+    return out;
+  }
+  function obByBar(rows, list) {
+    const map = new Map(); if (!rows.length || !list.length) return map;
+    const lo = barIndexer(list);
+    for (const r of rows) { const i = lo(r.ts); if (i < 0) continue; map.set(i, r); }   // последний снимок в баре
+    return map;
+  }
+  kc.registerIndicator({
+    name: 'OBImbalance', shortName: 'Дисбаланс стакана', series: 'normal', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {};
+      const rows = ed.rows || window.__obRows || [];
+      const H = bounding.height, W = bounding.width, mid = Math.round(H / 2), list = chart.getDataList();
+      ctx.strokeStyle = '#2a3242'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(W, mid); ctx.stroke();
+      ctx.textBaseline = 'top';
+      if (!rows.length) { ctx.font = '16px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#8b93a7'; ctx.fillText('Стакан: нет данных (AlgoPack obstats)', 6, 4); return true; }
+      const map = obByBar(rows, list), range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
+      let bw = 6; try { bw = chart.getBarSpace().bar; } catch (e) {} bw = Math.max(1, bw * 0.72);
+      for (let i = from; i < to; i++) {
+        const a = map.get(i); if (!a) continue; const tot = a.bid + a.ask; if (tot <= 0) continue;
+        const imb = (a.bid - a.ask) / tot;   // −1..+1
+        const x = xAxis.convertToPixel(i), h = Math.abs(imb) * (mid - 2);
+        if (imb >= 0) { ctx.fillStyle = 'rgba(38,166,154,0.85)'; ctx.fillRect(x - bw / 2, mid - h, bw, h); }
+        else { ctx.fillStyle = 'rgba(239,83,80,0.85)'; ctx.fillRect(x - bw / 2, mid, bw, h); }
+      }
+      let hi = (ed.hoverIdx != null && ed.hoverIdx >= 0 && ed.hoverIdx < list.length) ? ed.hoverIdx : (to - 1);
+      let a = map.get(hi); for (let i = hi; i >= 0 && !a; i--) a = map.get(i);
+      ctx.textAlign = 'right'; ctx.font = 'bold 16px system-ui, sans-serif';
+      if (a) { const tot = a.bid + a.ask, imb = tot > 0 ? (a.bid - a.ask) / tot : 0;
+        ctx.fillStyle = imb >= 0 ? '#34c98a' : '#ef5c6a';
+        ctx.fillText('Стакан ' + (imb >= 0 ? '+' : '−') + Math.abs(imb * 100).toFixed(0) + '% ' + (imb >= 0 ? 'бид' : 'аск') + '  ·  L1 ' + kfmt(a.bidL1) + '/' + kfmt(a.askL1), W - 8, 5);
+      }
+      ctx.textAlign = 'left'; ctx.font = '14px system-ui, sans-serif';
+      ctx.fillStyle = '#26a69a'; ctx.fillText('бид (поддержка) ▲', 6, 4);
+      ctx.fillStyle = '#ef5350'; ctx.fillText('аск (сопротивление) ▼', 6, H - 20);
       return true;
     },
   });
@@ -570,5 +648,5 @@
     }
     return Object.assign({ date, time }, b);
   }
-  window.LunFutoi = { normalize, normalizeTradeStats, normalizeHI2, hi2Metrics, openWindow, SERIES, MARK_DEFS, barAgg };
+  window.LunFutoi = { normalize, normalizeTradeStats, normalizeHI2, hi2Metrics, normalizeOBStats, openWindow, SERIES, MARK_DEFS, barAgg };
 })();

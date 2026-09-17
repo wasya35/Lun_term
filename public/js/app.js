@@ -1632,6 +1632,37 @@
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
     bg.querySelectorAll('[data-m]').forEach((b) => { b.onclick = () => { window.__hi2Metric = b.getAttribute('data-m'); bg.remove(); rebuildHI2(state); scheduleWsSave(); }; });
   }
+  /* ---------- OBStats: дисбаланс стакана (стены, AlgoPack) ---------- */
+  const OBIMB_PANE = 'pane_obimb';
+  async function ensureOBStats(slot, force) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return null;
+    const ins = slot.instrument;
+    if ((ins.provider || 'moex') !== 'moex') { alert('Стакан (OBStats) — только инструменты MOEX.'); return null; }
+    if (!window.LunISS || !window.LunISS.fetchOBStats) { alert('Модуль ISS не загрузился (iss-client.js).'); return null; }
+    const list = c.getDataList(); if (!list || !list.length) { alert('Нет баров на графике.'); return null; }
+    const ticker = await window.LunData.resolveTicker(ins);
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+    const lastMs = list[list.length - 1].timestamp, firstMs = list[0].timestamp;
+    const fromMs = Math.max(firstMs, lastMs - 30 * 86400000);
+    const key = ticker + '|' + fmt(fromMs) + '|' + fmt(lastMs);
+    if (!force && slot.obstats && slot.obstats.key === key) return slot.obstats;
+    let rows;
+    try { rows = await window.LunISS.fetchOBStats(ticker, fmt(fromMs), fmt(lastMs + 86400000), algoMkt(ins)); }
+    catch (e) { alert('Стакан не загрузился (' + ticker + '): ' + e.message); return null; }
+    if (!rows.length) { alert('OBStats по «' + ticker + '» пуст (нужна подписка AlgoPack).'); return null; }
+    slot.obstats = { key, ticker, rows: window.LunFutoi.normalizeOBStats(rows) };
+    return slot.obstats;
+  }
+  async function rebuildOBImb(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return false;
+    const d = await ensureOBStats(slot); if (!d) return false;
+    window.__obRows = d.rows;
+    try { c.removeIndicator({ paneId: OBIMB_PANE }); } catch (e) {}
+    try { c.createIndicator({ name: 'OBImbalance', paneId: OBIMB_PANE, shortName: 'Дисбаланс стакана', extendData: { rows: d.rows } }, false); slot.obImbOn = true; wishPane(OBIMB_PANE, { height: 90, order: 96 }); }
+    catch (e) { slot.obImbOn = false; }
+    return slot.obImbOn;
+  }
+  function removeOBImb(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: OBIMB_PANE }); } catch (e) {} } slot.obImbOn = false; }
   // выбор порогов ΔОИ по бару (5k/10k/50k и свои)
   function troiThresholdModal() {
     const T = window.LUN.OI_EXTREMES || (window.LUN.OI_EXTREMES = {});
@@ -2229,11 +2260,12 @@
     try { c.removeIndicator({ paneId: FUTOI_FLOW_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: 'candle_pane', name: 'FutoiOnPrice' }); } catch (e) {}
     slot.futoiData = null; slot.futoiFlowOn = false; slot.futoiMarkOn = false;
-    const troiWas = slot.troiOn, bsWas = slot.buysellOn, hi2Was = slot.hi2On;
+    const troiWas = slot.troiOn, bsWas = slot.buysellOn, hi2Was = slot.hi2On, obWas = slot.obImbOn;
     try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: HI2_PANE }); } catch (e) {}
-    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false; slot.hi2 = null; slot.hi2On = false;
+    try { c.removeIndicator({ paneId: OBIMB_PANE }); } catch (e) {}
+    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false; slot.hi2 = null; slot.hi2On = false; slot.obstats = null; slot.obImbOn = false;
     // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
     if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
     // экспирации опционов — даты абсолютные: при смене инструмента пересобираем под
@@ -2278,6 +2310,7 @@
       if (troiWas) rebuildTradeOI(slot);
       if (bsWas) rebuildBuySell(slot);
       if (hi2Was) rebuildHI2(slot);
+      if (obWas) rebuildOBImb(slot);
     };
     if (slot._onLoaded) window.removeEventListener('lun:datasource', slot._onLoaded);   // прошлая загрузка ещё не пришла — её обработчик снимаем
     const onLoaded = (e) => {
@@ -3167,7 +3200,7 @@
         vwap: !!s.vwapOn, expiry: !!s.expiryOn,
         // индикаторы МОЕКС (FUTOI): маркеры физ/юр на свечах, поток физ/юр, ΔОИ, покуп/прод
         futoiMark: Object.assign({}, window.LUN_FUTOI_MARK || {}), futoiFlow: Object.assign({}, window.LUN_FUTOI_SHOW || {}),
-        troi: !!s.troiOn, buysell: !!s.buysellOn, hi2: !!s.hi2On, hi2Metric: window.__hi2Metric || null,
+        troi: !!s.troiOn, buysell: !!s.buysellOn, hi2: !!s.hi2On, hi2Metric: window.__hi2Metric || null, obimb: !!s.obImbOn,
       },
       drawings: Object.values(s.drawings || {}),
       drawStore: s.drawStore || null,
@@ -3238,7 +3271,7 @@
       if (ws.inds) {
         if (ws.inds.futoiMark) window.LUN_FUTOI_MARK = Object.assign({}, ws.inds.futoiMark);
         if (ws.inds.futoiFlow) window.LUN_FUTOI_SHOW = Object.assign({}, ws.inds.futoiFlow);
-        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell; state.hi2On = !!ws.inds.hi2;
+        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell; state.hi2On = !!ws.inds.hi2; state.obImbOn = !!ws.inds.obimb;
         if (ws.inds.hi2Metric) window.__hi2Metric = ws.inds.hi2Metric;
       }
       // рисунки ВСЕХ инструментов — из drawStore; активный инструмент восстановит load()
@@ -3728,6 +3761,12 @@
     }, false, 'Индекс концентрации участников (Херфиндаль, AlgoPack HI2): высокие столбики — рынок двигают немногие крупные игроки. Метрика — соседняя кнопка');
     hi2Btn.dataset.sync = 'hi2';
     mkBtn(indWrap, '⚙ Метрика HI2…', () => { closeMenus(); hi2MetricModal(); }, false, 'Выбор метрики концентрации: агрессивные/пассивные, покупки/продажи, нетто-поток, объём');
+    const obBtn = mkBtn(indWrap, 'Дисбаланс стакана (стены)', (b) => {
+      const on = !b.classList.contains('active');
+      if (on) rebuildOBImb(state).then((ok) => b.classList.toggle('active', ok !== false));
+      else { b.classList.remove('active'); removeOBImb(state); }
+    }, false, 'Дисбаланс глубины стакана по бару (AlgoPack obstats, 20 уровней): перевес бидов (поддержка) вверх зелёным, асков (сопротивление) вниз красным; L1 — объём на лучшей цене (стена)');
+    obBtn.dataset.sync = 'obimb';
     // окно данных FUTOI (по бару / накопительно)
     mkBtn(indWrap, '📋 Данные FUTOI (по бару / накопительно)', () => { closeMenus(); openFutoiData(state); }, false, 'Таблица позиций физ/юр лонг/шорт по каждому снимку и накопительно, с числом лиц').dataset.role = 'futoidata';
     // поток физ/юр: 8 тумблеров (лонг/шорт × открытие+/закрытие−) → панель «Поток физ/юр»
@@ -4119,6 +4158,7 @@
       case 'troi': return !!state.troiOn;
       case 'buysell': return !!state.buysellOn;
       case 'hi2': return !!state.hi2On;
+      case 'obimb': return !!state.obImbOn;
       case 'mark': return !!(window.LUN_FUTOI_MARK && window.LUN_FUTOI_MARK[arg]);
       case 'flow': return !!(window.LUN_FUTOI_SHOW && window.LUN_FUTOI_SHOW[arg]);
     }
@@ -4194,6 +4234,7 @@
           // ОИ панель: показать величину/ΔОИ бара под курсором (overrideIndicator триггерит перерисовку)
           if (slot.troiOn && slot._troiHoverIdx !== idx) { slot._troiHoverIdx = idx; try { slot.chart.overrideIndicator({ name: 'TradeOI', paneId: TROI_PANE, extendData: { hoverIdx: idx } }); } catch (e) {} }
           if (slot.hi2On && slot._hi2HoverIdx !== idx) { slot._hi2HoverIdx = idx; try { slot.chart.overrideIndicator({ name: 'HI2Pane', paneId: HI2_PANE, extendData: { hoverIdx: idx } }); } catch (e) {} }
+          if (slot.obImbOn && slot._obHoverIdx !== idx) { slot._obHoverIdx = idx; try { slot.chart.overrideIndicator({ name: 'OBImbalance', paneId: OBIMB_PANE, extendData: { hoverIdx: idx } }); } catch (e) {} }
           if (slot.legendOpen) renderLegend(slot);
           if (slot === state && dataWinOpen) updateDataWin({ dataIndex: idx, kLineData: bar });
           // плавающую подсказку аспектов у курсора убрали — аспекты подписаны прямо
