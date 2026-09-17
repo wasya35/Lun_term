@@ -2992,6 +2992,23 @@
       if (wsLoaded && window.LunAuth && window.LunAuth.user) authApi('ws_save', { ws }).catch(() => {});
     }, 1500);
   }
+  // НЕМЕДЛЕННЫЙ сброс рабочего стола — при закрытии/сворачивании страницы. Без него
+  // debounce (1.5 с) не успевал сохранить, если пользователь рисовал и сразу закрывал
+  // терминал → «не все углы Ганна / индикаторы сохранялись». localStorage синхронный;
+  // на сервер — sendBeacon (переживает выгрузку страницы).
+  function flushWsSave(toServer) {
+    if (!wsApplyDone) return;
+    clearTimeout(wsTimer);
+    let ws; try { ws = captureWorkspace(); } catch (e) { return; }
+    try { localStorage.setItem(WS_LKEY, JSON.stringify(ws)); } catch (e) {}
+    // на сервер — только при реальном закрытии (не на каждый alt-tab): sendBeacon
+    if (toServer && wsLoaded && window.LunAuth && window.LunAuth.user) {
+      try { const blob = new Blob([JSON.stringify({ ws })], { type: 'application/json' }); navigator.sendBeacon('auth.php?fn=ws_save', blob); } catch (e) {}
+    }
+  }
+  window.addEventListener('beforeunload', () => flushWsSave(true));
+  window.addEventListener('pagehide', () => flushWsSave(true));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushWsSave(false); });
   function captureWorkspace() {
     const s = state;
     // живые рисунки активного инструмента — в drawStore, чтобы сохранить/синхронизировать
@@ -3029,6 +3046,9 @@
         signs: Object.keys(s.signPanes || {}), cycles: Object.keys(s.cyclePanes || {}),
         aspects: Object.keys(s.aspectPanes || {}), allAspect: !!s.allAspectPane, aspsel: !!s.aspSelPane, sbc: !!s.sbcPane, svir: !!s.svirPane,
         vwap: !!s.vwapOn, expiry: !!s.expiryOn,
+        // индикаторы МОЕКС (FUTOI): маркеры физ/юр на свечах, поток физ/юр, ΔОИ, покуп/прод
+        futoiMark: Object.assign({}, window.LUN_FUTOI_MARK || {}), futoiFlow: Object.assign({}, window.LUN_FUTOI_SHOW || {}),
+        troi: !!s.troiOn, buysell: !!s.buysellOn,
       },
       drawings: Object.values(s.drawings || {}),
       drawStore: s.drawStore || null,
@@ -3093,6 +3113,14 @@
         window.LUN.INDICATORS.vwapList = ws.vwapList;
       }
       if (ws.swings && ws.swings.pivots && ws.swings.pivots.length > 1) state.swings = ws.swings;
+      // индикаторы МОЕКС: восстанавливаем СОСТОЯНИЯ до load() — его afterLoaded сам
+      // пересоберёт их по готовности баров (маркеры/поток — по window.LUN_FUTOI_*,
+      // ΔОИ и покуп/прод — по troiOn/buysellOn через troiWas/bsWas в load()).
+      if (ws.inds) {
+        if (ws.inds.futoiMark) window.LUN_FUTOI_MARK = Object.assign({}, ws.inds.futoiMark);
+        if (ws.inds.futoiFlow) window.LUN_FUTOI_SHOW = Object.assign({}, ws.inds.futoiFlow);
+        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell;
+      }
       // рисунки ВСЕХ инструментов — из drawStore; активный инструмент восстановит load()
       if (ws.drawStore && typeof ws.drawStore === 'object') state.drawStore = ws.drawStore;
       if (ws.draw) { window.LUN.SNAP = !!ws.draw.snap; window.LUN.DRAW = window.LUN.DRAW || {}; window.LUN.DRAW.behind = !!ws.draw.behind; if (window.LUN.GANNTOOLS.box) { window.LUN.GANNTOOLS.box.forecast = !!ws.draw.boxForecast; window.LUN.GANNTOOLS.box.forecastCount = ws.draw.boxForecastCount || 2; window.LUN.GANNTOOLS.box.forecastDir = ws.draw.boxForecastDir || 'auto'; } }
@@ -3904,6 +3932,12 @@
       case 'swing': return !!(state.swings && state.swingsOn && state.swings.nbars === +arg);
       case 'futoiarr': return !!state.futoiOn;
       case 'optlev': return !!state.optlevOn;
+      case 'optexp': return !!state.expiryOn;
+      case 'basis': return !!state.basisPane;
+      case 'troi': return !!state.troiOn;
+      case 'buysell': return !!state.buysellOn;
+      case 'mark': return !!(window.LUN_FUTOI_MARK && window.LUN_FUTOI_MARK[arg]);
+      case 'flow': return !!(window.LUN_FUTOI_SHOW && window.LUN_FUTOI_SHOW[arg]);
     }
     return false;
   }
@@ -4278,6 +4312,18 @@
       btn.onclick = (e) => { e.stopPropagation(); const menu = btn.parentElement, open = menu.classList.contains('open'); closeMenus(); if (!open) menu.classList.add('open'); };
     });
     document.addEventListener('click', (e) => { if (!e.target.closest('.menu')) closeMenus(); });
+    // МУЛЬТИВЫБОР: клик по пункту-переключателю (у него data-sync) НЕ закрывает большое
+    // меню — можно включать/выключать несколько индикаторов подряд. Обработчик кнопки
+    // (со своим closeMenus) отрабатывает раньше в фазе target; этот делегат в фазе
+    // всплытия возвращает меню в открытое состояние. Закрыть меню — клик по его
+    // заголовку ещё раз или клик за пределами меню. Пункты, открывающие модалку (без
+    // data-sync), закрывают меню как раньше.
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.menu button'); if (!btn) return;
+      if (btn.classList.contains('menu-btn')) return;          // сам заголовок меню — не трогаем
+      if (!btn.dataset.sync && !btn.dataset.keepopen) return;  // не переключатель — пусть закрывается
+      const menu = btn.closest('.menu'); if (menu) menu.classList.add('open');
+    });
     if (window.LunStream) window.LunStream.onStatus((txt, color) => {
       const el = document.getElementById('stream-status'); if (el) { el.textContent = txt; el.style.color = color; }
       // кружок теперь показывает ИСТОЧНИК данных (AlgoPack онлайн / отложенный),
