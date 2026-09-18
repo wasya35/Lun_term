@@ -1459,7 +1459,14 @@
   async function openFutoiData(slot) {
     slot = slot || state;
     const d = await ensureFutoiData(slot); if (!d) return;
-    window.LunFutoi.openWindow({ code: d.code, snaps: d.snaps, src: d.src, onPickBar: (ts) => highlightFutoiBar(slot, ts), onClose: () => clearFutoiHilite(slot) });
+    window.LunFutoi.openWindow({ code: d.code, snaps: d.snaps, src: d.src,
+      onPickBar: (ts) => highlightFutoiBar(slot, ts), onClose: () => clearFutoiHilite(slot),
+      // периодическое обновление: свежий FUTOI + перерисовка маркеров/потока (данные «движутся»)
+      onRefresh: async () => {
+        const r = await ensureFutoiData(slot, true); if (!r) return null;
+        try { if (futoiAnyOn()) applyFutoiFlow(slot); if (markAnyOn()) applyFutoiMarks(slot); } catch (e) {}
+        return { snaps: r.snaps, src: r.src };
+      } });
   }
   /* ---------- Физ/Юр НА СВЕЧАХ (стрелки счетов + кружки бид/аск) ----------
    * Оверлей на ценовой панели (FutoiOnPrice). Данные — те же снимки FUTOI. */

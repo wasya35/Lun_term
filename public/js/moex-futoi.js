@@ -169,14 +169,15 @@
    * Таблица по снимкам: Время | Ф.Лонг | Ф.Шорт | Ю.Лонг | Ю.Шорт.
    * Режимы: «По бару» (дельта к предыдущему снимку) и «Накопительно» (сумма
    * дельт с начала окна). В ячейке — контракты (крупно) и число лиц («сч.»). */
+  const srcLabel = (s) => s === 'online' ? 'AlgoPack · онлайн' : (s === 'delayed' ? 'ISS · отложенный (T−15)' : '');
   function openWindow(opts) {
     opts = opts || {};
-    const snaps = opts.snaps || [];
+    let curSnaps = opts.snaps || [];   // мутабельно: обновляем по таймеру (данные «движутся»)
     const code = opts.code || '';
-    const src = opts.src === 'online' ? 'AlgoPack · онлайн' : (opts.src === 'delayed' ? 'ISS · отложенный (T−15)' : '');
-    document.getElementById('futoi-data-win')?.remove();
+    const src = srcLabel(opts.src);
+    const prevWin = document.getElementById('futoi-data-win'); if (prevWin) { if (prevWin._timer) clearInterval(prevWin._timer); prevWin.remove(); }
     // уникальные даты (новые сверху) для календаря
-    const dates = [...new Set(snaps.map((s) => s.date).filter(Boolean))].sort().reverse();
+    const dates = [...new Set(curSnaps.map((s) => s.date).filter(Boolean))].sort().reverse();
     const cell = (v, n) => `<div class="fd-cell"><span class="fd-v ${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">${fmtInt(v)}</span><span class="fd-n">${fmtInt(n)} сч.</span></div>`;
     const win = document.createElement('div');
     win.id = 'futoi-data-win'; win.className = 'fd-float';
@@ -207,8 +208,8 @@
     let mode = 'bar';
     const render = () => {
       const day = dateSel.value;
-      const list = (day ? snaps.filter((s) => s.date === day) : snaps).slice().reverse();   // новые сверху
-      const last = (day ? snaps.filter((s) => s.date === day) : snaps).slice(-1)[0] || {};
+      const list = (day ? curSnaps.filter((s) => s.date === day) : curSnaps).slice().reverse();   // новые сверху
+      const last = (day ? curSnaps.filter((s) => s.date === day) : curSnaps).slice(-1)[0] || {};
       sumEl.innerHTML =
         `<div>Ф нетто: <b class="${(last.fizNet || 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(last.fizNet || 0)}</b> <span class="fd-n">(${(last.fizLn || 0).toLocaleString('ru-RU')}/${(last.fizSn || 0).toLocaleString('ru-RU')} лиц)</span></div>`
         + `<div>Ю нетто: <b class="${(last.yurNet || 0) >= 0 ? 'pos' : 'neg'}">${fmtInt(last.yurNet || 0)}</b> <span class="fd-n">(${(last.yurLn || 0).toLocaleString('ru-RU')}/${(last.yurSn || 0).toLocaleString('ru-RU')} лиц)</span></div>`
@@ -237,7 +238,36 @@
       win.querySelectorAll('.fd-tab').forEach((x) => x.classList.remove('active'));
       b.classList.add('active'); mode = b.dataset.mode; render();
     });
-    win.querySelector('.fd-x').onclick = () => { win.remove(); if (typeof opts.onClose === 'function') opts.onClose(); };
+    win.querySelector('.fd-x').onclick = () => { if (win._timer) clearInterval(win._timer); win.remove(); if (typeof opts.onClose === 'function') opts.onClose(); };
+    // ---- ОБНОВЛЕНИЕ ДАННЫХ ПО ТАЙМЕРУ (данные «движутся» вместе со свечами) ----
+    const rebuildDates = () => {
+      const ds = [...new Set(curSnaps.map((s) => s.date).filter(Boolean))].sort().reverse();
+      const prev = dateSel.value;
+      dateSel.innerHTML = '<option value="">Все дни</option>' + ds.map((d) => `<option value="${d}">${d}</option>`).join('');
+      dateSel.value = (prev === '' || ds.indexOf(prev) >= 0) ? prev : '';
+    };
+    const applyRefresh = (newSnaps, newSrc) => {
+      if (Array.isArray(newSnaps) && newSnaps.length) curSnaps = newSnaps;
+      if (newSrc) { const el = win.querySelector('.fd-src'); if (el) el.textContent = srcLabel(newSrc); }
+      const wrap = win.querySelector('.fd-tablewrap'); const atTop = !wrap || wrap.scrollTop < 8;
+      rebuildDates(); render();
+      if (atTop && wrap) wrap.scrollTop = 0;   // держим новые записи в поле зрения (они сверху)
+    };
+    if (typeof opts.onRefresh === 'function') {
+      win._timer = setInterval(async () => {
+        try { const d = await opts.onRefresh(); if (d) applyRefresh(d.snaps, d.src); } catch (e) {}
+      }, opts.refreshMs || 60000);   // FUTOI — снимок раз в 5 мин; опрашиваем раз в минуту
+    }
+    // ---- ручка ресайза (правый-нижний угол) — надёжнее нативного resize ----
+    const grip = document.createElement('div'); grip.className = 'fd-resize'; grip.title = 'Тянуть — изменить размер';
+    win.appendChild(grip);
+    grip.addEventListener('mousedown', (e) => {
+      const r = win.getBoundingClientRect(); const sx = e.clientX, sy = e.clientY, sw = r.width, sh = r.height;
+      const move = (ev) => { win.style.width = Math.max(300, sw + (ev.clientX - sx)) + 'px'; win.style.height = Math.max(180, sh + (ev.clientY - sy)) + 'px'; };
+      const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+      document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+      e.preventDefault(); e.stopPropagation();
+    });
     // перетаскивание за шапку
     const head = win.querySelector('.fd-head');
     head.addEventListener('mousedown', (e) => {
