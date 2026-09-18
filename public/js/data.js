@@ -61,7 +61,10 @@
     let ticker = instrument.ticker;
     try {
       const list = await window.LunISS.fetchFront(instrument.assetCode, today);
-      if (list && list.length) ticker = list[0].ticker;
+      // фронт по ЛИКВИДНОСТИ (OI/объём), а не по ближайшей экспирации — иначе в день
+      // ролла показывался бы уже неактивный старый контракт
+      const front = (window.LunISS.frontByLiquidity && window.LunISS.frontByLiquidity(list)) || (list && list[0]);
+      if (front && front.ticker) ticker = front.ticker;
     } catch (e1) {
       try {
         const j = await apiFetch('front', 'asset=' + encodeURIComponent(instrument.assetCode));

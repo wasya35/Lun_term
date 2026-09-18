@@ -216,7 +216,7 @@
       const pfx = mode === 'cum' ? 'c' : 'd';
       tbody.innerHTML = list.map((s) => {
         const when = day ? (s.time ? s.time.slice(0, 5) : '') : ((s.date || '') + (s.time ? ' ' + s.time.slice(0, 5) : ''));
-        return `<tr><td class="fd-t">${when}</td>` +
+        return `<tr data-ts="${s.ts}" style="cursor:pointer"><td class="fd-t">${when}</td>` +
           `<td>${cell(s[pfx + 'FizL'] || 0, s[pfx + 'FizLn'] || 0)}</td>` +
           `<td>${cell(s[pfx + 'FizS'] || 0, s[pfx + 'FizSn'] || 0)}</td>` +
           `<td>${cell(s[pfx + 'YurL'] || 0, s[pfx + 'YurLn'] || 0)}</td>` +
@@ -226,11 +226,18 @@
     if (dates.length) dateSel.value = dates[0];   // по умолчанию — последняя дата
     render();
     dateSel.onchange = render;
+    // клик по строке — подсветить соответствующий бар на графике
+    tbody.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr'); if (!tr || !tr.dataset.ts) return;
+      tbody.querySelectorAll('tr').forEach((x) => x.classList.remove('fd-sel'));
+      tr.classList.add('fd-sel');
+      if (typeof opts.onPickBar === 'function') opts.onPickBar(+tr.dataset.ts);
+    });
     win.querySelectorAll('.fd-tab').forEach((b) => b.onclick = () => {
       win.querySelectorAll('.fd-tab').forEach((x) => x.classList.remove('active'));
       b.classList.add('active'); mode = b.dataset.mode; render();
     });
-    win.querySelector('.fd-x').onclick = () => win.remove();
+    win.querySelector('.fd-x').onclick = () => { win.remove(); if (typeof opts.onClose === 'function') opts.onClose(); };
     // перетаскивание за шапку
     const head = win.querySelector('.fd-head');
     head.addEventListener('mousedown', (e) => {
@@ -363,6 +370,26 @@
       }
       ctx.fillStyle = '#26a69a'; ctx.fillText('покупатели ▲', 6, 3);
       ctx.fillStyle = '#ef5350'; ctx.fillText('продавцы ▼', 118, 3);
+      return true;
+    },
+  });
+
+  // Подсветка бара (клик по строке в окне «Данные FUTOI»): жёлтая вертикальная полоса
+  // на баре, содержащем выбранный ts. Не рисунок (не сохраняется), живёт до снятия.
+  kc.registerIndicator({
+    name: 'BarHilite', shortName: '', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, bounding, xAxis, indicator }) => {
+      const ed = indicator.extendData || {}; const ts = ed.ts != null ? ed.ts : window.__hiliteTs;
+      if (ts == null) return true;
+      const list = chart.getDataList(); if (!list.length) return true;
+      let lo = 0, hi = list.length - 1, bi = -1;
+      while (lo <= hi) { const m = (lo + hi) >> 1; if (list[m].timestamp <= ts) { bi = m; lo = m + 1; } else hi = m - 1; }
+      if (bi < 0) return true;
+      const x = xAxis.convertToPixel(bi), H = bounding.height; let bw = 8; try { bw = chart.getBarSpace().bar; } catch (e) {}
+      const w = Math.max(3, bw);
+      ctx.fillStyle = 'rgba(224,200,60,0.18)'; ctx.fillRect(x - w / 2 - 1, 0, w + 2, H);
+      ctx.strokeStyle = 'rgba(224,200,60,0.95)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
       return true;
     },
   });
@@ -627,7 +654,8 @@
       const list = chart.getDataList(), buckets = bucketByBar(snaps, list);
       const range = chart.getVisibleRange();
       const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
-      const R = 14;   // радиус кружка (крупный)
+      const R = 10;   // радиус кружка (на 30% меньше прежнего)
+      const DKGREEN = '#0b5020';   // буква Ф/Ю тёмно-зелёная при ПОЛОЖИТЕЛЬНЫХ счетах
       for (let i = from; i < to; i++) {
         const a = buckets.get(i); if (!a) continue; const bar = list[i]; if (!bar) continue;
         const x = xAxis.convertToPixel(i);
@@ -660,10 +688,10 @@
               ctx.globalAlpha = 1; ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2.5;
               ctx.beginPath(); ctx.arc(x, cy, R + 4, 0, 6.283); ctx.stroke(); ctx.globalAlpha = d.dim ? 0.55 : 1;
             }
-            ctx.fillStyle = '#fff'; ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = schet > 0 ? DKGREEN : '#fff'; ctx.font = 'bold 14px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText(d.tag, x, cy + 1);
             const ly = below ? cy + R + 2 : cy - R - 2;
-            ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
+            ctx.font = 'bold 14px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
             ctx.fillStyle = d.col; ctx.fillText(numLbl(vl), x, ly);
             window.LUN_FUTOI_HITS.push({ x, y: cy, r: R + 4, who: d.who, sd: d.sd, schet, vol, weight });
             offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;
@@ -691,10 +719,10 @@
           if (bigNet) {
             ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 3.5; ctx.beginPath(); ctx.arc(x, cy, R + 7, 0, 6.283); ctx.stroke();
           }
-          ctx.fillStyle = '#fff'; ctx.font = 'bold 18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+          ctx.fillStyle = netSchet > 0 ? DKGREEN : '#fff'; ctx.font = 'bold 14px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
           ctx.fillText(nd.tag, x, cy + 1);
           const ly = below ? cy + R + 2 : cy - R - 2;
-          ctx.font = 'bold 16px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
+          ctx.font = 'bold 14px system-ui, sans-serif'; ctx.textBaseline = below ? 'top' : 'bottom';
           ctx.fillStyle = col; ctx.fillText(numLbl(netVol), x, ly);
           window.LUN_FUTOI_HITS.push({ x, y: cy, r: bigNet ? R + 7 : R + 4, who: nd.who, sd: 'перевес ' + (below ? 'бид' : 'аск'), schet: netSchet, vol: netVol, weight, big: bigNet });
           offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;

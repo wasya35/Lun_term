@@ -50,15 +50,30 @@
 
   function pickFront(pages, asset, today) {
     const futRe = /^[A-Za-z]{1,3}[FGHJKMNQUVXZ]\d$/;
+    // ликвидность из marketdata: OI (OPENPOSITION) и объём сегодня (VOLTODAY) по SECID
+    const liq = new Map();
+    for (const j of pages) for (const o of rowsToObjects(j.marketdata || null)) {
+      const s = o.SECID; if (!s) continue; const cur = liq.get(s) || { oi: 0, vol: 0 };
+      cur.oi = Math.max(cur.oi, +o.OPENPOSITION || 0); cur.vol = Math.max(cur.vol, +o.VOLTODAY || 0); liq.set(s, cur);
+    }
     const seen = new Set(); const list = [];
     for (const j of pages) for (const o of rowsToObjects(j.securities)) {
       if (o.ASSETCODE !== asset || !futRe.test(o.SECID || '')) continue;
       if (!o.LASTDELDATE || o.LASTDELDATE < today) continue;
       if (seen.has(o.SECID)) continue; seen.add(o.SECID);
-      list.push({ ticker: o.SECID, lastDelDate: o.LASTDELDATE });
+      const l = liq.get(o.SECID) || { oi: 0, vol: 0 };
+      list.push({ ticker: o.SECID, lastDelDate: o.LASTDELDATE, oi: l.oi, vol: l.vol });
     }
-    list.sort((a, b) => a.lastDelDate.localeCompare(b.lastDelDate));
+    list.sort((a, b) => a.lastDelDate.localeCompare(b.lastDelDate));   // для выбора контракта — по экспирации
     return list;
+  }
+  // «Активный» фронт по ЛИКВИДНОСТИ (а не по ближайшей экспирации): на роллах биржа
+  // переходит на новый контракт за пару дней до экспирации старого — OI/объём мигрируют.
+  function frontByLiquidity(list) {
+    if (!list || !list.length) return null;
+    const scored = list.slice().sort((a, b) => (b.oi || 0) - (a.oi || 0) || (b.vol || 0) - (a.vol || 0) || a.lastDelDate.localeCompare(b.lastDelDate));
+    // если у самого ликвидного вообще нет OI/объёма (данные не пришли) — берём ближайший по экспирации
+    return (scored[0] && (scored[0].oi || scored[0].vol)) ? scored[0] : list[0];
   }
 
   // список шлюзов; первый рабочий запоминаем
@@ -151,7 +166,7 @@
   }
 
   async function fetchFront(asset, today) {
-    const url = `${BASE}/securities.json?iss.meta=off&securities.columns=SECID,ASSETCODE,LASTDELDATE`;
+    const url = `${BASE}/securities.json?iss.meta=off&securities.columns=SECID,ASSETCODE,LASTDELDATE&marketdata.columns=SECID,OPENPOSITION,VOLTODAY`;
     return pickFront(await getAllPages(url, 'securities'), asset, today);
   }
 
@@ -467,5 +482,5 @@
     return out;
   }
 
-  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, fetchFUTOI, fetchTradeStats, fetchHI2, fetchOBStats, fetchAlerts, fetchOIHistory, fetchOptions, parseOptSecid, classifyExpiry };
+  window.LunISS = { fetchCandles, fetchCandlesFrom, fetchSecuritiesList, fetchContinuousFutures, stitchContracts, aggregate, fetchFront, frontByLiquidity, fetchFUTOI, fetchTradeStats, fetchHI2, fetchOBStats, fetchAlerts, fetchOIHistory, fetchOptions, parseOptSecid, classifyExpiry };
 })();

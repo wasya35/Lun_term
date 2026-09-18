@@ -167,6 +167,8 @@ html, body { overflow-x: hidden; }
 }
 #futoi-data-win .fd-table th:first-child { text-align: left; }
 #futoi-data-win .fd-table td { padding: 5px 6px; border-bottom: 1px solid #171e2a; text-align: right; }
+#futoi-data-win .fd-table tbody tr:hover { background: #172033; }
+#futoi-data-win .fd-table tbody tr.fd-sel { background: rgba(224,200,60,0.16); box-shadow: inset 2px 0 0 #e0c83c; }
 #futoi-data-win .fd-table td.fd-t { text-align: left; color: #aab4c8; white-space: nowrap; }
 #futoi-data-win .fd-cell { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; }
 #futoi-data-win .fd-cell .fd-v { font-variant-numeric: tabular-nums; }

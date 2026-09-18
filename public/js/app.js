@@ -1448,10 +1448,18 @@
     if (futoiAnyOn() && !state.futoiData) { const d = await ensureFutoiData(state); if (!d) { window.LUN_FUTOI_SHOW[key] = false; if (btn) btn.classList.remove('active'); return; } }
     applyFutoiFlow(state); scheduleWsSave();
   }
+  function highlightFutoiBar(slot, ts) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return;
+    window.__hiliteTs = ts;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'BarHilite' }); } catch (e) {}
+    try { c.createIndicator({ name: 'BarHilite', paneId: 'candle_pane', extendData: { ts } }, true); } catch (e) {}
+    try { const l = c.getDataList(); if (l && l.length) { const r = c.getVisibleRange(); let bi = -1, lo = 0, hi = l.length - 1; while (lo <= hi) { const m = (lo + hi) >> 1; if (l[m].timestamp <= ts) { bi = m; lo = m + 1; } else hi = m - 1; } if (bi >= 0 && (bi < (r.from | 0) || bi > Math.ceil(r.to)) && c.scrollToTimestamp) c.scrollToTimestamp(ts); } } catch (e) {}
+  }
+  function clearFutoiHilite(slot) { slot = slot || state; const c = slot && slot.chart; window.__hiliteTs = null; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'BarHilite' }); } catch (e) {} } }
   async function openFutoiData(slot) {
     slot = slot || state;
     const d = await ensureFutoiData(slot); if (!d) return;
-    window.LunFutoi.openWindow({ code: d.code, snaps: d.snaps, src: d.src });
+    window.LunFutoi.openWindow({ code: d.code, snaps: d.snaps, src: d.src, onPickBar: (ts) => highlightFutoiBar(slot, ts), onClose: () => clearFutoiHilite(slot) });
   }
   /* ---------- Физ/Юр НА СВЕЧАХ (стрелки счетов + кружки бид/аск) ----------
    * Оверлей на ценовой панели (FutoiOnPrice). Данные — те же снимки FUTOI. */
@@ -1482,13 +1490,18 @@
       weightMin: 0, ringMax: 3, netMult: 4,
     };
   }
-  // Полные настройки под конкретный ТФ: дефолты ТФ + ручные правки LUN.FUTOI.tf[tfId].
-  function futoiTfSettings(tf) {
+  // Ключ инструмента для порогов: код актива (Si, CNY, GOLD…) — общий на все контракты.
+  function futoiInsKey(ins) { ins = ins || state.instrument; return (ins && (ins.assetCode || ins.id)) || 'default'; }
+  // Полные настройки порогов под ТФ И ИНСТРУМЕНТ: дефолты ← общие (легаси) ← пер-инструмент.
+  // Пороги у разных фьючерсов разные (юань — сотни тыс. контрактов, золото — сотни),
+  // поэтому храним по инструменту (LUN.FUTOI.byIns[key][tfId]); пока не заполнено — авто.
+  function futoiTfSettings(tf, ins) {
     const F = window.LUN.FUTOI || (window.LUN.FUTOI = {});
-    F.tf = F.tf || {};
-    // одноразовая миграция со старого хранилища (v133: marksByTf + глобальные weightMin/ringMax)
+    F.tf = F.tf || {}; F.byIns = F.byIns || {};
     if (F.marksByTf && !F._migratedTf) { Object.keys(F.marksByTf).forEach((id) => { F.tf[id] = Object.assign({ weightMin: F.weightMin || 0, ringMax: F.ringMax != null ? F.ringMax : 3 }, F.marksByTf[id]); }); F._migratedTf = true; }
-    return Object.assign(futoiTfDefaults(tf), F.tf[(tf && tf.id) || ''] || {});
+    const tfId = (tf && tf.id) || '', key = futoiInsKey(ins);
+    const per = (F.byIns[key] && F.byIns[key][tfId]) || {};
+    return Object.assign(futoiTfDefaults(tf), F.tf[tfId] || {}, per);
   }
   function applyFutoiMarks(slot) {
     slot = slot || state; const c = slot && slot.chart; if (!c) return;
@@ -1496,7 +1509,7 @@
     if (!markAnyOn()) { slot.futoiMarkOn = false; return; }
     const d = slot.futoiData, snaps = (d && d.snaps) || [];
     try {
-      const st = futoiTfSettings(slot.tf);
+      const st = futoiTfSettings(slot.tf, slot.instrument);
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
         extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3, netMult: st.netMult != null ? st.netMult : 4 } }, true);
       slot.futoiMarkOn = true;
@@ -1740,14 +1753,15 @@
   // (стрелки=лица) и бид/аск (кружки=контракты) + удельный вес + кольцо концентрации.
   function futoiMarkThresholdModal() {
     const F = window.LUN.FUTOI || (window.LUN.FUTOI = {});
-    F.tf = F.tf || {};
+    F.tf = F.tf || {}; F.byIns = F.byIns || {};
+    const insKey = futoiInsKey(state.instrument), insName = String((state.instrument && (state.instrument.title || state.instrument.id)) || '').split(' · ')[0];
     const TFS = window.LUN.TIMEFRAMES || [];
     const iid = (tfId, k) => 'fmk-' + tfId + '-' + k;
     const inp = (tfId, k, v, w) => '<input id="' + iid(tfId, k) + '" type="number" value="' + v + '" style="width:' + (w || 78) + 'px">';
     const row = (tfId, s, title, base, col, unit) => '<tr><td style="padding:3px 10px 3px 0;color:' + col + ';font-weight:600;white-space:nowrap">' + title + ' <span style="color:#8b93a7;font-weight:400;font-size:12px">' + unit + '</span></td>'
       + '<td style="padding:3px 6px">' + inp(tfId, base + 'Open', s[base + 'Open']) + '</td><td style="padding:3px 6px">' + inp(tfId, base + 'Close', s[base + 'Close']) + '</td></tr>';
     const block = (tf) => {
-      const s = futoiTfSettings(tf), tfId = tf.id;
+      const s = futoiTfSettings(tf, state.instrument), tfId = tf.id;
       return '<div data-tfblock="' + tfId + '" style="border:1px solid #232b3a;border-radius:8px;padding:8px 12px;margin:8px 0;background:#0d121b">'
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
         + '<b style="font-size:17px;color:#d7deea">' + tf.title + '</b>'
@@ -1765,8 +1779,8 @@
         + '<label title="Золотой кружок у перевеса Ф/Ю, если нетто ≥ N × порога кружка">Золото перевеса, если ≥ ×: ' + inp(tfId, 'netMult', s.netMult != null ? s.netMult : 4, 56) + '</label>'
         + '</div></div>';
     };
-    openModal('Пороги маркеров Физ/Юр — по таймфреймам',
-      '<p style="font-size:13px;color:#a9b4c6;margin:0 0 6px">Свои пороги на КАЖДЫЙ ТФ. Стрелки (сделки) фильтруются по <b>числу лиц</b> — это убирает мусор «+0/+9»; кружки бид/аск («ФАС») — по <b>контрактам</b>. Удельный вес = контракты/лица (фильтр крупных лотов). Кольцо — концентрация юр-капитала (мало лиц). Стартовые значения масштабированы по величине бара — правь под себя.</p>'
+    openModal('Пороги маркеров Физ/Юр · ' + insName,
+      '<p style="font-size:13px;color:#a9b4c6;margin:0 0 6px">Пороги СВОИ для инструмента <b style="color:#d7deea">' + insName + '</b> и на КАЖДЫЙ ТФ (у юаня — сотни тыс. контрактов, у золота — сотни). Заполненное запоминается по инструменту; пока не заполнил — стоят авто-значения. Стрелки (сделки) фильтруются по <b>числу лиц</b>; кружки бид/аск («ФАС») — по <b>контрактам</b>. Удельный вес = контракты/лица. Кольцо — концентрация юр-капитала (мало лиц).</p>'
       + '<div style="max-height:60vh;overflow:auto;padding-right:4px">' + TFS.map(block).join('') + '</div>'
       + '<div style="display:flex;gap:8px;margin-top:8px"><button id="fmk-apply" class="lun-btn">Применить все</button></div>');
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
@@ -1777,7 +1791,7 @@
         m.weightMin = Math.max(0, +bg.querySelector('#' + iid(tfId, 'weightMin')).value || 0);
         m.ringMax = Math.max(0, +bg.querySelector('#' + iid(tfId, 'ringMax')).value || 0);
         m.netMult = Math.max(0, +bg.querySelector('#' + iid(tfId, 'netMult')).value || 0);
-        F.tf[tfId] = m;
+        F.byIns[insKey] = F.byIns[insKey] || {}; F.byIns[insKey][tfId] = m;   // сохраняем ПО ИНСТРУМЕНТУ
       });
       bg.remove(); if (markAnyOn()) applyFutoiMarks(state); scheduleWsSave();
     };
@@ -3245,7 +3259,7 @@
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
-      futoi: { tf: (window.LUN.FUTOI && window.LUN.FUTOI.tf) || {} },
+      futoi: { tf: (window.LUN.FUTOI && window.LUN.FUTOI.tf) || {}, byIns: (window.LUN.FUTOI && window.LUN.FUTOI.byIns) || {} },
       swings: s.swings || null,
       draw: { snap: !!window.LUN.SNAP, behind: !!(window.LUN.DRAW && window.LUN.DRAW.behind), boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
       lineTypes: window.LUN.LINETYPES || null, curLineType: window.LUN.CUR_LINETYPE || null, deltaReset: (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day',
@@ -3311,8 +3325,9 @@
       if (ws.aspSel && Array.isArray(ws.aspSel.blocks)) { window.LUN.ASPSEL.blocks = ws.aspSel.blocks; if (ws.aspSel.orb) window.LUN.ASPSEL.orb = ws.aspSel.orb; if (ws.aspSel.frame) window.LUN.ASPSEL.frame = ws.aspSel.frame; }
       if (ws.svir && ws.svir.planets) window.LUN.SVIR = ws.svir;
       if (ws.futoi) {
-        window.LUN.FUTOI = window.LUN.FUTOI || {}; window.LUN.FUTOI.tf = window.LUN.FUTOI.tf || {};
+        window.LUN.FUTOI = window.LUN.FUTOI || {}; window.LUN.FUTOI.tf = window.LUN.FUTOI.tf || {}; window.LUN.FUTOI.byIns = window.LUN.FUTOI.byIns || {};
         if (ws.futoi.tf) Object.assign(window.LUN.FUTOI.tf, ws.futoi.tf);
+        if (ws.futoi.byIns) Object.assign(window.LUN.FUTOI.byIns, ws.futoi.byIns);
         // миграция старого стола (v133): marksByTf + глобальные weightMin/ringMax → tf[id]
         if (ws.futoi.marksByTf) Object.keys(ws.futoi.marksByTf).forEach((id) => { window.LUN.FUTOI.tf[id] = Object.assign({ weightMin: ws.futoi.weightMin || 0, ringMax: ws.futoi.ringMax != null ? ws.futoi.ringMax : 3 }, ws.futoi.marksByTf[id]); });
       }
@@ -3544,12 +3559,16 @@
     const body = bg.querySelector('#cp-body'); if (!body) return;
     if (!list.length) { body.innerHTML = '<span style="color:#e0a030">Не удалось получить список контрактов (нет связи с MOEX или инструмент без фьючерсных контрактов).</span>'; return; }
     const curSecid = cur._pinnedContract || null;
+    // активный (ликвидный) фронт — по OI/объёму, а не по ближайшей экспирации
+    const liqFront = (window.LunISS && window.LunISS.frontByLiquidity && window.LunISS.frontByLiquidity(list)) || list[0];
     const rowsHtml = ['<div style="font-size:14px;color:#a9b4c6;margin-bottom:6px">Основная кнопка «' + (String(base.title || base.id).split(' · ')[0]) + '» — это склейка/фронт (участвует в основном показе). Ниже — конкретные контракты в пределах их данных:</div>'];
     rowsHtml.push('<button data-secid="__front__" class="lun-btn" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:15px;background:' + (!curSecid ? '#1b3a2a' : '#0d121b') + '">↩ Склейка / фронт (основной' + (!curSecid ? ', активен' : '') + ')</button>');
     list.forEach((c, i) => {
-      const role = i === 0 ? 'текущий' : (i === 1 ? 'следующий' : 'дальний +' + i);
+      const isLiq = liqFront && c.ticker === liqFront.ticker;
+      const role = isLiq ? 'активный' : (i === 0 ? 'ближний' : (i === 1 ? 'следующий' : 'дальний +' + i));
       const active = curSecid === c.ticker;
-      rowsHtml.push('<button data-secid="' + c.ticker + '" class="lun-btn" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:15px;background:' + (active ? '#1b3a2a' : '#0d121b') + '"><b>' + contractLabel(c.ticker) + '</b> · ' + c.ticker + ' · <span style="color:#8fb0c8">' + role + '</span> · эксп. ' + c.lastDelDate + (active ? ' · <span style="color:#34c98a">активен</span>' : '') + '</button>');
+      const oiTxt = c.oi ? ' · OI ' + (c.oi >= 1000 ? (c.oi / 1000).toFixed(0) + 'k' : c.oi) : '';
+      rowsHtml.push('<button data-secid="' + c.ticker + '" class="lun-btn" style="display:block;width:100%;text-align:left;margin:4px 0;font-size:15px;background:' + (active ? '#1b3a2a' : (isLiq ? '#12233a' : '#0d121b')) + '"><b>' + contractLabel(c.ticker) + '</b> · ' + c.ticker + ' · <span style="color:' + (isLiq ? '#34c98a' : '#8fb0c8') + '">' + role + '</span> · эксп. ' + c.lastDelDate + oiTxt + (active ? ' · <span style="color:#34c98a">выбран</span>' : '') + '</button>');
     });
     body.innerHTML = rowsHtml.join('');
     bg.querySelectorAll('[data-secid]').forEach((btn) => {

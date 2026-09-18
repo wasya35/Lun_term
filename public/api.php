@@ -72,6 +72,11 @@ function aggregate_bars($bars, $n) {
 
 // выбрать ближний фьючерс актива из страниц securities.json
 function pick_front($pages, $asset, $today) {
+  $liq = [];
+  foreach ($pages as $j) foreach (rows_to_objects($j['marketdata'] ?? null) as $o) {
+    $s = $o['SECID'] ?? ''; if ($s === '') continue;
+    $liq[$s] = ['oi' => max($liq[$s]['oi'] ?? 0, (int)($o['OPENPOSITION'] ?? 0)), 'vol' => max($liq[$s]['vol'] ?? 0, (int)($o['VOLTODAY'] ?? 0))];
+  }
   $seen = []; $list = [];
   foreach ($pages as $j) {
     foreach (rows_to_objects($j['securities'] ?? null) as $o) {
@@ -81,11 +86,17 @@ function pick_front($pages, $asset, $today) {
       $ldd = $o['LASTDELDATE'] ?? '';
       if ($ldd === '' || $ldd < $today) continue;
       if (isset($seen[$secid])) continue; $seen[$secid] = true;
-      $list[] = ['ticker' => $secid, 'lastDelDate' => $ldd];
+      $list[] = ['ticker' => $secid, 'lastDelDate' => $ldd, 'oi' => $liq[$secid]['oi'] ?? 0, 'vol' => $liq[$secid]['vol'] ?? 0];
     }
   }
   usort($list, fn($a, $b) => strcmp($a['lastDelDate'], $b['lastDelDate']));
   return $list;
+}
+// активный фронт по ликвидности (OI/объём), с фолбэком на ближайшую экспирацию
+function front_by_liquidity($list) {
+  if (!$list) return null;
+  $s = $list; usort($s, fn($a, $b) => ($b['oi'] <=> $a['oi']) ?: ($b['vol'] <=> $a['vol']) ?: strcmp($a['lastDelDate'], $b['lastDelDate']));
+  return ($s[0]['oi'] || $s[0]['vol']) ? $s[0] : $list[0];
 }
 
 /* ------------------------------- сеть (ISS) ------------------------------- */
@@ -189,7 +200,7 @@ function fetch_candles($secid, $interval, $from, $till) {
 
 function fetch_front($asset, $today) {
   $base = 'https://iss.moex.com/iss/engines/futures/markets/forts/securities.json'
-    . '?iss.meta=off&securities.columns=SECID,ASSETCODE,LASTDELDATE';
+    . '?iss.meta=off&securities.columns=SECID,ASSETCODE,LASTDELDATE&marketdata.columns=SECID,OPENPOSITION,VOLTODAY';
   return pick_front(iss_get_all_pages($base, 'securities'), $asset, $today);
 }
 
@@ -512,7 +523,8 @@ if (!defined('LUN_NO_DISPATCH')) {
       if ($hit !== null) { echo $hit; exit; }
       $list = fetch_front($asset, $today);
       if (!$list) { http_response_code(404); echo json_encode(['error' => 'no front contract for ' . $asset]); exit; }
-      $out = json_encode(['ticker' => $list[0]['ticker'], 'lastDelDate' => $list[0]['lastDelDate'], 'contracts' => $list]);
+      $front = front_by_liquidity($list) ?: $list[0];
+      $out = json_encode(['ticker' => $front['ticker'], 'lastDelDate' => $front['lastDelDate'], 'contracts' => $list, 'list' => $list]);
       cache_put($ck, $out); echo $out;
     } elseif ($fn === 'candles') {
       $secid = $_GET['secid'] ?? ''; $iss = $_GET['iss'] ?? '';
