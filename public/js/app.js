@@ -1418,17 +1418,22 @@
     const code = futoiCode(ins, ticker);
     const firstMs = list[0].timestamp, lastMs = list[list.length - 1].timestamp;
     const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
-    // FUTOI — 5-минутные снимки (объёмно): грузим окно ≤45 дней (сегодняшние
-    // 5-минутки всегда на первой странице — данные новые-сверху).
-    const fromMs = Math.max(firstMs, lastMs - 45 * 86400000);
-    const key = code + '|' + fmt(fromMs) + '|' + fmt(lastMs);
+    // Режим по ТФ:
+    //  • день/неделя — ДНЕВНЫЕ снимки (по последнему за день), перевес бара =
+    //    изменение позиции за день/неделю. Тянем на ВСЮ загруженную историю графика
+    //    (управляется «🗓 Период»), сид −7 дней даёт валидную дельту первому бару.
+    //    5-минутки тут не нужны — сервер отдаёт 2 строки/день, кэш закрытых дней.
+    //  • интрадей (H1/M15/M5) — 5-минутные снимки, окно ≤90 дней (3 мес).
+    const daily = !!(slot.tf && (slot.tf.type === 'day' || slot.tf.type === 'week'));
+    const fromMs = daily ? (firstMs - 7 * 86400000) : Math.max(firstMs, lastMs - 90 * 86400000);
+    const key = code + '|' + (daily ? 'D' : 'I') + '|' + fmt(fromMs) + '|' + fmt(lastMs);
     if (!force && slot.futoiData && slot.futoiData.key === key) return slot.futoiData;
     let rows;
-    try { rows = await window.LunISS.fetchFUTOI(code, fmt(fromMs), fmt(lastMs + 86400000)); }
+    try { rows = await window.LunISS.fetchFUTOI(code, fmt(fromMs), fmt(lastMs + 86400000), daily ? { daily: true } : undefined); }
     catch (e) { alert('FUTOI не загрузился (' + code + '): ' + e.message); return null; }
     const snaps = window.LunFutoi.normalize(rows);
     if (!snaps.length) { alert('FUTOI по «' + code + '» пуст за период (возможно, у актива нет FUTOI).'); return null; }
-    slot.futoiData = { key, code, snaps, src: window.LUN_FUTOI_SRC || '' };
+    slot.futoiData = { key, code, snaps, src: window.LUN_FUTOI_SRC || '', daily: daily };
     return slot.futoiData;
   }
   function applyFutoiFlow(slot) {
