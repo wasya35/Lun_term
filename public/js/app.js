@@ -1518,7 +1518,7 @@
     try {
       const st = futoiTfSettings(slot.tf, slot.instrument);
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
-        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3, netMult: st.netMult != null ? st.netMult : 4 } }, true);
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3, netMult: st.netMult != null ? st.netMult : 4, netSumAll: !!(window.LUN.FUTOI && window.LUN.FUTOI.netSumAll) } }, true);
       slot.futoiMarkOn = true;
     } catch (e) { slot.futoiMarkOn = false; }
   }
@@ -1788,8 +1788,9 @@
     };
     openModal('Пороги маркеров Физ/Юр · ' + insName,
       '<p style="font-size:13px;color:#a9b4c6;margin:0 0 6px">Пороги СВОИ для инструмента <b style="color:#d7deea">' + insName + '</b> и на КАЖДЫЙ ТФ (у юаня — сотни тыс. контрактов, у золота — сотни). Заполненное запоминается по инструменту; пока не заполнил — стоят авто-значения. Стрелки (сделки) фильтруются по <b>числу лиц</b>; кружки бид/аск («ФАС») — по <b>контрактам</b>. Удельный вес = контракты/лица. Кольцо — концентрация юр-капитала (мало лиц).</p>'
-      + '<div style="max-height:60vh;overflow:auto;padding-right:4px">' + TFS.map(block).join('') + '</div>'
-      + '<div style="display:flex;gap:8px;margin-top:8px"><button id="fmk-apply" class="lun-btn">Применить все</button></div>');
+      + '<div style="max-height:56vh;overflow:auto;padding-right:4px">' + TFS.map(block).join('') + '</div>'
+      + '<label style="display:block;margin:8px 0 4px;font-size:13px;color:#c8d0de"><input id="fmk-netsumall" type="checkbox"' + (F.netSumAll ? ' checked' : '') + '> Суммы перевеса Ф/Ю слева — по <b>всем барам</b> (снятая галка — только видимые/по порогу). Сверху-слева Σ шорта, снизу-слева Σ лонга.</label>'
+      + '<div style="display:flex;gap:8px;margin-top:6px"><button id="fmk-apply" class="lun-btn">Применить все</button></div>');
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
     bg.querySelector('#fmk-apply').onclick = () => {
       TFS.forEach((tf) => {
@@ -1800,6 +1801,7 @@
         m.netMult = Math.max(0, +bg.querySelector('#' + iid(tfId, 'netMult')).value || 0);
         F.byIns[insKey] = F.byIns[insKey] || {}; F.byIns[insKey][tfId] = m;   // сохраняем ПО ИНСТРУМЕНТУ
       });
+      F.netSumAll = !!(bg.querySelector('#fmk-netsumall') && bg.querySelector('#fmk-netsumall').checked);
       bg.remove(); if (markAnyOn()) applyFutoiMarks(state); scheduleWsSave();
     };
     bg.querySelectorAll('[data-reset]').forEach((btn) => {
@@ -3266,7 +3268,7 @@
       aspSel: { blocks: (window.LUN.ASPSEL && window.LUN.ASPSEL.blocks) || [], orb: window.LUN.ASPSEL && window.LUN.ASPSEL.orb, frame: window.LUN.ASPSEL && window.LUN.ASPSEL.frame },
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
-      futoi: { tf: (window.LUN.FUTOI && window.LUN.FUTOI.tf) || {}, byIns: (window.LUN.FUTOI && window.LUN.FUTOI.byIns) || {} },
+      futoi: { tf: (window.LUN.FUTOI && window.LUN.FUTOI.tf) || {}, byIns: (window.LUN.FUTOI && window.LUN.FUTOI.byIns) || {}, netSumAll: !!(window.LUN.FUTOI && window.LUN.FUTOI.netSumAll) },
       swings: s.swings || null,
       draw: { snap: !!window.LUN.SNAP, behind: !!(window.LUN.DRAW && window.LUN.DRAW.behind), boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
       lineTypes: window.LUN.LINETYPES || null, curLineType: window.LUN.CUR_LINETYPE || null, deltaReset: (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day',
@@ -3335,6 +3337,7 @@
         window.LUN.FUTOI = window.LUN.FUTOI || {}; window.LUN.FUTOI.tf = window.LUN.FUTOI.tf || {}; window.LUN.FUTOI.byIns = window.LUN.FUTOI.byIns || {};
         if (ws.futoi.tf) Object.assign(window.LUN.FUTOI.tf, ws.futoi.tf);
         if (ws.futoi.byIns) Object.assign(window.LUN.FUTOI.byIns, ws.futoi.byIns);
+        if (ws.futoi.netSumAll != null) window.LUN.FUTOI.netSumAll = !!ws.futoi.netSumAll;
         // миграция старого стола (v133): marksByTf + глобальные weightMin/ringMax → tf[id]
         if (ws.futoi.marksByTf) Object.keys(ws.futoi.marksByTf).forEach((id) => { window.LUN.FUTOI.tf[id] = Object.assign({ weightMin: ws.futoi.weightMin || 0, ringMax: ws.futoi.ringMax != null ? ws.futoi.ringMax : 3 }, ws.futoi.marksByTf[id]); });
       }
