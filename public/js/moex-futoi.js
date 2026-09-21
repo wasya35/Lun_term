@@ -672,7 +672,6 @@
       const weightMin = ed.weightMin || 0;   // удельный вес: |контракты| / |лица| (0 = выкл)
       const ringMax = ed.ringMax || 0;       // доп. кольцо у юр-кружка, если лиц < ringMax (0 = выкл)
       const netMult = ed.netMult || 0;       // золотое кольцо перевеса, если нетто ≥ netMult × порога (0 = выкл)
-      const netSumAll = !!ed.netSumAll;      // суммы перевеса: true = по всем барам, false = только выделенные/видимые
       const th4 = (d) => {
         const gk = (d.who === 'Физики' ? 'fiz' : 'yur') + (d.kind === 'arrow' ? 'Arr' : 'Circ') + (d.sign > 0 ? 'Open' : 'Close');
         const v = marks[gk]; return v != null ? v : (d.kind === 'arrow' ? 5 : 4000);
@@ -759,36 +758,6 @@
           offBelow += below ? R * 2 + 20 : 0; offAbove += below ? 0 : R * 2 + 20;
         }
       }
-      // СУММЫ ПЕРЕВЕСА слева: сверху — шортовый (аск, нетто<0), снизу — лонговый (бид, нетто>0).
-      // netSumAll=true — по ВСЕМ барам; иначе — только по прошедшим порог (выделенным) в видимом окне.
-      if (activeNet.length) {
-        const H = bounding.height;
-        const lo = netSumAll ? 0 : from, hiN = netSumAll ? list.length : to;
-        let topY = 46, botY = H - 6;                 // сверху ниже OHLC-легенды; снизу от низа
-        ctx.textAlign = 'left'; ctx.font = 'bold 14px system-ui, sans-serif';
-        window.LUN_FUTOI_NETSUMS = {};
-        for (const nd of activeNet) {
-          const th = marks[nd.thKey] != null ? marks[nd.thKey] : 4000;
-          let longSum = 0, shortSum = 0;
-          for (let i = lo; i < hiN; i++) {
-            const a = buckets.get(i); if (!a) continue;
-            const netVol = (a[nd.mcL] || 0) - (a[nd.mcS] || 0); if (!netVol) continue;
-            if (!netSumAll) {                        // режим «выделенные»: те же фильтры, что при отрисовке
-              if (Math.abs(netVol) < th) continue;
-              const ns = (a[nd.mnL] || 0) - (a[nd.mnS] || 0);
-              if (weightMin > 0 && Math.abs(netVol) / Math.max(1, Math.abs(ns)) < weightMin) continue;
-            }
-            if (netVol > 0) longSum += netVol; else shortSum += -netVol;
-          }
-          window.LUN_FUTOI_NETSUMS[nd.key] = { long: longSum, short: shortSum };
-          ctx.textBaseline = 'top'; ctx.fillStyle = nd.colAsk;
-          ctx.fillText(nd.tag + ' шорт Σ ' + kfmt(shortSum), 6, topY); topY += 19;
-          ctx.textBaseline = 'bottom'; ctx.fillStyle = nd.colBid;
-          ctx.fillText(nd.tag + ' лонг Σ ' + kfmt(longSum), 6, botY); botY -= 19;
-        }
-        ctx.textBaseline = 'top'; ctx.fillStyle = '#8b93a7'; ctx.font = '11px system-ui, sans-serif';
-        ctx.fillText(netSumAll ? '(перевес: все бары)' : '(перевес: видимые по порогу)', 6, topY + 2);
-      }
       return true;
     },
   });
@@ -803,5 +772,30 @@
     }
     return Object.assign({ date, time }, b);
   }
-  window.LunFutoi = { normalize, normalizeTradeStats, normalizeHI2, hi2Metrics, normalizeOBStats, normalizeAlerts, alertMeta, openWindow, SERIES, MARK_DEFS, barAgg };
+  // Суммы перевеса Ф/Ю в диапазоне баров [i0..i1] (для линейки/выделения).
+  // Возвращает { fizNet:{long,short,tag,colBid,colAsk}, yurNet:{...} } по включённым ключам.
+  // sumAll=false — только прошедшие порог (как нарисованные кружки); true — нетто всех баров.
+  function netSumsInRange(snaps, list, i0, i1, activeKeys, marks, weightMin, sumAll) {
+    const out = {}; if (!snaps || !snaps.length || !list || !list.length) return out;
+    const buckets = bucketByBar(snaps, list);
+    const lo = Math.max(0, Math.min(i0, i1)), hi = Math.min(list.length - 1, Math.max(i0, i1));
+    for (const nd of NET_DEFS) {
+      if (!activeKeys || activeKeys.indexOf(nd.key) < 0) continue;
+      const th = (marks && marks[nd.thKey] != null) ? marks[nd.thKey] : 4000;
+      let longSum = 0, shortSum = 0;
+      for (let i = lo; i <= hi; i++) {
+        const a = buckets.get(i); if (!a) continue;
+        const netVol = (a[nd.mcL] || 0) - (a[nd.mcS] || 0); if (!netVol) continue;
+        if (!sumAll) {
+          if (Math.abs(netVol) < th) continue;
+          const ns = (a[nd.mnL] || 0) - (a[nd.mnS] || 0);
+          if (weightMin > 0 && Math.abs(netVol) / Math.max(1, Math.abs(ns)) < weightMin) continue;
+        }
+        if (netVol > 0) longSum += netVol; else shortSum += -netVol;
+      }
+      out[nd.key] = { long: longSum, short: shortSum, tag: nd.tag, colBid: nd.colBid, colAsk: nd.colAsk };
+    }
+    return out;
+  }
+  window.LunFutoi = { normalize, normalizeTradeStats, normalizeHI2, hi2Metrics, normalizeOBStats, normalizeAlerts, alertMeta, openWindow, SERIES, MARK_DEFS, barAgg, netSumsInRange };
 })();

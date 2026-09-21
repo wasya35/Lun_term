@@ -1518,7 +1518,7 @@
     try {
       const st = futoiTfSettings(slot.tf, slot.instrument);
       c.createIndicator({ name: 'FutoiOnPrice', paneId: 'candle_pane', shortName: 'Физ/Юр на свечах',
-        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3, netMult: st.netMult != null ? st.netMult : 4, netSumAll: !!(window.LUN.FUTOI && window.LUN.FUTOI.netSumAll) } }, true);
+        extendData: { snaps, show: Object.assign({}, window.LUN_FUTOI_MARK), marks: st, weightMin: st.weightMin || 0, ringMax: st.ringMax != null ? st.ringMax : 3, netMult: st.netMult != null ? st.netMult : 4 } }, true);
       slot.futoiMarkOn = true;
     } catch (e) { slot.futoiMarkOn = false; }
   }
@@ -1789,7 +1789,7 @@
     openModal('Пороги маркеров Физ/Юр · ' + insName,
       '<p style="font-size:13px;color:#a9b4c6;margin:0 0 6px">Пороги СВОИ для инструмента <b style="color:#d7deea">' + insName + '</b> и на КАЖДЫЙ ТФ (у юаня — сотни тыс. контрактов, у золота — сотни). Заполненное запоминается по инструменту; пока не заполнил — стоят авто-значения. Стрелки (сделки) фильтруются по <b>числу лиц</b>; кружки бид/аск («ФАС») — по <b>контрактам</b>. Удельный вес = контракты/лица. Кольцо — концентрация юр-капитала (мало лиц).</p>'
       + '<div style="max-height:56vh;overflow:auto;padding-right:4px">' + TFS.map(block).join('') + '</div>'
-      + '<label style="display:block;margin:8px 0 4px;font-size:13px;color:#c8d0de"><input id="fmk-netsumall" type="checkbox"' + (F.netSumAll ? ' checked' : '') + '> Суммы перевеса Ф/Ю слева — по <b>всем барам</b> (снятая галка — только видимые/по порогу). Сверху-слева Σ шорта, снизу-слева Σ лонга.</label>'
+      + '<label style="display:block;margin:8px 0 4px;font-size:13px;color:#c8d0de"><input id="fmk-netsumall" type="checkbox"' + (F.netSumAll ? ' checked' : '') + '> Суммы перевеса Ф/Ю в выделении линейки (Shift+ЛКМ): считать по <b>всем барам</b>. Снятая галка — только по порогу (как нарисованные кружки). Показываются слева от блока: Σ шорта сверху, Σ лонга снизу.</label>'
       + '<div style="display:flex;gap:8px;margin-top:6px"><button id="fmk-apply" class="lun-btn">Применить все</button></div>');
     const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
     bg.querySelector('#fmk-apply').onclick = () => {
@@ -2062,7 +2062,7 @@
   }
 
   /* ---------- линейка (измерение: Δ цена/%, бары, время) ---------- */
-  let measureMode = false, mLayer = null, mBox = null, mLabel = null, mDrag = null;
+  let measureMode = false, mLayer = null, mBox = null, mLabel = null, mDrag = null, mSumTop = null, mSumBot = null;
   const fmtDur = (ms) => { const d = Math.floor(ms / 86400000), h = Math.floor(ms % 86400000 / 3600000), m = Math.floor(ms % 3600000 / 60000); if (d > 0) return d + 'д' + (h ? ' ' + h + 'ч' : ''); if (h > 0) return h + 'ч' + (m ? ' ' + m + 'м' : ''); return m + 'м'; };
   function ensureMeasure() {
     if (mLayer) return;
@@ -2071,9 +2071,14 @@
     (host || document.body).appendChild(mLayer);
     mBox = document.createElement('div'); mBox.style.cssText = 'position:fixed;border:1px solid #3aa0ff;background:rgba(58,160,255,0.10);pointer-events:none;display:none;z-index:251';
     mLabel = document.createElement('div'); mLabel.style.cssText = 'position:fixed;z-index:252;background:#121722;border:1px solid #2a3a4f;border-radius:6px;padding:4px 8px;font-size:12px;color:#d7deea;pointer-events:none;white-space:nowrap;display:none;box-shadow:0 6px 20px rgba(0,0,0,.5)';
-    document.body.appendChild(mBox); document.body.appendChild(mLabel);
+    // суммы перевеса Ф/Ю ВНУТРИ выделения: шорт — слева-сверху, лонг — слева-снизу
+    const sumCss = 'position:fixed;z-index:252;background:rgba(18,23,34,0.92);border:1px solid #2a3a4f;border-radius:6px;padding:3px 7px;font-size:12px;font-weight:600;pointer-events:none;white-space:nowrap;display:none;line-height:1.35;box-shadow:0 6px 20px rgba(0,0,0,.5)';
+    mSumTop = document.createElement('div'); mSumTop.style.cssText = sumCss;
+    mSumBot = document.createElement('div'); mSumBot.style.cssText = sumCss;
+    document.body.appendChild(mBox); document.body.appendChild(mLabel); document.body.appendChild(mSumTop); document.body.appendChild(mSumBot);
     mLayer.addEventListener('mousedown', measureDown);
   }
+  function hideMeasureSums() { if (mSumTop) mSumTop.style.display = 'none'; if (mSumBot) mSumBot.style.display = 'none'; }
   const measureSlotAt = (x, y) => slots.find((s) => { if (!s.cellEl) return false; const r = s.cellEl.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; });
   const measureCoord = (slot, x, y) => { try { const r = slot.cellEl.getBoundingClientRect(); return slot.chart.convertFromPixel({ x: x - r.left, y: y - r.top }, { paneId: 'candle_pane' }); } catch (e) { return null; } };
   function measureDown(e) {
@@ -2103,12 +2108,32 @@
     mLabel.innerHTML = '<b style="color:' + (up ? '#7fe0c0' : '#f0a0a0') + '">' + (up ? '+' : '') + dp.toFixed(prec) + '  (' + (up ? '+' : '') + pct.toFixed(2) + '%)</b>' + (bars != null ? '<span style="color:#8b93a7"> · ' + bars + ' бар' + tstr + '</span>' : '');
     mLabel.style.left = Math.min(window.innerWidth - mLabel.offsetWidth - 6, e.clientX + 14) + 'px';
     mLabel.style.top = Math.max(6, T - 30) + 'px';
+    // СУММЫ ПЕРЕВЕСА Ф/Ю в выделенном диапазоне баров: шорт слева-сверху, лонг слева-снизу
+    const netKeys = ['fizNet', 'yurNet'].filter((k) => window.LUN_FUTOI_MARK && window.LUN_FUTOI_MARK[k]);
+    const fd = slot.futoiData;
+    if (netKeys.length && fd && fd.snaps && fd.snaps.length && i0 != null && i1 != null && window.LunFutoi && window.LunFutoi.netSumsInRange) {
+      const st = futoiTfSettings(slot.tf, slot.instrument);
+      const sumAll = !!(window.LUN.FUTOI && window.LUN.FUTOI.netSumAll);
+      const sums = window.LunFutoi.netSumsInRange(fd.snaps, list, i0, i1, netKeys, st, st.weightMin || 0, sumAll);
+      const kf = (n) => (n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : Math.round(n));
+      let shortHtml = '', longHtml = '';
+      netKeys.forEach((k) => { const s = sums[k]; if (!s) return;
+        shortHtml += '<div style="color:' + s.colAsk + '">' + s.tag + ' шорт Σ ' + kf(s.short) + '</div>';
+        longHtml += '<div style="color:' + s.colBid + '">' + s.tag + ' лонг Σ ' + kf(s.long) + '</div>';
+      });
+      shortHtml += '<div style="color:#7f8aa0;font-weight:400;font-size:10px">' + (sumAll ? 'все бары' : 'по порогу') + '</div>';
+      mSumTop.innerHTML = shortHtml; mSumBot.innerHTML = longHtml;
+      mSumTop.style.display = 'block'; mSumBot.style.display = 'block';
+      const topW = mSumTop.offsetWidth, botW = mSumBot.offsetWidth;
+      mSumTop.style.left = Math.max(4, L - 6 - topW) + 'px'; mSumTop.style.top = Math.max(6, T) + 'px';
+      mSumBot.style.left = Math.max(4, L - 6 - botW) + 'px'; mSumBot.style.top = Math.max(6, T + H - mSumBot.offsetHeight) + 'px';
+    } else { hideMeasureSums(); }
   }
   function measureUp() { window.removeEventListener('mousemove', measureMove); window.removeEventListener('mouseup', measureUp); mDrag = null; }
   function setMeasure(on) {
     measureMode = on; ensureMeasure();
     mLayer.style.display = on ? 'block' : 'none';
-    if (!on) { mBox.style.display = 'none'; mLabel.style.display = 'none'; mDrag = null; }
+    if (!on) { mBox.style.display = 'none'; mLabel.style.display = 'none'; hideMeasureSums(); mDrag = null; }
     const b = document.querySelector('[data-role="measure"]'); if (b) b.classList.toggle('active', on);
   }
   // Быстрая линейка: зажать Shift + ЛКМ и протянуть — мерит, пока держишь; отпустил —
@@ -2125,7 +2150,7 @@
     const up = () => {
       window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
       mDrag = null;
-      if (!measureMode) { mBox.style.display = 'none'; mLabel.style.display = 'none'; }
+      if (!measureMode) { mBox.style.display = 'none'; mLabel.style.display = 'none'; hideMeasureSums(); }
     };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     measureMove(e);
