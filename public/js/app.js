@@ -2998,6 +2998,7 @@
       </div>
       <label style="${row}">🔒 Блокировка <input id="sp-lock" type="checkbox"></label>
       <div id="sp-angle-row" style="${row};display:none;border-top:1px solid #232b3a;margin-top:6px;padding-top:8px">Угол ∠ <span><input id="sp-angle" type="number" step="any" style="width:96px;background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:3px"> <span id="sp-angle-clr" title="Вернуть по 2 точкам" style="cursor:pointer;color:#8b93a7">↺</span></span></div>
+      <label id="sp-prof-row" style="${row};display:none;border-top:1px solid #232b3a;margin-top:6px;padding-top:8px" title="POC и границы Value Area (VAH/VAL) всегда рисуются через выделение; галка тянет их дальше вправо до края">POC/VA вправо <input id="sp-pocext" type="checkbox"></label>
       <button id="sp-del" style="width:100%;margin-top:8px;background:#2a1720;color:#ef8a88;border:1px solid #5a2b33;border-radius:6px;padding:6px;cursor:pointer">Удалить (Del)</button>`;
     document.body.appendChild(p);
     p.querySelector('#sp-close').onclick = hideStylePanel;
@@ -3009,6 +3010,7 @@
     p.querySelector('#sp-textbg').onchange = applyTextSettings;
     p.querySelector('#sp-angle').oninput = applyGannAngle;
     p.querySelector('#sp-angle-clr').onclick = () => { p.querySelector('#sp-angle').value = ''; applyGannAngle(); };
+    p.querySelector('#sp-pocext').onchange = applyProfileSettings;
     stylePanelEl = p; return p;
   }
   const OV_NAMES = { lun_rect: 'Прямоугольник', lun_gann: 'Линия Ганна', lun_arrow: 'Стрелка', lun_hray: 'Луч ⨯N', lun_vprofile: 'Профиль объёма', lun_gannbox: 'Gann Box', lun_gannsquare: 'Квадрат Ганна', lun_text: 'Текст', horizontalStraightLine: 'Уровень', segment: 'Трендовая' };
@@ -3046,7 +3048,19 @@
       p.querySelector('#sp-fontsize').value = ed.fontSize || 14;
       p.querySelector('#sp-textbg').checked = !!ed.bg;
     } else textRow.style.display = 'none';
+    // строка профиля объёма — галка «тянуть POC/VA вправо»
+    const profRow = p.querySelector('#sp-prof-row');
+    if (ov.name === 'lun_vprofile') { profRow.style.display = 'flex'; p.querySelector('#sp-pocext').checked = !!ed.pocExtend; }
+    else profRow.style.display = 'none';
     p.style.display = 'block';
+  }
+  function applyProfileSettings() {
+    const id = state.selectedOverlayId, ov = state.selectedOverlay; if (!id || !ov || ov.name !== 'lun_vprofile' || !stylePanelEl) return;
+    const ed = Object.assign({}, (ov.extendData && typeof ov.extendData === 'object') ? ov.extendData : {});
+    ed.pocExtend = stylePanelEl.querySelector('#sp-pocext').checked;
+    ov.extendData = ed;
+    try { state.chart.overrideOverlay({ id, extendData: ed }); } catch (e) {}
+    recordOverlay(ov);
   }
   function applyTextSettings() {
     const id = state.selectedOverlayId, ov = state.selectedOverlay; if (!id || !ov || ov.name !== 'lun_text' || !stylePanelEl) return;

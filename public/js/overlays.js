@@ -190,7 +190,7 @@
   /* --- профиль объёма (горизонтальный объём) по диапазону --- */
   kc.registerOverlay({
     name: 'lun_vprofile', totalStep: 3, needDefaultPointFigure: true,
-    createPointFigures: ({ coordinates, overlay, chart, xAxis, yAxis }) => {
+    createPointFigures: ({ coordinates, overlay, chart, xAxis, yAxis, bounding }) => {
       if (coordinates.length < 2) return [];
       const [a, b] = coordinates, st = styleOf(overlay);
       const box = { type: 'rect', attrs: { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) }, styles: { style: 'stroke', color: 'transparent', borderColor: 'rgba(240,192,64,0.35)', size: 1 } };
@@ -229,7 +229,23 @@
         figs.push({ type: 'rect', attrs: { x: xLeft, y: yTop, width: w, height: Math.max(1, yBot - yTop - 1) }, styles: { style: 'fill', color } });
       }
       const pocPrice = minL + (pocK + 0.5) * binH;
-      figs.push({ type: 'text', attrs: { x: xLeft + maxW + 4, y: yAxis.convertToPixel(pocPrice), text: 'POC ' + (pocPrice >= 1000 ? pocPrice.toFixed(0) : pocPrice.toFixed(3)), baseline: 'middle' }, ignoreEvent: true, styles: { color: st.color, size: 11 } });
+      // Линии POC и границ Value Area (VAH/VAL): ВСЕГДА через выделение;
+      // ed.pocExtend (галка в панели свойств) — тянет их дальше вправо до края.
+      const xRight = Math.max(a.x, b.x);
+      const ed = overlay.extendData && typeof overlay.extendData === 'object' ? overlay.extendData : {};
+      const xEnd = ed.pocExtend ? Math.max(xRight, (bounding && bounding.width) || xRight) : xRight;
+      const yPoc = yAxis.convertToPixel(pocPrice);
+      const yVAH = yAxis.convertToPixel(minL + (hiK + 1) * binH);
+      const yVAL = yAxis.convertToPixel(minL + loK * binH);
+      const vaCol = 'rgba(120,170,220,0.9)';
+      figs.push({ type: 'line', attrs: { coordinates: [{ x: xLeft, y: yPoc }, { x: xEnd, y: yPoc }] }, ignoreEvent: true, styles: lineStyle(st) });
+      figs.push({ type: 'line', attrs: { coordinates: [{ x: xLeft, y: yVAH }, { x: xEnd, y: yVAH }] }, ignoreEvent: true, styles: { color: vaCol, size: 1, style: 'dashed', dashedValue: [6, 4] } });
+      figs.push({ type: 'line', attrs: { coordinates: [{ x: xLeft, y: yVAL }, { x: xEnd, y: yVAL }] }, ignoreEvent: true, styles: { color: vaCol, size: 1, style: 'dashed', dashedValue: [6, 4] } });
+      figs.push({ type: 'text', attrs: { x: xLeft + maxW + 4, y: yPoc, text: 'POC ' + (pocPrice >= 1000 ? pocPrice.toFixed(0) : pocPrice.toFixed(3)), baseline: 'middle' }, ignoreEvent: true, styles: { color: st.color, size: 11 } });
+      if (ed.pocExtend) {
+        figs.push({ type: 'text', attrs: { x: xEnd - 3, y: yVAH - 4, text: 'VAH', baseline: 'bottom', align: 'right' }, ignoreEvent: true, styles: { color: vaCol, size: 10 } });
+        figs.push({ type: 'text', attrs: { x: xEnd - 3, y: yVAL + 4, text: 'VAL', baseline: 'top', align: 'right' }, ignoreEvent: true, styles: { color: vaCol, size: 10 } });
+      }
       return figs;
     },
   });
