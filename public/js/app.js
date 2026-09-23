@@ -3454,6 +3454,10 @@
     wsApplyDone = true;
   };
   window.LUN_SCHEDULE_WS = scheduleWsSave;
+  // Мост для скринера (screener.js): открыть инструмент в графике и доступ к избранному.
+  window.LUN_OPEN_INSTRUMENT = function (ins) { if (!ins) return; state.instrument = ins; load(); };
+  window.LUN_FAV_API = favApi;   // () => { isFav(ins), toggle(ins) }
+  window.LUN_RESIZE_CHARTS = function () { slots.forEach((s) => { try { s.chart.resize(); } catch (e) {} }); };
 
   function alertsModal() {
     if (!window.LunAuth || !window.LunAuth.user) { alert('Чтобы ставить алерты, войдите в аккаунт (кнопка 👤 справа).'); return; }

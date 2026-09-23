@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AG-TS — астро-ганновская торговая система</title>
-  <link rel="stylesheet" href="/css/style.css?v=148" />
+  <link rel="stylesheet" href="/css/style.css?v=149" />
 </head>
 <body>
   <header class="menubar">
@@ -23,42 +23,50 @@
     <div class="menu"><button class="menu-btn">⚙️ Настройки ▾</button><div class="menu-drop"><div id="settings" class="btns"></div></div></div>
     <div class="menu"><button class="menu-btn">🔔 Алерты ▾</button><div class="menu-drop"><div id="alerts" class="btns"></div></div></div>
     <span class="spacer"></span>
+    <div class="menu"><button class="menu-btn" id="view-btn">📈 Графики ▾</button><div class="menu-drop" id="view-drop"><div class="btns">
+      <button data-view="charts" class="active">📈 Графики</button>
+      <button data-view="screener">📊 Скриннер</button>
+      <button data-view="options">⛓ Опционы</button>
+    </div></div></div>
     <span id="conn-dot" class="conn-dot" title="подключение к данным"></span>
     <div class="menu"><button class="menu-btn">▦ Экраны ▾</button><div class="menu-drop" id="layouts-drop"><div id="layouts" class="btns"></div></div></div>
   </header>
 
   <div id="sym-title" class="sym-title"></div>
   <main id="chart"></main>
+  <section id="screener" style="display:none"></section>
+  <section id="options-view" style="display:none"></section>
 
   <!-- вендор-библиотеки (локально, без CDN) -->
   <script src="/vendor/klinecharts.min.js"></script>
   <script src="/vendor/astronomy.browser.min.js"></script>
   <!-- код приложения (порядок важен). ?v= — сброс кэша при обновлении. -->
-  <script src="/js/config.js?v=148"></script>
-  <script src="/js/settings.js?v=148"></script>
-  <script src="/js/astro.js?v=148"></script>
-  <script src="/js/ts-astro.js?v=148"></script>
-  <script src="/js/markov.js?v=148"></script>
-  <script src="/js/synastry.js?v=148"></script>
-  <script src="/js/montecarlo.js?v=148"></script>
-  <script src="/js/sbc.js?v=148"></script>
-  <script src="/js/cycle.js?v=148"></script>
-  <script src="/js/sviridov.js?v=148"></script>
-  <script src="/js/help.js?v=148"></script>
-  <script src="/js/indicators.js?v=148"></script>
-  <script src="/js/moex-futoi.js?v=148"></script>
-  <script src="/js/overlays.js?v=148"></script>
-  <script src="/js/iss-client.js?v=148"></script>
-  <script src="/js/providers/base.js?v=148"></script>
-  <script src="/js/providers/crypto.js?v=148"></script>
-  <script src="/js/providers/yahoo.js?v=148"></script>
-  <script src="/js/instruments.js?v=148"></script>
-  <script src="/js/data.js?v=148"></script>
-  <script src="/js/stream.js?v=148"></script>
-  <script src="/js/news.js?v=148"></script>
-  <script src="/js/research.js?v=148"></script>
-  <script src="/js/backtest.js?v=148"></script>
-  <script src="/js/app.js?v=148"></script>
-  <script src="/js/auth.js?v=148"></script>
+  <script src="/js/config.js?v=149"></script>
+  <script src="/js/settings.js?v=149"></script>
+  <script src="/js/astro.js?v=149"></script>
+  <script src="/js/ts-astro.js?v=149"></script>
+  <script src="/js/markov.js?v=149"></script>
+  <script src="/js/synastry.js?v=149"></script>
+  <script src="/js/montecarlo.js?v=149"></script>
+  <script src="/js/sbc.js?v=149"></script>
+  <script src="/js/cycle.js?v=149"></script>
+  <script src="/js/sviridov.js?v=149"></script>
+  <script src="/js/help.js?v=149"></script>
+  <script src="/js/indicators.js?v=149"></script>
+  <script src="/js/moex-futoi.js?v=149"></script>
+  <script src="/js/overlays.js?v=149"></script>
+  <script src="/js/iss-client.js?v=149"></script>
+  <script src="/js/providers/base.js?v=149"></script>
+  <script src="/js/providers/crypto.js?v=149"></script>
+  <script src="/js/providers/yahoo.js?v=149"></script>
+  <script src="/js/instruments.js?v=149"></script>
+  <script src="/js/data.js?v=149"></script>
+  <script src="/js/stream.js?v=149"></script>
+  <script src="/js/news.js?v=149"></script>
+  <script src="/js/research.js?v=149"></script>
+  <script src="/js/backtest.js?v=149"></script>
+  <script src="/js/app.js?v=149"></script>
+  <script src="/js/screener.js?v=149"></script>
+  <script src="/js/auth.js?v=149"></script>
 </body>
 </html>

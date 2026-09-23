@@ -131,5 +131,5 @@
     loadMoex();
   }
 
-  window.LunInstruments = { open };
+  window.LunInstruments = { open, stocks, futures };
 })();
