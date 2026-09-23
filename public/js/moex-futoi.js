@@ -762,6 +762,55 @@
     },
   });
 
+  /* --- Макс-объёмный узел внутри бара (по суб-барам M5/M15) ------------------
+   * Для каждого бара находим суб-бар с максимальным объёмом и вешаем КРУГ в той
+   * точке цены, где этот объём прошёл (close суб-бара). Радиус ∝ объёму (в кв.
+   * корне, по максимуму видимых узлов). Цвет: MOEX — по агрессору узла (volB−volS,
+   * покупатели/продавцы), иначе — по трети бара (низ=покупатели, верх=продавцы).
+   * Порог показа (по объёму узла) приходит в cfg.thr — задаётся в порогах маркеров.
+   * extendData: { subBars:[{ts,close,vol,volB?,volS?}], hasAggr, cfg:{thr,third} } */
+  kc.registerIndicator({
+    name: 'MaxVolNode', shortName: 'Макс-объём узел', series: 'price', figures: [],
+    calc: (dl) => dl.map((d) => d.timestamp),
+    draw: ({ ctx, chart, xAxis, yAxis, indicator }) => {
+      const ed = indicator.extendData || {}, sub = ed.subBars || [], cfg = ed.cfg || {}, hasAggr = !!ed.hasAggr;
+      const thr = cfg.thr || 0, third = cfg.third || 0.34;
+      window.LUN_MAXVOL_HITS = [];
+      if (!sub.length) return true;
+      const list = chart.getDataList(); if (!list.length) return true;
+      const idxOf = barIndexer(list);
+      const agg = new Map();                    // barIndex -> { maxVol, maxSub }
+      for (const s of sub) { const i = idxOf(s.ts); if (i < 0) continue; let a = agg.get(i); if (!a) { a = { maxVol: -1, maxSub: null }; agg.set(i, a); } if ((s.vol || 0) > a.maxVol) { a.maxVol = s.vol || 0; a.maxSub = s; } }
+      const range = chart.getVisibleRange();
+      const from = Math.max(0, range.from | 0), to = Math.min(list.length, Math.ceil(range.to) + 1);
+      let vmax = 1;                             // масштаб радиуса — по видимым узлам ≥ порога
+      for (let i = from; i < to; i++) { const a = agg.get(i); if (a && a.maxVol >= thr && a.maxVol > vmax) vmax = a.maxVol; }
+      const rMin = 4, rMax = 18;
+      for (let i = from; i < to; i++) {
+        const a = agg.get(i); if (!a || !a.maxSub) continue; const bar = list[i]; if (!bar) continue;
+        const vol = a.maxVol; if (vol < thr) continue;
+        const rng = bar.high - bar.low; if (rng <= 0) continue;
+        const price = a.maxSub.close;
+        const x = xAxis.convertToPixel(i), y = yAxis.convertToPixel(price);
+        const r = rMin + (rMax - rMin) * Math.sqrt(Math.min(1, vol / vmax));
+        const pos = (price - bar.low) / rng;
+        let col, edge, who;
+        if (hasAggr && a.maxSub.volB != null) {
+          const net = (a.maxSub.volB || 0) - (a.maxSub.volS || 0);
+          if (net > 0) { col = 'rgba(38,166,154,0.5)'; edge = '#26a69a'; who = 'покупатели'; }
+          else if (net < 0) { col = 'rgba(239,83,80,0.5)'; edge = '#ef5350'; who = 'продавцы'; }
+          else { col = 'rgba(150,160,180,0.45)'; edge = '#8b93a7'; who = '—'; }
+        } else if (pos <= third) { col = 'rgba(38,166,154,0.5)'; edge = '#26a69a'; who = 'покупатели (низ)'; }
+        else if (pos >= 1 - third) { col = 'rgba(239,83,80,0.5)'; edge = '#ef5350'; who = 'продавцы (верх)'; }
+        else { col = 'rgba(150,160,180,0.45)'; edge = '#8b93a7'; who = 'середина'; }
+        ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill();
+        ctx.strokeStyle = edge; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.stroke();
+        window.LUN_MAXVOL_HITS.push({ x, y, r: r + 2, vol, who, price });
+      }
+      return true;
+    },
+  });
+
   // Агрегат FUTOI по бару (для тултипа при клике): дельты счетов/контрактов и время.
   function barAgg(snaps, list, index) {
     const b = bucketByBar(snaps, list).get(index); if (!b) return null;

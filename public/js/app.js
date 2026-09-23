@@ -1611,6 +1611,73 @@
     return slot.buysellOn;
   }
   function removeBuySell(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {} } slot.buysellOn = false; }
+  /* ---------- Макс-объёмный узел в баре (круг ∝ объёму) ---------------------
+   * H1 и старше: узлы по суб-барам (MOEX — tradestats 5м, для D/W агрегируем в
+   * 15м с агрессором; прочие провайдеры — свечи M5/M15/H1). Круг в точке цены
+   * макс-объёмного суб-бара, радиус ∝ объёму; порог показа — на каждый ТФ. */
+  function subTfOf(tf) {
+    if (tf.type === 'hour') return { id: 'M5s', type: 'minute', span: 5, iss: 5 };
+    if (tf.type === 'day') return { id: 'M15s', type: 'minute', span: 15, iss: 15 };
+    if (tf.type === 'week') return { id: 'H1s', type: 'hour', span: 1, iss: 60 };
+    if (tf.type === 'minute' && tf.span >= 15) return { id: 'M5s', type: 'minute', span: 5, iss: 5 };
+    return null;
+  }
+  function agg15(rowsN) {
+    const M = 15 * 60000, m = new Map();
+    for (const r of rowsN) { const k = Math.floor(r.ts / M) * M; let a = m.get(k); if (!a) { a = { ts: k, close: r.close, volB: 0, volS: 0 }; m.set(k, a); } a.volB += r.volB || 0; a.volS += r.volS || 0; a.close = r.close; }
+    return [...m.values()].sort((x, y) => x.ts - y.ts).map((a) => ({ ts: a.ts, close: a.close, vol: a.volB + a.volS, volB: a.volB, volS: a.volS }));
+  }
+  function maxvolCfg(slot) { const M = window.LUN.MAXVOL || {}; const t = (M.tf && M.tf[slot.tf.id]) || {}; return { thr: t.thr || 0, third: M.third || 0.34 }; }
+  async function ensureMaxVol(slot, force) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return null;
+    const ins = slot.instrument, tf = slot.tf;
+    const list = c.getDataList(); if (!list || !list.length) { alert('Нет баров на графике.'); return null; }
+    if (tf.type === 'minute' && tf.span < 15) { alert('Макс-объём узел — от M15 и старше (нужны суб-бары M5/M15).'); return null; }
+    const moex = (ins.provider || 'moex') === 'moex';
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+    const firstMs = list[0].timestamp, lastMs = list[list.length - 1].timestamp;
+    const winDays = tf.type === 'week' ? 180 : tf.type === 'day' ? 90 : 60;
+    const fromMs = Math.max(firstMs, lastMs - winDays * 86400000);
+    const use15 = (tf.type === 'day' || tf.type === 'week');
+    const key = (moex ? 'ts' : 'cd') + '|' + (ins.ticker || ins.id) + '|' + tf.id + '|' + fmt(fromMs) + '|' + fmt(lastMs);
+    if (!force && slot.maxvolData && slot.maxvolData.key === key) return slot.maxvolData;
+    let subBars = [], hasAggr = false;
+    try {
+      if (moex) {
+        const secid = await window.LunData.resolveTicker(ins);
+        const rows = await window.LunISS.fetchTradeStats(secid, fmt(fromMs), fmt(lastMs + 86400000), algoMkt(ins));
+        const rowsN = window.LunFutoi.normalizeTradeStats(rows);
+        if (rowsN.length) { hasAggr = true; subBars = use15 ? agg15(rowsN) : rowsN.map((r) => ({ ts: r.ts, close: r.close, vol: (r.volB || 0) + (r.volS || 0), volB: r.volB, volS: r.volS })); }
+      } else {
+        const stf = subTfOf(tf); if (!stf) { alert('Для этого ТФ суб-бары недоступны.'); return null; }
+        const bars = await window.LunData.fetchTail(ins, stf, fromMs);
+        subBars = (bars || []).filter((b) => b.timestamp >= fromMs).map((b) => ({ ts: b.timestamp, close: b.close, vol: b.volume || 0 }));
+      }
+    } catch (e) { alert('Макс-объём: данные не загрузились: ' + e.message); return null; }
+    if (!subBars.length) { alert('Нет суб-баров для макс-объёма за период (' + (moex ? 'нужна подписка AlgoPack' : 'провайдер не отдал M5/M15') + ').'); return null; }
+    slot.maxvolData = { key, subBars, hasAggr };
+    return slot.maxvolData;
+  }
+  async function applyMaxVol(slot) {
+    slot = slot || state; const c = slot && slot.chart; if (!c) return false;
+    const d = await ensureMaxVol(slot); if (!d) return false;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'MaxVolNode' }); } catch (e) {}
+    try { c.createIndicator({ name: 'MaxVolNode', paneId: 'candle_pane', shortName: 'Макс-объём', extendData: { subBars: d.subBars, hasAggr: d.hasAggr, cfg: maxvolCfg(slot) } }, true); slot.maxvolOn = true; }
+    catch (e) { slot.maxvolOn = false; }
+    return slot.maxvolOn;
+  }
+  function removeMaxVol(slot) { slot = slot || state; const c = slot && slot.chart; if (c) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'MaxVolNode' }); } catch (e) {} } slot.maxvolOn = false; }
+  function maxVolThresholdModal() {
+    const M = window.LUN.MAXVOL = window.LUN.MAXVOL || { third: 0.34, tf: {} }; M.tf = M.tf || {};
+    const tfs = window.LUN.TIMEFRAMES.filter((t) => !(t.type === 'minute' && t.span < 15));
+    const rows = tfs.map((t) => { const v = (M.tf[t.id] && M.tf[t.id].thr) || 0; return `<label style="display:flex;justify-content:space-between;align-items:center;margin:6px 0">${t.title} — порог объёма узла <input type="number" min="0" step="100" id="mv-${t.id}" value="${v}" style="width:120px;background:#0b0e14;color:#d7deea;border:1px solid #232b3a;border-radius:4px;padding:4px"></label>`; }).join('');
+    openModal('⚙ Порог макс-объёма (узла) по ТФ', `<p style="color:#8b93a7;margin:0 0 8px">Круг рисуется, только если объём макс-объёмного суб-бара ≥ порога. 0 — показывать все. Радиус круга ∝ объёму.</p>${rows}<button id="mv-save" style="width:100%;margin-top:10px;background:#1f2b3d;color:#d7deea;border:1px solid #3aa0ff;border-radius:6px;padding:8px;cursor:pointer">Сохранить</button>`);
+    const bg = document.querySelector('.lun-modal-bg'); if (!bg) return;
+    bg.querySelector('#mv-save').onclick = () => {
+      tfs.forEach((t) => { const el = bg.querySelector('#mv-' + t.id); if (el) { M.tf[t.id] = M.tf[t.id] || {}; M.tf[t.id].thr = Math.max(0, +el.value || 0); } });
+      bg.remove(); if (state.maxvolOn) applyMaxVol(state); scheduleWsSave();
+    };
+  }
   /* ---------- HI2: концентрация участников (крупняк, AlgoPack) ----------
    * hhi_* по бару: высокая концентрация = торговлю двигают немногие крупные игроки. */
   const HI2_PANE = 'pane_hi2';
@@ -2370,12 +2437,13 @@
     const alertsWas = slot.alertsOn;
     try { c.removeIndicator({ paneId: 'candle_pane', name: 'MegaAlerts' }); } catch (e) {}
     slot.alerts = null; slot.alertsOn = false;
-    const troiWas = slot.troiOn, bsWas = slot.buysellOn, hi2Was = slot.hi2On, obWas = slot.obImbOn;
+    const troiWas = slot.troiOn, bsWas = slot.buysellOn, hi2Was = slot.hi2On, obWas = slot.obImbOn, mvWas = slot.maxvolOn;
     try { c.removeIndicator({ paneId: TROI_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: BUYSELL_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: HI2_PANE }); } catch (e) {}
     try { c.removeIndicator({ paneId: OBIMB_PANE }); } catch (e) {}
-    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false; slot.hi2 = null; slot.hi2On = false; slot.obstats = null; slot.obImbOn = false;
+    try { c.removeIndicator({ paneId: 'candle_pane', name: 'MaxVolNode' }); } catch (e) {}
+    slot.tradeStats = null; slot.troiOn = false; slot.buysellOn = false; slot.hi2 = null; slot.hi2On = false; slot.obstats = null; slot.obImbOn = false; slot.maxvolData = null; slot.maxvolOn = false;
     // опционные уровни — по инструменту: держим при смене ТФ, снимаем при смене инструмента.
     if (insChanged) { try { c.removeIndicator({ paneId: 'candle_pane', name: 'OptionLevels' }); } catch (e) {} slot.optlev = null; slot.optlevOn = false; syncOptBtn(slot); }
     // экспирации опционов — даты абсолютные: при смене инструмента пересобираем под
@@ -2421,6 +2489,7 @@
       if (bsWas) rebuildBuySell(slot);
       if (hi2Was) rebuildHI2(slot);
       if (obWas) rebuildOBImb(slot);
+      if (mvWas) applyMaxVol(slot);
       if (alertsWas) applyAlerts(slot);
     };
     if (slot._onLoaded) window.removeEventListener('lun:datasource', slot._onLoaded);   // прошлая загрузка ещё не пришла — её обработчик снимаем
@@ -3313,6 +3382,7 @@
       svir: window.LUN.SVIR || null,
       vwapList: (window.LUN.INDICATORS && window.LUN.INDICATORS.vwapList) || null,
       futoi: { tf: (window.LUN.FUTOI && window.LUN.FUTOI.tf) || {}, byIns: (window.LUN.FUTOI && window.LUN.FUTOI.byIns) || {}, netSumAll: !!(window.LUN.FUTOI && window.LUN.FUTOI.netSumAll) },
+      maxvol: { third: (window.LUN.MAXVOL && window.LUN.MAXVOL.third) || 0.34, tf: (window.LUN.MAXVOL && window.LUN.MAXVOL.tf) || {} },
       swings: s.swings || null,
       draw: { snap: !!window.LUN.SNAP, behind: !!(window.LUN.DRAW && window.LUN.DRAW.behind), boxForecast: !!(window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecast), boxForecastCount: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastCount) || 2, boxForecastDir: (window.LUN.GANNTOOLS.box && window.LUN.GANNTOOLS.box.forecastDir) || 'auto' },
       lineTypes: window.LUN.LINETYPES || null, curLineType: window.LUN.CUR_LINETYPE || null, deltaReset: (window.LUN.DELTA && window.LUN.DELTA.reset) || 'day',
@@ -3325,7 +3395,7 @@
         vwap: !!s.vwapOn, expiry: !!s.expiryOn,
         // индикаторы МОЕКС (FUTOI): маркеры физ/юр на свечах, поток физ/юр, ΔОИ, покуп/прод
         futoiMark: Object.assign({}, window.LUN_FUTOI_MARK || {}), futoiFlow: Object.assign({}, window.LUN_FUTOI_SHOW || {}),
-        troi: !!s.troiOn, buysell: !!s.buysellOn, hi2: !!s.hi2On, hi2Metric: window.__hi2Metric || null, obimb: !!s.obImbOn, alerts: !!s.alertsOn,
+        troi: !!s.troiOn, buysell: !!s.buysellOn, hi2: !!s.hi2On, hi2Metric: window.__hi2Metric || null, obimb: !!s.obImbOn, alerts: !!s.alertsOn, maxvol: !!s.maxvolOn,
       },
       drawings: Object.values(s.drawings || {}),
       drawStore: s.drawStore || null,
@@ -3385,6 +3455,11 @@
         // миграция старого стола (v133): marksByTf + глобальные weightMin/ringMax → tf[id]
         if (ws.futoi.marksByTf) Object.keys(ws.futoi.marksByTf).forEach((id) => { window.LUN.FUTOI.tf[id] = Object.assign({ weightMin: ws.futoi.weightMin || 0, ringMax: ws.futoi.ringMax != null ? ws.futoi.ringMax : 3 }, ws.futoi.marksByTf[id]); });
       }
+      if (ws.maxvol) {
+        window.LUN.MAXVOL = window.LUN.MAXVOL || { third: 0.34, tf: {} }; window.LUN.MAXVOL.tf = window.LUN.MAXVOL.tf || {};
+        if (ws.maxvol.third != null) window.LUN.MAXVOL.third = ws.maxvol.third;
+        if (ws.maxvol.tf) Object.assign(window.LUN.MAXVOL.tf, ws.maxvol.tf);
+      }
       if (Array.isArray(ws.vwapList) && ws.vwapList.length) {
         // миграция: старые дефолтные цвета -> новая осевая палитра по типу якоря
         const OLD = window.LUN.VWAP_OLD_DEFAULTS || [], AX = window.LUN.VWAP_AXIS_COLOR || {};
@@ -3398,7 +3473,7 @@
       if (ws.inds) {
         if (ws.inds.futoiMark) window.LUN_FUTOI_MARK = Object.assign({}, ws.inds.futoiMark);
         if (ws.inds.futoiFlow) window.LUN_FUTOI_SHOW = Object.assign({}, ws.inds.futoiFlow);
-        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell; state.hi2On = !!ws.inds.hi2; state.obImbOn = !!ws.inds.obimb; state.alertsOn = !!ws.inds.alerts;
+        state.troiOn = !!ws.inds.troi; state.buysellOn = !!ws.inds.buysell; state.hi2On = !!ws.inds.hi2; state.obImbOn = !!ws.inds.obimb; state.alertsOn = !!ws.inds.alerts; state.maxvolOn = !!ws.inds.maxvol;
         if (ws.inds.hi2Metric) window.__hi2Metric = ws.inds.hi2Metric;
       }
       // рисунки ВСЕХ инструментов — из drawStore; активный инструмент восстановит load()
@@ -3862,6 +3937,14 @@
     }, false, 'Марковский режим: лента BEAR/SIDE/BULL + сигнал + матрица переходов (M)');
     mkBtnRef.dataset.sync = 'markov';
     regHotkey('m', () => mkBtnRef.click());
+    // Макс-объёмный узел в баре (круг ∝ объёму) — фьючерсы/акции MOEX (агрессор) + крипта
+    const mvBtn = mkBtn(indWrap, 'Макс-объём узел (M5/M15)', (b) => {
+      const on = !b.classList.contains('active');
+      if (on) applyMaxVol(state).then((ok) => b.classList.toggle('active', ok !== false));
+      else { b.classList.remove('active'); removeMaxVol(state); }
+    }, false, 'Круг в точке макс-объёмного суб-бара (H1 и старше по M5/M15). Радиус ∝ объёму; цвет — агрессор (MOEX) или треть бара. Порог — «⚙ Порог макс-объёма…»');
+    mvBtn.dataset.sync = 'maxvol';
+    mkBtn(indWrap, '⚙ Порог макс-объёма…', () => { closeMenus(); maxVolThresholdModal(); }, false, 'Порог по объёму узла на каждый ТФ (0 — показывать все)');
     // ============ Подгруппа МОЕКС · физ/юр (AlgoPack FUTOI) ============
     const moexHdr = document.createElement('div'); moexHdr.className = 'menu-note';
     moexHdr.style.cssText = 'color:#7fd0c0;font-weight:600;border-top:1px solid #263041;margin-top:6px;padding-top:8px';
@@ -4301,6 +4384,7 @@
       case 'hi2': return !!state.hi2On;
       case 'obimb': return !!state.obImbOn;
       case 'alerts': return !!state.alertsOn;
+      case 'maxvol': return !!state.maxvolOn;
       case 'mark': return !!(window.LUN_FUTOI_MARK && window.LUN_FUTOI_MARK[arg]);
       case 'flow': return !!(window.LUN_FUTOI_SHOW && window.LUN_FUTOI_SHOW[arg]);
     }
