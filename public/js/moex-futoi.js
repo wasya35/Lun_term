@@ -805,7 +805,7 @@
         else { col = 'rgba(150,160,180,0.45)'; edge = '#8b93a7'; who = 'середина'; }
         ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill();
         ctx.strokeStyle = edge; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.stroke();
-        window.LUN_MAXVOL_HITS.push({ x, y, r: r + 2, vol, who, price });
+        window.LUN_MAXVOL_HITS.push({ x, y, r: r + 2, vol, who, price, ts: a.maxSub.ts, aggr: (hasAggr && a.maxSub.volB != null) ? { b: a.maxSub.volB || 0, s: a.maxSub.volS || 0 } : null, pos: Math.round(pos * 100) });
       }
       return true;
     },

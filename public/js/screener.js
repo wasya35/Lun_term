@@ -76,10 +76,10 @@
     { id: 'mom', label: 'Δ% за 5', group: 'Цена', need: 'bars', applies: () => true, calc: (B) => momN(B.bars, 5), html: pctHtml, ft: 'num' },
     { id: 'posbar', label: 'Закр. в баре %', group: 'Цена', need: 'bars', applies: () => true, calc: (B) => posInBar(B.bars), html: (v) => v == null ? '—' : (v >= 66 ? '<span class="scr-neg">' : v <= 34 ? '<span class="scr-pos">' : '<span class="scr-muted">') + Math.round(v) + '%</span>', ft: 'num' },
     { id: 'ext', label: 'Новый hi/lo(20)', group: 'Цена', need: 'bars', applies: () => true, calc: (B) => newExt(B.bars, 20), html: extFmt, ft: 'sel3' },
-    { id: 'vwap', label: 'VWAP σ', group: 'Цена', need: 'bars', applies: () => true, calc: (B) => vwapSigma(B.bars, 20), html: (v) => v == null ? '—' : '<span class="' + (v >= 2 ? 'scr-neg' : v <= -2 ? 'scr-pos' : 'scr-muted') + '">' + (v > 0 ? '+' : '') + num2(v) + 'σ</span>', ft: 'num' },
+    { id: 'vwap', label: 'VWAP σ', group: 'Цена', need: 'bars', applies: () => true, calc: (B) => vwapSigma(B.bars, 20), html: (v) => v == null ? '—' : '<span class="' + (v >= 2 ? 'scr-neg' : v <= -2 ? 'scr-pos' : 'scr-muted') + '">' + (v > 0 ? '+' : '') + num2(v) + 'σ</span>', ft: 'selVwap' },
     { id: 'volz', label: 'Объём Z(20)', group: 'Объём', need: 'bars', applies: () => true, calc: (B) => volZ(B.bars, 20), html: (v) => v == null ? '—' : '<span class="' + (v >= 2 ? 'scr-pos' : v <= -1 ? 'scr-neg' : 'scr-muted') + '">' + num2(v) + '</span>', ft: 'num' },
     { id: 'rng', label: 'Диапазон ×ср', group: 'Объём', need: 'bars', applies: () => true, calc: (B) => rangeX(B.bars, 14), html: (v) => v == null ? '—' : '<span class="' + (v >= 1.5 ? 'scr-pos' : 'scr-muted') + '">' + num2(v) + '×</span>', ft: 'num' },
-    { id: 'thirds', label: 'Макс-объём треть', group: 'Объём', need: 'sub', applies: () => true, calc: (B) => thirdsLast(B.sub, B.bars), html: thirdsFmt, ft: 'num' },
+    { id: 'thirds', label: 'Макс-объём треть', group: 'Объём', need: 'sub', applies: () => true, calc: (B) => thirdsLast(B.sub, B.bars), html: thirdsFmt, ft: 'selThird' },
     { id: 'delta', label: 'Перевес агрессора', group: 'Микро (MOEX)', need: 'ts', applies: (i) => isMoex(i), calc: (B) => { const t = B.ts ? tsLast(B.ts, B.bars) : null; return t ? t.net : null; }, html: (v) => signHtml(v, '', true), ft: 'num' },
     { id: 'doi', label: 'ΔОИ', group: 'Микро (MOEX)', need: 'ts', applies: (i) => isMoex(i) && isFut(i), calc: (B) => { const t = B.ts && tsLast(B.ts, B.bars); return t ? t.doi : null; }, html: (v) => signHtml(v, '', true), ft: 'num' },
     { id: 'fizyur', label: 'Перевес физ (фьюч)', group: 'Микро (MOEX)', need: 'futoi', applies: (i) => isMoex(i) && isFut(i), calc: (B) => fizyurLast(B.futoi), html: (v) => signHtml(v, '', true), ft: 'num' },
@@ -87,6 +87,28 @@
     { id: 'cyc', label: 'Откл. циклов %', group: 'Астро', need: 'bars', applies: () => true, calc: (B) => cycleDev(B.bars, B.key), html: pctHtml, ft: 'num' },
   ];
   const paramDef = (id) => PARAMS.find((p) => p.id === id);
+
+  /* ---------- типы фильтров: числовой диапазон ИЛИ характеристика (select) ---- */
+  const selHtml = (id, cur, opts) => '<select class="scr-fsel" data-fsel="' + id + '">' + opts.map((o) => '<option value="' + o[0] + '"' + (cur === o[0] ? ' selected' : '') + '>' + o[1] + '</option>').join('') + '</select>';
+  const FT = {
+    num: {
+      render: (id, f) => '<input class="scr-fmin" data-fmin="' + id + '" placeholder="min" value="' + (f.min != null ? f.min : '') + '"><input class="scr-fmax" data-fmax="' + id + '" placeholder="max" value="' + (f.max != null ? f.max : '') + '">',
+      pass: (v, f) => { if (f.min != null && (v == null || v < f.min)) return false; if (f.max != null && (v == null || v > f.max)) return false; return true; },
+    },
+    sel3: {
+      render: (id, f) => selHtml(id, f.sel || '', [['', 'все'], ['1', '▲hi'], ['-1', '▼lo'], ['0', '—']]),
+      pass: (v, f) => !f.sel ? true : String(v) === f.sel,
+    },
+    selThird: {
+      render: (id, f) => selHtml(id, f.sel || '', [['', 'все'], ['low', '▼ низ (покуп)'], ['top', '▲ верх (прод)'], ['mid', 'середина']]),
+      pass: (v, f) => { if (!f.sel) return true; if (v == null) return false; if (f.sel === 'low') return v >= 0.34; if (f.sel === 'top') return v <= -0.34; return Math.abs(v) < 0.34; },
+    },
+    selVwap: {
+      render: (id, f) => selHtml(id, f.sel || '', [['', 'все'], ['above', 'выше VWAP'], ['below', 'ниже VWAP'], ['p1', '≥ +1σ'], ['p2', '≥ +2σ'], ['m1', '≤ −1σ'], ['m2', '≤ −2σ'], ['near1', 'около ±1σ'], ['near2', 'около ±2σ']]),
+      pass: (v, f) => { if (!f.sel) return true; if (v == null) return false; switch (f.sel) { case 'above': return v > 0; case 'below': return v < 0; case 'p1': return v >= 1; case 'p2': return v >= 2; case 'm1': return v <= -1; case 'm2': return v <= -2; case 'near1': return Math.abs(Math.abs(v) - 1) <= 0.35; case 'near2': return Math.abs(Math.abs(v) - 2) <= 0.35; } return true; },
+    },
+  };
+  const ftOf = (col) => FT[col.ft] || FT.num;
 
   /* ---------- CSS ---------- */
   function css() {
@@ -258,10 +280,7 @@
     return base.concat(extra);
   }
   function passFilters(r, c) {
-    for (const col of c) { const f = S.filters[col.id]; if (!f) continue; const v = col.get ? col.get(r) : null;
-      if (col.ft === 'sel3') { if (f.sel !== '' && f.sel != null && String(v) !== f.sel) return false; }
-      else { if (f.min != null && (v == null || v < f.min)) return false; if (f.max != null && (v == null || v > f.max)) return false; }
-    }
+    for (const col of c) { const f = S.filters[col.id]; if (!f || col.nof) continue; const v = col.get ? col.get(r) : null; if (!ftOf(col).pass(v, f)) return false; }
     return true;
   }
   function cellHtml(col, r) {
@@ -284,12 +303,7 @@
     // строка заголовков
     let hh = '<tr>' + c.map((col) => `<th class="${col.l ? 'l' : ''}${col.id === S.sortId ? ' sort' : ''}"${col.nos ? '' : ` data-col="${col.id}"`}>${col.label}${col.id === S.sortId ? (S.sortDir < 0 ? ' ▾' : ' ▴') : ''}</th>`).join('') + '</tr>';
     // строка фильтров
-    hh += '<tr class="scr-filt">' + c.map((col) => {
-      if (col.nof) return '<th></th>';
-      const f2 = S.filters[col.id] || {};
-      if (col.ft === 'sel3') return `<th><select class="scr-fsel" data-fsel="${col.id}"><option value="">все</option><option value="1"${f2.sel === '1' ? ' selected' : ''}>▲hi</option><option value="-1"${f2.sel === '-1' ? ' selected' : ''}>▼lo</option><option value="0"${f2.sel === '0' ? ' selected' : ''}>—</option></select></th>`;
-      return `<th><input class="scr-fmin" data-fmin="${col.id}" placeholder="min" value="${f2.min != null ? f2.min : ''}"><input class="scr-fmax" data-fmax="${col.id}" placeholder="max" value="${f2.max != null ? f2.max : ''}"></th>`;
-    }).join('') + '</tr>';
+    hh += '<tr class="scr-filt">' + c.map((col) => col.nof ? '<th></th>' : ('<th>' + ftOf(col).render(col.id, S.filters[col.id] || {}) + '</th>')).join('') + '</tr>';
     head.innerHTML = hh;
     if (!rows.length) body.innerHTML = `<tr><td class="scr-empty" colspan="${c.length}">${S.loading ? 'загрузка…' : (S.rows.length ? 'нет строк под фильтры' : 'нажмите «Обновить»')}</td></tr>`;
     else body.innerHTML = rows.map((r) => '<tr>' + c.map((col) => `<td class="${col.l ? 'l' : ''}">${cellHtml(col, r)}</td>`).join('') + '</tr>').join('');
@@ -297,7 +311,7 @@
     head.querySelectorAll('th[data-col]').forEach((th) => { th.onclick = () => { const id = th.dataset.col; if (S.sortId === id) S.sortDir *= -1; else { S.sortId = id; S.sortDir = -1; } render(); }; });
     head.querySelectorAll('[data-fmin]').forEach((el) => { el.oninput = () => setFilt(el.dataset.fmin, 'min', el.value); });
     head.querySelectorAll('[data-fmax]').forEach((el) => { el.oninput = () => setFilt(el.dataset.fmax, 'max', el.value); });
-    head.querySelectorAll('[data-fsel]').forEach((el) => { el.onchange = () => { S.filters[el.dataset.fsel] = { sel: el.value }; render(); }; });
+    head.querySelectorAll('[data-fsel]').forEach((el) => { el.onchange = () => { if (el.value === '') delete S.filters[el.dataset.fsel]; else S.filters[el.dataset.fsel] = { sel: el.value }; renderBodyOnly(); }; });
     // события строк
     body.querySelectorAll('tr').forEach((tr, i) => {
       const r = rows[i]; if (!r) return;

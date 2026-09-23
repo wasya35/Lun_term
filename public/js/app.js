@@ -1637,26 +1637,30 @@
     const moex = (ins.provider || 'moex') === 'moex';
     const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
     const firstMs = list[0].timestamp, lastMs = list[list.length - 1].timestamp;
-    const winDays = tf.type === 'week' ? 180 : tf.type === 'day' ? 90 : 60;
-    const fromMs = Math.max(firstMs, lastMs - winDays * 86400000);
-    const use15 = (tf.type === 'day' || tf.type === 'week');
-    const key = (moex ? 'ts' : 'cd') + '|' + (ins.ticker || ins.id) + '|' + tf.id + '|' + fmt(fromMs) + '|' + fmt(lastMs);
+    // Глубокая история узлов: НЕДЕЛЯ → суб-бары H1 (~2–3 года), ДЕНЬ → 10-мин
+    // (~год), ЧАС → 10-мин (~4 мес). Нативные интервалы MOEX (60/10 мин) — лёгкие
+    // и дают год+; агрессор тут не нужен, цвет по трети бара (низ/верх/середина).
+    const subIss = tf.type === 'week' ? 60 : 10;
+    const winDays = tf.type === 'week' ? 1400 : tf.type === 'day' ? 420 : 120;
+    const fromMs = Math.max(firstMs - 3 * 86400000, lastMs - winDays * 86400000);
+    const key = 'cd|' + (ins.ticker || ins.id) + '|' + tf.id + '|' + fmt(fromMs) + '|' + fmt(lastMs);
     if (!force && slot.maxvolData && slot.maxvolData.key === key) return slot.maxvolData;
-    let subBars = [], hasAggr = false;
+    let subBars = [];
     try {
       if (moex) {
         const secid = await window.LunData.resolveTicker(ins);
-        const rows = await window.LunISS.fetchTradeStats(secid, fmt(fromMs), fmt(lastMs + 86400000), algoMkt(ins));
-        const rowsN = window.LunFutoi.normalizeTradeStats(rows);
-        if (rowsN.length) { hasAggr = true; subBars = use15 ? agg15(rowsN) : rowsN.map((r) => ({ ts: r.ts, close: r.close, vol: (r.volB || 0) + (r.volS || 0), volB: r.volB, volS: r.volS })); }
+        const eng = ins.engine || 'futures', mkt = ins.market || (eng === 'stock' ? 'shares' : eng === 'currency' ? 'selt' : 'forts');
+        const pages = subIss === 60 ? 50 : 45;
+        const bars = await window.LunISS.fetchCandlesFrom(eng, mkt, secid, subIss, fmt(fromMs), fmt(lastMs + 86400000), pages);
+        subBars = (bars || []).map((b) => ({ ts: b.timestamp, close: b.close, vol: b.volume || 0 }));
       } else {
         const stf = subTfOf(tf); if (!stf) { alert('Для этого ТФ суб-бары недоступны.'); return null; }
-        const bars = await window.LunData.fetchTail(ins, stf, fromMs);
+        const bars = await window.LunData.fetchFor(ins, stf);
         subBars = (bars || []).filter((b) => b.timestamp >= fromMs).map((b) => ({ ts: b.timestamp, close: b.close, vol: b.volume || 0 }));
       }
     } catch (e) { alert('Макс-объём: данные не загрузились: ' + e.message); return null; }
-    if (!subBars.length) { alert('Нет суб-баров для макс-объёма за период (' + (moex ? 'нужна подписка AlgoPack' : 'провайдер не отдал M5/M15') + ').'); return null; }
-    slot.maxvolData = { key, subBars, hasAggr };
+    if (!subBars.length) { alert('Нет суб-баров для макс-объёма за период (проверьте доступ к данным инструмента).'); return null; }
+    slot.maxvolData = { key, subBars, hasAggr: false };
     return slot.maxvolData;
   }
   async function applyMaxVol(slot) {
@@ -1806,6 +1810,28 @@
     const stats = fwd('m_5', 'через 5м') + fwd('m_15', '15м') + fwd('m_30', '30м') + fwd('h_1', '60м');
     if (stats) html += `<div style="margin-top:5px;color:#8fb0c8;font-size:12px">После таких сигналов (90 дней):</div>` + stats;
     if (ref.vol_b != null || ref.vol_s != null) html += `<div style="margin-top:4px">В сигнале: покупки <b style="color:#34c98a">${Math.round(ref.vol_b || 0)}</b> / продажи <b style="color:#ef5c6a">${Math.round(ref.vol_s || 0)}</b> лотов</div>`;
+    ensureFutoiTip(); futoiTip.innerHTML = html; futoiTip.style.display = 'block';
+    futoiTip.style.left = Math.min(window.innerWidth - futoiTip.offsetWidth - 8, e.clientX + 14) + 'px';
+    futoiTip.style.top = Math.max(8, e.clientY - 10) + 'px';
+  });
+  // клик по кругу «Макс-объём узел» — показать объём/цену/сторону/время суб-бара
+  document.addEventListener('click', (e) => {
+    const hits = window.LUN_MAXVOL_HITS;
+    if (!state.maxvolOn || !hits || !hits.length) return;
+    const slot = measureSlotAt(e.clientX, e.clientY); if (!slot) return;
+    let rect; try { rect = slot.cellEl.getBoundingClientRect(); } catch (_) { return; }
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    let best = null, bd = Infinity;
+    for (const h of hits) { const dx = px - h.x, dy = py - h.y, dd = dx * dx + dy * dy, rr = h.r + 4; if (dd <= rr * rr && dd < bd) { bd = dd; best = h; } }
+    if (!best) return;
+    const prec = (slot.instrument && slot.instrument.pricePrecision != null) ? slot.instrument.pricePrecision : 2;
+    const p2 = (x) => (x < 10 ? '0' : '') + x, d = best.ts ? new Date(best.ts) : null;
+    const tstr = d ? p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()) : '';
+    let html = '<div style="font-weight:700;font-size:15px;margin-bottom:3px">🔵 Макс-объём узла</div>'
+      + '<div>Объём: <b>' + Math.round(best.vol).toLocaleString('ru-RU') + '</b></div>'
+      + '<div>Цена: <b>' + (best.price != null ? best.price.toFixed(prec) : '—') + '</b> · в баре ' + best.pos + '% <span style="color:#8b93a7">(' + best.who + ')</span></div>'
+      + (tstr ? '<div style="color:#8b93a7">' + tstr + '</div>' : '')
+      + (best.aggr ? '<div>Покупки <b style="color:#34c98a">' + Math.round(best.aggr.b) + '</b> / Продажи <b style="color:#ef5c6a">' + Math.round(best.aggr.s) + '</b></div>' : '');
     ensureFutoiTip(); futoiTip.innerHTML = html; futoiTip.style.display = 'block';
     futoiTip.style.left = Math.min(window.innerWidth - futoiTip.offsetWidth - 8, e.clientX + 14) + 'px';
     futoiTip.style.top = Math.max(8, e.clientY - 10) + 'px';
